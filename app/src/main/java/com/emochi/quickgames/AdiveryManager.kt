@@ -93,9 +93,9 @@ class AdiveryManager(
                 dispatchAdPlacementEvent("rewarded_clicked", placementId)
             }
 
-            override fun onError(reason: String) {
+            override fun onError(placementId: String, reason: String) {
                 val payload = JSONObject().apply {
-                    put("placementId", "")
+                    put("placementId", placementId)
                     put("error", reason)
                 }
                 dispatchAdEvent("ad_error", payload)

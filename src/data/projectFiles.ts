@@ -248,9 +248,9 @@ class AdiveryManager(
             override fun onRewardedAdClicked(placementId: String) {
                 dispatchAdPlacementEvent("rewarded_clicked", placementId)
             }
-            override fun onError(reason: String) {
+            override fun onError(placementId: String, reason: String) {
                 val payload = JSONObject().apply {
-                    put("placementId", "")
+                    put("placementId", placementId)
                     put("error", reason)
                 }
                 dispatchAdEvent("ad_error", payload)
@@ -432,6 +432,19 @@ class WebAppBridge(
     @JavascriptInterface
     fun isAdLoaded(placementId: String?): Boolean {
         return adiveryManager.isAdLoaded(placementId)
+    }
+
+    @JavascriptInterface
+    fun isInterstitialLoaded(): Boolean = adiveryManager.isAdLoaded(adiveryManager.interstitialPlacementId)
+
+    @JavascriptInterface
+    fun isRewardedLoaded(): Boolean = adiveryManager.isAdLoaded(adiveryManager.rewardedPlacementId)
+
+    @JavascriptInterface
+    fun prepareAds() {
+        activityRef.get()?.runOnUiThread {
+            adiveryManager.prepareAds()
+        }
     }
 
     override fun onConnectionStatusChanged(result: ConnectionResult) {
@@ -661,7 +674,7 @@ class MainActivity : AppCompatActivity() {
                     window.__pendingInterstitial = null;
                 }
             } else if (event.type === 'ad_error') {
-                const err = event.data?.error || 'AD_ERROR';
+                const err = (event.data && event.data.error) ? event.data.error : 'AD_ERROR';
                 if (pendingRewarded) { pendingRewarded({ rewardGranted: false, error: err }); pendingRewarded = null; }
                 if (pendingInterstitial) { pendingInterstitial(false); pendingInterstitial = null; }
             }

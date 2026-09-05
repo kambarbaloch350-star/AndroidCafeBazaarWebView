@@ -303,7 +303,7 @@ class MainActivity : AppCompatActivity() {
                                 window.__pendingInterstitial = null;
                             }
                         } else if (event.type === 'ad_error') {
-                            var err = event.data?.error || 'AD_ERROR';
+                            var err = (event.data && event.data.error) ? event.data.error : 'AD_ERROR';
                             if (window.__pendingRewarded) {
                                 var res = { rewardGranted: false, error: err };
                                 if (typeof window.__pendingRewarded === 'function') window.__pendingRewarded(res);
