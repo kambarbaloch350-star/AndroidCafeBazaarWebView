@@ -47,7 +47,7 @@ class AdiveryManager(
     fun showInterstitial(placementId: String? = null): Boolean {
         val targetId = if (!placementId.isNullOrBlank()) placementId else interstitialPlacementId
         return if (Adivery.isLoaded(targetId)) {
-            Adivery.showAd(targetId)
+            Adivery.showInterstitialAd(activity, targetId)
             true
         } else {
             Adivery.prepareInterstitialAd(activity, targetId)
@@ -58,7 +58,7 @@ class AdiveryManager(
     fun showRewarded(placementId: String? = null): Boolean {
         val targetId = if (!placementId.isNullOrBlank()) placementId else rewardedPlacementId
         return if (Adivery.isLoaded(targetId)) {
-            Adivery.showAd(targetId)
+            Adivery.showRewardedAd(activity, targetId)
             true
         } else {
             Adivery.prepareRewardedAd(activity, targetId)

@@ -1,0 +1,136 @@
+:root {
+    --bg-dark: #0f172a;
+    --card-bg: #1e293b;
+    --card-border: #334155;
+    --primary: #10b981;
+    --primary-hover: #059669;
+    --accent: #6366f1;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --gold: #fbbf24;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; user-select: none; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-dark);
+    color: var(--text-main);
+    min-height: 100vh;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.container { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 16px; }
+.header {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.title-group h1 { font-size: 1.15rem; font-weight: 700; color: var(--text-main); }
+.title-group p { font-size: 0.8rem; color: var(--text-muted); }
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: rgba(148, 163, 184, 0.15);
+    color: var(--text-muted);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+}
+.status-badge.connected {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--primary);
+    border-color: rgba(16, 185, 129, 0.3);
+}
+.status-indicator { width: 8px; height: 8px; border-radius: 50%; background-color: currentColor; }
+.wallet-card {
+    background: linear-gradient(135deg, #1e293b 0%, #1e1b4b 100%);
+    border: 1px solid #4338ca;
+    border-radius: 20px;
+    padding: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.balance-amount { font-size: 2.2rem; font-weight: 800; color: var(--gold); }
+.store-section { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 20px; padding: 20px; }
+.section-title { font-size: 1rem; font-weight: 700; margin-bottom: 14px; display: flex; justify-content: space-between; }
+.products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.product-card {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 16px 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+.btn-buy {
+    width: 100%;
+    background: var(--primary);
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.actions-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.token-box {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px dashed var(--card-border);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+.token-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
+.token-value { font-family: monospace; font-size: 0.75rem; color: var(--gold); word-break: break-all; }
+.button-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.btn-secondary {
+    background: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-weight: 600;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+.btn-consume {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--gold);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+.logs-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; padding: 14px 16px; }
+.log-stream {
+    background: #090d16;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-family: monospace;
+    font-size: 0.72rem;
+    max-height: 140px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.log-item.info { color: #94a3b8; }
+.log-item.success { color: #34d399; }
+.log-item.warn { color: #fbbf24; }
+.log-item.error { color: #f87171; }
