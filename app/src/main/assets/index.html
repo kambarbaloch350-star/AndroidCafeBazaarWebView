@@ -7,7 +7,6 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-
     <div class="container">
         <!-- Top App Bar & Wallet Header -->
         <header class="header">
@@ -29,10 +28,10 @@
         <div class="status-strip">
             <div id="statusBadge" class="status-pill">
                 <span class="status-dot"></span>
-                <span id="statusText">اتصال به کافه‌بازار و ادیوری...</span>
+                <span id="statusText">در حال اتصال...</span>
             </div>
             <div class="level-indicator">
-                <span>مرحله فعلی:</span>
+                <span>پیشرفت:</span>
                 <strong id="currentLevelBadge" class="level-badge">مرحله ۱</strong>
             </div>
         </div>
@@ -42,9 +41,9 @@
             <div class="section-header">
                 <div class="section-title">
                     <span class="section-icon">⚔️</span>
-                    <h2>پیشرفت مراحل بازی</h2>
+                    <h2>پیشروی در مراحل بازی</h2>
                 </div>
-                <span class="ad-notice-tag">تبلیغ بین‌راهی هر ۲ مرحله</span>
+                <span class="ad-notice-tag">تبلیغ ادیوری هر ۲ مرحله</span>
             </div>
             <div class="game-card">
                 <div class="game-info">
@@ -52,14 +51,14 @@
                         <div id="levelProgressBar" class="level-progress-bar" style="width: 50%;"></div>
                     </div>
                     <p class="game-desc">
-                        با انجام چالش‌ها از مراحل عبور کنید و جایزه سکه بگیرید! <br>
-                        <strong>توجه:</strong> بعد از هر ۲ مرحله، یک تبلیغ تمام‌صفحه ادیوری (Interstitial Ad) نمایش داده می‌شود.
+                        با اتمام هر مرحله ۳۰ سکه رایگان دریافت کنید! <br>
+                        <strong>توجه:</strong> با اتمام هر ۲ مرحله، تبلیغ بین‌صفحه‌ای (Interstitial Ad) نمایش داده می‌شود.
                     </p>
                 </div>
                 <div class="game-actions">
                     <button id="btnCompleteLevel" class="btn-primary btn-game" onclick="handleLevelUp()">
                         <span class="btn-icon">⚡</span>
-                        <span>پایان مرحله و دریافت جایزه (+۳۰ سکه)</span>
+                        <span>تکمیل مرحله فعلی (دریافت جایزه)</span>
                     </button>
                 </div>
             </div>
@@ -70,23 +69,23 @@
             <div class="section-header">
                 <div class="section-title">
                     <span class="section-icon">🎡</span>
-                    <h2>گردونه شانس (جایزه ویدیویی ادیوری)</h2>
+                    <h2>گردونه شانس (ویدیوی جایزه‌دار)</h2>
                 </div>
-                <span class="reward-tag">ویدیو پاداش‌دار</span>
+                <span class="reward-tag">جایزه رایگان</span>
             </div>
             <div class="wheel-card">
                 <div class="wheel-container">
-                    <div class="wheel-pointer">▼</div>
+                    <div class="wheel-pointer">🔻</div>
                     <div id="luckyWheel" class="lucky-wheel">
                         <div class="wheel-center">🎯</div>
                     </div>
                 </div>
                 <div class="wheel-actions">
                     <button id="btnSpinWheel" class="btn-spin" onclick="handleSpinWheel()">
-                        <span class="btn-icon">🎬</span>
-                        <span>چرخاندن گردونه با تماشای تبلیغ ادیوری</span>
+                        <span class="btn-icon">🎡</span>
+                        <span>چرخاندن گردونه (تماشای ویدیوی جایزه‌دار)</span>
                     </button>
-                    <p class="wheel-hint">با مشاهده ویدیوی کامل جایزه، گردونه رایگان بچرخد و سکه هدیه بگیرید!</p>
+                    <p class="wheel-hint">با دیدن ویدیو تا ۲۵۰۰ سکه رایگان ببرید!</p>
                 </div>
             </div>
         </section>
@@ -96,15 +95,15 @@
             <div class="section-header">
                 <div class="section-title">
                     <span class="section-icon">🛒</span>
-                    <h2>فروشگاه سکه کافه‌بازار (نرخ ۴ برابری)</h2>
+                    <h2>فروشگاه سکه (پرداخت درون‌برنامه‌ای بازار)</h2>
                 </div>
-                <span class="bazaar-tag">پرداخت درون‌برنامه‌ای</span>
+                <span class="bazaar-tag">پرداخت امن بازار</span>
             </div>
             <div class="products-grid">
                 <!-- Pack 1: 250 Coins -->
                 <div class="product-card">
                     <div class="product-top">
-                        <span class="product-icon">💰</span>
+                        <span class="product-icon">🪙</span>
                         <div class="product-names">
                             <h3>بسته ۲۵۰ سکه</h3>
                             <span class="sku-label">coin_pack_250</span>
@@ -117,7 +116,7 @@
                             <span class="multiplier-tag">4X</span>
                         </div>
                         <button class="btn-buy" onclick="handlePurchase('coin_pack_250')">
-                            خرید بسته
+                            خرید از بازار
                         </button>
                     </div>
                 </div>
@@ -125,7 +124,7 @@
                 <!-- Pack 2: 750 Coins -->
                 <div class="product-card">
                     <div class="product-top">
-                        <span class="product-icon">✨</span>
+                        <span class="product-icon">💰</span>
                         <div class="product-names">
                             <h3>بسته ۷۵۰ سکه</h3>
                             <span class="sku-label">coin_pack_750</span>
@@ -138,18 +137,18 @@
                             <span class="multiplier-tag">4X</span>
                         </div>
                         <button class="btn-buy" onclick="handlePurchase('coin_pack_750')">
-                            خرید بسته
+                            خرید از بازار
                         </button>
                     </div>
                 </div>
 
                 <!-- Pack 3: 2000 Coins -->
                 <div class="product-card featured">
-                    <div class="product-badge">محبوب‌ترین</div>
+                    <div class="product-badge">پیشنهاد ویژه</div>
                     <div class="product-top">
                         <span class="product-icon">💎</span>
                         <div class="product-names">
-                            <h3>بسته ۲,۰۰۰ سکه</h3>
+                            <h3>بسته ۲۰۰۰ سکه (محبوب)</h3>
                             <span class="sku-label">coin_pack_2000</span>
                         </div>
                     </div>
@@ -160,7 +159,7 @@
                             <span class="multiplier-tag">4X</span>
                         </div>
                         <button class="btn-buy btn-featured" onclick="handlePurchase('coin_pack_2000')">
-                            خرید بسته
+                            خرید با تخفیف
                         </button>
                     </div>
                 </div>
@@ -170,7 +169,7 @@
                     <div class="product-top">
                         <span class="product-icon">👑</span>
                         <div class="product-names">
-                            <h3>بسته ۵,۰۰۰ سکه</h3>
+                            <h3>بسته ۵۰۰۰ سکه</h3>
                             <span class="sku-label">coin_pack_5000</span>
                         </div>
                     </div>
@@ -181,7 +180,7 @@
                             <span class="multiplier-tag">4X</span>
                         </div>
                         <button class="btn-buy" onclick="handlePurchase('coin_pack_5000')">
-                            خرید بسته
+                            خرید از بازار
                         </button>
                     </div>
                 </div>
@@ -189,9 +188,9 @@
                 <!-- Pack 5: 10000 Coins -->
                 <div class="product-card">
                     <div class="product-top">
-                        <span class="product-icon">🔥</span>
+                        <span class="product-icon">🏆</span>
                         <div class="product-names">
-                            <h3>بسته ۱۰,۰۰۰ سکه</h3>
+                            <h3>بسته ۱۰۰۰۰ سکه</h3>
                             <span class="sku-label">coin_pack_10000</span>
                         </div>
                     </div>
@@ -202,18 +201,18 @@
                             <span class="multiplier-tag">4X</span>
                         </div>
                         <button class="btn-buy" onclick="handlePurchase('coin_pack_10000')">
-                            خرید بسته
+                            خرید از بازار
                         </button>
                     </div>
                 </div>
 
                 <!-- Pack 6: 25000 Coins -->
                 <div class="product-card jackpot">
-                    <div class="product-badge">پک ویژه مگا</div>
+                    <div class="product-badge">جک‌پات طلایی</div>
                     <div class="product-top">
-                        <span class="product-icon">🏆</span>
+                        <span class="product-icon">🌟</span>
                         <div class="product-names">
-                            <h3>بسته ۲۵,۰۰۰ سکه مگا</h3>
+                            <h3>بسته ۲۵۰۰۰ سکه رویال</h3>
                             <span class="sku-label">coin_pack_25000</span>
                         </div>
                     </div>
@@ -224,7 +223,7 @@
                             <span class="multiplier-tag">4X</span>
                         </div>
                         <button class="btn-buy btn-jackpot" onclick="handlePurchase('coin_pack_25000')">
-                            خرید بسته مگا
+                            خرید بسته بزرگ
                         </button>
                     </div>
                 </div>

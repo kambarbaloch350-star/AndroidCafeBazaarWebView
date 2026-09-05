@@ -80,7 +80,6 @@ data class QueryPurchasesResult(
         json.put("success", success)
         json.put("message", message)
         errorCode?.let { json.put("errorCode", it) }
-
         val purchasesArray = JSONArray()
         for (item in purchases) {
             purchasesArray.put(item.toJson())

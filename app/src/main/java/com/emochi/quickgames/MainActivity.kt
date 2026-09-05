@@ -19,8 +19,6 @@ import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import com.adivery.sdk.Adivery
 import com.adivery.sdk.AdiveryBannerAdView
 
@@ -50,7 +48,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Enable edge-to-edge display for game experience
         setupImmersiveMode()
 
         webView = findViewById(R.id.webView)
@@ -58,7 +55,7 @@ class MainActivity : AppCompatActivity() {
 
         // 1. Initialize Adivery SDK in Production mode
         Adivery.configure(application, AdiveryConfig.APP_ID)
-        Adivery.setLoggingEnabled(!AdiveryConfig.IS_PRODUCTION) // Disable debug logs in production
+        Adivery.setLoggingEnabled(!AdiveryConfig.IS_PRODUCTION)
         adiveryManager = AdiveryManager(this)
         adiveryManager.prepareAds()
 
@@ -87,12 +84,10 @@ class MainActivity : AppCompatActivity() {
     private fun setupWebView() {
         val settings: WebSettings = webView.settings
 
-        // JavaScript & Storage
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
 
-        // Local asset permissions
         settings.allowFileAccess = true
         settings.allowContentAccess = true
         @Suppress("DEPRECATION")
@@ -100,7 +95,6 @@ class MainActivity : AppCompatActivity() {
         @Suppress("DEPRECATION")
         settings.allowUniversalAccessFromFileURLs = true
 
-        // Media & Performance
         settings.mediaPlaybackRequiresUserGesture = false
         settings.cacheMode = WebSettings.LOAD_DEFAULT
         settings.useWideViewPort = true
@@ -131,15 +125,13 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url?.toString() ?: return false
-
                 if (url.startsWith("https://${WebAppAssetResolver.ASSET_DOMAIN}") ||
                     url.startsWith("http://${WebAppAssetResolver.ASSET_DOMAIN}") ||
                     url.startsWith("file:///android_asset/")
                 ) {
                     return false
                 }
-
-                // Route external URLs to system intent (e.g. CafeBazaar app page)
+                // Route external URLs to system intent
                 try {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                     startActivity(intent)
@@ -168,7 +160,6 @@ class MainActivity : AppCompatActivity() {
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
-                // Keep console messages minimal in production
                 return true
             }
         }
@@ -202,15 +193,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Injects the universal bridge helpers for both CafeBazaar and Adivery into any loaded web page.
+     * Injects bridge fallback helpers without overwriting existing android-bridge.js functions.
      */
     private fun injectBridgeHelper() {
         val script = """
             (function() {
-                if (window.__bridgesInjected) return;
-                window.__bridgesInjected = true;
-                
-                // 1. CafeBazaar In-App Billing Bridge
+                // Ensure base namespaces exist
+                window.CafeBazaarBridge = window.CafeBazaarBridge || {};
+                window.AdiveryBridge = window.AdiveryBridge || {};
+
+                // 1. Fallback CafeBazaar object if android-bridge.js not included
                 if (!window.CafeBazaar) {
                     window.CafeBazaar = {
                         isNativeBridgeAvailable: function() { return typeof window.AndroidBridge !== 'undefined'; },
@@ -239,16 +231,12 @@ class MainActivity : AppCompatActivity() {
                                 window.__pendingQuery = { resolve: resolve, reject: reject };
                                 window.AndroidBridge.getPurchases();
                             });
-                        },
-                        on: function(event, callback) {
-                            window.__bazaarListeners = window.__bazaarListeners || {};
-                            window.__bazaarListeners[event] = window.__bazaarListeners[event] || [];
-                            window.__bazaarListeners[event].push(callback);
                         }
                     };
+                    window.BazaarBridge = window.CafeBazaar;
                 }
 
-                // 2. Adivery Mobile Advertising Bridge
+                // 2. Fallback Adivery object if android-bridge.js not included
                 if (!window.Adivery) {
                     window.Adivery = {
                         isNativeBridgeAvailable: function() { return typeof window.AndroidBridge !== 'undefined'; },
@@ -263,17 +251,23 @@ class MainActivity : AppCompatActivity() {
                         showInterstitial: function(placementId) {
                             if (!window.AndroidBridge) return Promise.resolve(false);
                             return new Promise(function(resolve) {
-                                window.__pendingInterstitial = { resolve: resolve };
+                                window.__pendingInterstitial = resolve;
                                 var shown = window.AndroidBridge.showInterstitial(placementId || '');
-                                if (!shown) resolve(false);
+                                if (!shown) {
+                                    window.__pendingInterstitial = null;
+                                    resolve(false);
+                                }
                             });
                         },
                         showRewarded: function(placementId) {
                             if (!window.AndroidBridge) return Promise.resolve({ rewardGranted: true });
                             return new Promise(function(resolve) {
-                                window.__pendingRewarded = { resolve: resolve };
+                                window.__pendingRewarded = resolve;
                                 var shown = window.AndroidBridge.showRewarded(placementId || '');
-                                if (!shown) resolve({ rewardGranted: false, error: 'NOT_READY' });
+                                if (!shown) {
+                                    window.__pendingRewarded = null;
+                                    resolve({ rewardGranted: false, error: 'NOT_READY' });
+                                }
                             });
                         },
                         isLoaded: function(placementId) {
@@ -282,73 +276,50 @@ class MainActivity : AppCompatActivity() {
                         }
                     };
                 }
-                window.AdiveryBridge = window.Adivery;
-                window.BazaarBridge = window.CafeBazaar;
 
-                // Event Dispatchers
-                window.CafeBazaarBridge = window.CafeBazaarBridge || {};
-                window.CafeBazaarBridge.onPurchaseResult = function(data) {
-                    if (window.__pendingPurchases && window.__pendingPurchases[data.productId]) {
-                        if (data.success) window.__pendingPurchases[data.productId].resolve(data);
-                        else window.__pendingPurchases[data.productId].reject(data);
-                        delete window.__pendingPurchases[data.productId];
-                    }
-                    if (window.__bazaarListeners && window.__bazaarListeners['purchase']) {
-                        window.__bazaarListeners['purchase'].forEach(function(fn) { fn(data); });
-                    }
-                };
-                window.CafeBazaarBridge.onConsumeResult = function(data) {
-                    if (window.__pendingConsumes && window.__pendingConsumes[data.purchaseToken]) {
-                        if (data.success) window.__pendingConsumes[data.purchaseToken].resolve(data);
-                        else window.__pendingConsumes[data.purchaseToken].reject(data);
-                        delete window.__pendingConsumes[data.purchaseToken];
-                    }
-                    if (window.__bazaarListeners && window.__bazaarListeners['consume']) {
-                        window.__bazaarListeners['consume'].forEach(function(fn) { fn(data); });
-                    }
-                };
-                window.CafeBazaarBridge.onConnectionResult = function(data) {
-                    if (window.__bazaarListeners && window.__bazaarListeners['connection']) {
-                        window.__bazaarListeners['connection'].forEach(function(fn) { fn(data); });
-                    }
-                };
-                window.CafeBazaarBridge.onPurchasesQueryResult = function(data) {
-                    if (window.__pendingQuery) {
-                        if (data.success) window.__pendingQuery.resolve(data.purchases || []);
-                        else window.__pendingQuery.reject(data);
-                        window.__pendingQuery = null;
-                    }
-                    if (window.__bazaarListeners && window.__bazaarListeners['query']) {
-                        window.__bazaarListeners['query'].forEach(function(fn) { fn(data); });
-                    }
-                };
+                // 3. Keep references synced
+                if (!window.AdiveryBridge.showRewarded && window.Adivery) {
+                    Object.assign(window.AdiveryBridge, window.Adivery);
+                }
 
-                // Adivery Event Handler
-                window.AdiveryBridge.onAdEvent = function(event) {
-                    if (event.type === 'rewarded_closed') {
-                        if (window.__pendingRewarded) {
-                            window.__pendingRewarded.resolve(event.data || { rewardGranted: false });
-                            window.__pendingRewarded = null;
+                // 4. Fallback onAdEvent ONLY if not already defined
+                if (typeof window.AdiveryBridge.onAdEvent !== 'function') {
+                    window.AdiveryBridge.onAdEvent = function(event) {
+                        if (typeof event === 'string') {
+                            try { event = JSON.parse(event); } catch (_) {}
                         }
-                    } else if (event.type === 'interstitial_closed') {
-                        if (window.__pendingInterstitial) {
-                            window.__pendingInterstitial.resolve(true);
-                            window.__pendingInterstitial = null;
+                        if (!event) return;
+                        if (event.type === 'rewarded_closed') {
+                            var data = event.data || { rewardGranted: false };
+                            if (window.__pendingRewarded) {
+                                if (typeof window.__pendingRewarded === 'function') window.__pendingRewarded(data);
+                                else if (typeof window.__pendingRewarded.resolve === 'function') window.__pendingRewarded.resolve(data);
+                                window.__pendingRewarded = null;
+                            }
+                        } else if (event.type === 'interstitial_closed') {
+                            if (window.__pendingInterstitial) {
+                                if (typeof window.__pendingInterstitial === 'function') window.__pendingInterstitial(true);
+                                else if (typeof window.__pendingInterstitial.resolve === 'function') window.__pendingInterstitial.resolve(true);
+                                window.__pendingInterstitial = null;
+                            }
+                        } else if (event.type === 'ad_error') {
+                            var err = event.data?.error || 'AD_ERROR';
+                            if (window.__pendingRewarded) {
+                                var res = { rewardGranted: false, error: err };
+                                if (typeof window.__pendingRewarded === 'function') window.__pendingRewarded(res);
+                                else if (typeof window.__pendingRewarded.resolve === 'function') window.__pendingRewarded.resolve(res);
+                                window.__pendingRewarded = null;
+                            }
+                            if (window.__pendingInterstitial) {
+                                if (typeof window.__pendingInterstitial === 'function') window.__pendingInterstitial(false);
+                                else if (typeof window.__pendingInterstitial.resolve === 'function') window.__pendingInterstitial.resolve(false);
+                                window.__pendingInterstitial = null;
+                            }
                         }
-                    } else if (event.type === 'ad_error') {
-                        if (window.__pendingRewarded) {
-                            window.__pendingRewarded.resolve({ rewardGranted: false, error: event.data.error });
-                            window.__pendingRewarded = null;
-                        }
-                        if (window.__pendingInterstitial) {
-                            window.__pendingInterstitial.resolve(false);
-                            window.__pendingInterstitial = null;
-                        }
-                    }
-                };
+                    };
+                }
             })();
         """.trimIndent()
-
         webView.post {
             webView.evaluateJavascript(script, null)
         }

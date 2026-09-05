@@ -33,7 +33,6 @@ class WebAppBridge(
     // =========================================================================
     // System & Environment Info
     // =========================================================================
-
     @JavascriptInterface
     fun isNativeApp(): Boolean = true
 
@@ -46,7 +45,6 @@ class WebAppBridge(
     // =========================================================================
     // CAFE BAZAAR IN-APP BILLING METHODS
     // =========================================================================
-
     @JavascriptInterface
     fun isAvailable(): Boolean {
         return billingManager.isBillingAvailable()
@@ -90,8 +88,10 @@ class WebAppBridge(
     }
 
     // =========================================================================
-    // ADIVERY ADVERTISING METHODS
+    // ADIVERY ADVERTISING METHODS (Zero-arg & Single-arg Overloads for WebView)
     // =========================================================================
+    @JavascriptInterface
+    fun isAdiveryAvailable(): Boolean = true
 
     @JavascriptInterface
     fun showBanner(): Boolean {
@@ -118,7 +118,12 @@ class WebAppBridge(
     }
 
     @JavascriptInterface
-    fun showInterstitial(placementId: String? = null): Boolean {
+    fun showInterstitial(): Boolean {
+        return showInterstitial(null)
+    }
+
+    @JavascriptInterface
+    fun showInterstitial(placementId: String?): Boolean {
         val activity = activityRef.get() ?: return false
         val target = if (!placementId.isNullOrBlank()) placementId else adiveryManager.interstitialPlacementId
         val loaded = adiveryManager.isAdLoaded(target)
@@ -129,7 +134,12 @@ class WebAppBridge(
     }
 
     @JavascriptInterface
-    fun showRewarded(placementId: String? = null): Boolean {
+    fun showRewarded(): Boolean {
+        return showRewarded(null)
+    }
+
+    @JavascriptInterface
+    fun showRewarded(placementId: String?): Boolean {
         val activity = activityRef.get() ?: return false
         val target = if (!placementId.isNullOrBlank()) placementId else adiveryManager.rewardedPlacementId
         val loaded = adiveryManager.isAdLoaded(target)
@@ -140,32 +150,70 @@ class WebAppBridge(
     }
 
     @JavascriptInterface
-    fun isAdLoaded(placementId: String): Boolean {
+    fun isAdLoaded(): Boolean {
+        return isAdLoaded(null)
+    }
+
+    @JavascriptInterface
+    fun isAdLoaded(placementId: String?): Boolean {
         return adiveryManager.isAdLoaded(placementId)
+    }
+
+    @JavascriptInterface
+    fun isInterstitialLoaded(): Boolean {
+        return adiveryManager.isAdLoaded(adiveryManager.interstitialPlacementId)
+    }
+
+    @JavascriptInterface
+    fun isRewardedLoaded(): Boolean {
+        return adiveryManager.isAdLoaded(adiveryManager.rewardedPlacementId)
+    }
+
+    @JavascriptInterface
+    fun prepareAds() {
+        val activity = activityRef.get() ?: return
+        activity.runOnUiThread {
+            adiveryManager.prepareAds()
+        }
     }
 
     // =========================================================================
     // Callbacks from BillingManager & AdiveryManager -> Dispatched to Web Layer
     // =========================================================================
-
     override fun onConnectionStatusChanged(result: ConnectionResult) {
         val jsonString = result.toJson().toString()
-        dispatchJsEvent("window.CafeBazaarBridge && window.CafeBazaarBridge.onConnectionResult($jsonString);")
+        dispatchJsEvent("""
+            if (window.CafeBazaarBridge && typeof window.CafeBazaarBridge.onConnectionResult === 'function') {
+                window.CafeBazaarBridge.onConnectionResult($jsonString);
+            }
+        """.trimIndent())
     }
 
     override fun onPurchaseResult(result: PurchaseResult) {
         val jsonString = result.toJson().toString()
-        dispatchJsEvent("window.CafeBazaarBridge && window.CafeBazaarBridge.onPurchaseResult($jsonString);")
+        dispatchJsEvent("""
+            if (window.CafeBazaarBridge && typeof window.CafeBazaarBridge.onPurchaseResult === 'function') {
+                window.CafeBazaarBridge.onPurchaseResult($jsonString);
+            }
+        """.trimIndent())
     }
 
     override fun onConsumeResult(result: ConsumeResult) {
         val jsonString = result.toJson().toString()
-        dispatchJsEvent("window.CafeBazaarBridge && window.CafeBazaarBridge.onConsumeResult($jsonString);")
+        dispatchJsEvent("""
+            if (window.CafeBazaarBridge && typeof window.CafeBazaarBridge.onConsumeResult === 'function') {
+                window.CafeBazaarBridge.onConsumeResult($jsonString);
+            }
+        """.trimIndent())
     }
 
     override fun onPurchasesQueryResult(result: QueryPurchasesResult) {
         val jsonString = result.toJson().toString()
-        dispatchJsEvent("window.CafeBazaarBridge && window.CafeBazaarBridge.onPurchasesQueryResult($jsonString);")
+        dispatchJsEvent("""
+            if (window.CafeBazaarBridge && typeof window.CafeBazaarBridge.onPurchasesQueryResult === 'function') {
+                window.CafeBazaarBridge.onPurchasesQueryResult($jsonString);
+            }
+        """.trimIndent())
     }
 
     override fun onAdEvent(type: String, data: JSONObject) {
@@ -174,7 +222,16 @@ class WebAppBridge(
             put("data", data)
         }
         val jsonString = payload.toString()
-        dispatchJsEvent("window.AdiveryBridge && window.AdiveryBridge.onAdEvent($jsonString);")
+        dispatchJsEvent("""
+            try {
+                if (window.AdiveryBridge && typeof window.AdiveryBridge.onAdEvent === 'function') {
+                    window.AdiveryBridge.onAdEvent($jsonString);
+                }
+                window.dispatchEvent(new CustomEvent('adivery:event', { detail: $jsonString }));
+            } catch (e) {
+                console.error('[Bridge] Error dispatching onAdEvent:', e);
+            }
+        """.trimIndent())
     }
 
     private fun dispatchJsEvent(script: String) {

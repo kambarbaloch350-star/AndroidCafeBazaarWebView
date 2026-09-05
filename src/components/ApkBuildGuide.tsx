@@ -2,19 +2,15 @@ import React, { useState } from 'react';
 import { 
   Download, 
   Package, 
-  CheckCircle2, 
   Copy, 
   Check, 
-  ExternalLink, 
-  Terminal, 
   Cpu, 
   ShieldCheck, 
   AlertCircle, 
   GitBranch, 
   FolderCheck,
-  Smartphone,
-  Layers,
-  Sparkles
+  Terminal,
+  Tv
 } from 'lucide-react';
 
 interface ApkBuildGuideProps {
@@ -52,10 +48,10 @@ export const ApkBuildGuide: React.FC<ApkBuildGuideProps> = ({
             </span>
           </div>
           <h1 className="text-2xl lg:text-3xl font-bold text-white tracking-tight">
-            How to Build & Obtain Your APK
+            Build & Obtain Your APK
           </h1>
           <p className="text-sm text-slate-300 leading-relaxed">
-            The complete native Android Studio Kotlin project, Poolakey SDK configuration, and WebView assets are ready. Because an APK binary requires the native Android SDK and AAPT2 toolchains, you can build your APK using the methods below.
+            The native Android Studio Kotlin project, Poolakey SDK, and the fixed Adivery Mobile Ads bridge are ready. Download the complete ready-to-compile project or build via GitHub Actions.
           </p>
         </div>
 
@@ -80,13 +76,13 @@ export const ApkBuildGuide: React.FC<ApkBuildGuideProps> = ({
         </div>
       </div>
 
-      {/* Cloud Environment Notice */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex items-start gap-3 text-slate-300 text-xs leading-relaxed">
-        <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+      {/* Adivery & CafeBazaar Bridge Status */}
+      <div className="bg-slate-900/90 border border-emerald-500/30 rounded-2xl p-4 flex items-start gap-3 text-slate-300 text-xs leading-relaxed">
+        <Tv className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
         <div>
-          <span className="font-semibold text-white">Why cannot a cloud web container compile raw APKs directly?</span>
+          <span className="font-semibold text-emerald-300">Adivery Bridge Fix Applied:</span>
           <p className="mt-1 text-slate-400">
-            Compiling an Android APK requires compiling Java bytecode, Dalvik/D8 dexing, resource packaging with AAPT2, and signing against the 2.5GB+ Android 34 SDK and Gradle daemon. Web containers are designed for frontend Node.js previews. However, with the files generated here, you can generate your APK in under 2 minutes using <strong className="text-slate-200">Android Studio</strong>, the included <strong className="text-slate-200">GitHub Actions</strong> cloud runner, or command line!
+            Resolved promise hanging in <code className="text-slate-200">showRewarded()</code> and <code className="text-slate-200">showInterstitial()</code> by aligning <code className="text-slate-200">AdiveryBridge.onAdEvent</code>, adding Kotlin <code className="text-slate-200">@JavascriptInterface</code> zero-arg parameter overloads in <code className="text-slate-200">WebAppBridge.kt</code>, preventing script clobbering in <code className="text-slate-200">MainActivity.kt</code>, and adding error fallbacks.
           </p>
         </div>
       </div>
@@ -109,11 +105,11 @@ export const ApkBuildGuide: React.FC<ApkBuildGuideProps> = ({
               The official, quickest, and most visual way to compile debug or release APKs.
             </p>
             <ol className="text-xs text-slate-300 space-y-2 list-decimal list-inside">
-              <li>Click <strong className="text-emerald-400">Download (.ZIP)</strong> above and unzip.</li>
+              <li>Click <strong className="text-emerald-400">Download (.ZIP)</strong> above and extract.</li>
               <li>Open <strong>Android Studio</strong> & choose <strong>Open</strong>.</li>
               <li>Select the unzipped folder and allow Gradle to sync.</li>
               <li>Go to: <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">Build &gt; Build Bundle(s) / APK(s) &gt; Build APK(s)</code>.</li>
-              <li>Android Studio outputs your APK in seconds!</li>
+              <li>Android Studio outputs your APK in under a minute!</li>
             </ol>
           </div>
           <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 text-[11px] font-mono text-slate-400 break-all">
@@ -136,13 +132,10 @@ export const ApkBuildGuide: React.FC<ApkBuildGuideProps> = ({
             <p className="text-xs text-slate-400">
               Push to GitHub and let GitHub Actions compile the APK in the cloud.
             </p>
-            <div className="p-2.5 rounded-xl bg-slate-950 border border-emerald-800/40 text-[11px] text-emerald-300">
-              <strong>Fixed for GitHub:</strong> <code className="text-emerald-200">gradle-wrapper.jar</code> has been added to <code className="text-emerald-200">gradle/wrapper/</code> and the workflow auto-verifies the wrapper, resolving the <code className="text-amber-300">GradleWrapperMain</code> error!
-            </div>
             <ol className="text-xs text-slate-300 space-y-2 list-decimal list-inside">
               <li>In AI Studio top menu, click <strong>Export to GitHub</strong> or push your code.</li>
               <li>Go to your GitHub repo &gt; <strong>Actions</strong> tab.</li>
-              <li>Select <strong>Build Android APK</strong> &gt; click <strong>Run workflow</strong> (or push a commit).</li>
+              <li>Select <strong>Build Android APK</strong> &gt; click <strong>Run workflow</strong>.</li>
               <li>Once finished (~1 min), download the <strong className="text-indigo-400">app-debug-apk</strong> artifact.</li>
             </ol>
           </div>
@@ -173,7 +166,7 @@ export const ApkBuildGuide: React.FC<ApkBuildGuideProps> = ({
                 <span>./gradlew assembleDebug</span>
                 <button
                   onClick={() => copyToClipboard('./gradlew assembleDebug', 'cmd-debug')}
-                  className="text-slate-400 hover:text-white p-1"
+                  className="text-slate-400 hover:text-white p-1 cursor-pointer"
                   title="Copy command"
                 >
                   {copiedId === 'cmd-debug' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -188,206 +181,67 @@ export const ApkBuildGuide: React.FC<ApkBuildGuideProps> = ({
         </div>
       </div>
 
-      {/* CafeBazaar Integration Checklist */}
+      {/* Checklist */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
         <div className="flex items-center gap-2.5 border-b border-slate-800 pb-3">
           <ShieldCheck className="w-5 h-5 text-emerald-400" />
           <h2 className="text-sm font-bold uppercase tracking-wider text-white">
-            Essential Checklist Before Uploading to CafeBazaar
+            Production Setup Checklist (CafeBazaar + Adivery)
           </h2>
         </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
           <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/80 space-y-2">
             <div className="flex items-center gap-2 text-white font-bold">
               <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px]">1</span>
-              Match Package Name (Application ID)
+              Adivery App ID &amp; Placements
             </div>
             <p className="text-slate-400 leading-relaxed">
-              Open <code className="text-emerald-300">app/build.gradle.kts</code> and change <code className="text-emerald-300">applicationId = &quot;com.example.webapp&quot;</code> to the exact package name registered in your CafeBazaar Pishkhan developer panel.
+              In <code className="text-emerald-300">AdiveryConfig.kt</code>, ensure your Adivery App ID and placement IDs for Banner, Interstitial, and Rewarded ads match your panel settings on <a href="https://panel.adivery.com" target="_blank" rel="noreferrer" className="text-indigo-400 underline">panel.adivery.com</a>.
             </p>
           </div>
-
           <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/80 space-y-2">
             <div className="flex items-center gap-2 text-white font-bold">
               <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px]">2</span>
-              Configure RSA Public Key
+              Package Name (Application ID)
             </div>
             <p className="text-slate-400 leading-relaxed">
-              In <code className="text-emerald-300">CafeBazaarConfig.kt</code>, paste your Base64 RSA public key obtained from CafeBazaar developer dashboard for on-device cryptographic verification.
+              Configured as <code className="text-emerald-300">com.emochi.quickgames</code> in <code className="text-emerald-300">app/build.gradle.kts</code>. Ensure this matches your registered app in CafeBazaar Pishkhan.
             </p>
           </div>
-
           <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/80 space-y-2">
             <div className="flex items-center gap-2 text-white font-bold">
               <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px]">3</span>
-              Upload Initial Draft APK
+              Automatic Coin Pack Consumption
             </div>
             <p className="text-slate-400 leading-relaxed">
-              CafeBazaar requires an initial APK to be uploaded as a draft once before Poolakey SDK can query or purchase your SKUs.
+              Consumable coin packs are automatically consumed in the background upon successful purchase, allowing repeated purchases without token lock errors.
             </p>
           </div>
-
           <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/80 space-y-2">
             <div className="flex items-center gap-2 text-white font-bold">
               <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px]">4</span>
-              Setup Test Accounts for Free Testing
+              HTML5 / Node.js Virtual Domain Support
             </div>
             <p className="text-slate-400 leading-relaxed">
-              Add your CafeBazaar account email under <em>Settings &gt; Test Users</em> in the Bazaar console so you can test purchases without being charged real money.
+              Assets are served over <code className="text-indigo-300">https://appassets.androidplatform.net/</code>, resolving CORS and ES Module restrictions on mobile WebViews.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Node.js / Vite / HTML5 Game Compatibility Guide */}
-      <div className="bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30 rounded-3xl p-6 lg:p-8 space-y-6 shadow-xl">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-1 rounded-lg bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-xs font-bold uppercase tracking-wider">
-                Node.js &amp; HTML5 Game Engine Support
-              </span>
-            </div>
-            <h2 className="text-xl font-bold text-white tracking-tight">
-              Using with Built Node.js Files (<code className="text-indigo-400 font-mono text-base">/dist</code> in <code className="text-indigo-400 font-mono text-base">/assets</code>)
-            </h2>
-            <p className="text-xs text-slate-300">
-              Compatible out-of-the-box with Vite, Webpack, React, Vue, Svelte, Phaser, Pixi.js, Three.js, and Babylon.js.
-            </p>
-          </div>
-          <span className="text-xs font-mono px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5 self-start md:self-auto">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-            Virtual HTTPS Host Enabled
-          </span>
-        </div>
-
-        {/* 3 Pillars of Node.js Compatibility */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-          <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
-            <div className="font-semibold text-emerald-400 flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center font-bold">1</span>
-              ES Modules &amp; CORS Fixed
-            </div>
-            <p className="text-slate-400 leading-relaxed">
-              Modern bundlers produce <code className="text-slate-300 font-mono">&lt;script type="module"&gt;</code> which Android blocks on <code className="text-slate-300 font-mono">file://</code>. Our <strong className="text-slate-200">WebAppAssetResolver</strong> serves assets over <code className="text-indigo-300 font-mono">https://appassets.androidplatform.net/</code>, allowing full module execution and CORS-free <code className="text-slate-300 font-mono">fetch()</code>.
-            </p>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
-            <div className="font-semibold text-emerald-400 flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center font-bold">2</span>
-              Dual Directory Resolution
-            </div>
-            <p className="text-slate-400 leading-relaxed">
-              Whether you paste your build output into <code className="text-indigo-300 font-mono">app/src/main/assets/</code> or directly as <code className="text-indigo-300 font-mono">app/src/main/assets/dist/</code>, the asset resolver detects <code className="text-slate-300 font-mono">index.html</code> and maps root paths (<code className="text-slate-300 font-mono">/assets/...</code>) automatically!
-            </p>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
-            <div className="font-semibold text-emerald-400 flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center font-bold">3</span>
-              WebAssembly &amp; Game Audio
-            </div>
-            <p className="text-slate-400 leading-relaxed">
-              Native support for <code className="text-slate-300 font-mono">.wasm</code> MIME types (<code className="text-slate-300 font-mono">application/wasm</code>), WebGL rendering, Web Audio with autoplay unlocked (<code className="text-slate-300 font-mono">mediaPlaybackRequiresUserGesture = false</code>), and IndexedDB for game progress saves.
-            </p>
-          </div>
-        </div>
-
-        {/* Step-by-Step Instructions */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-            Quick 2-Step Integration For Your Game
-          </h3>
-
-          <div className="space-y-3">
-            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white flex items-center gap-2">
-                  <span className="text-emerald-400">Step 1:</span> Build your game and copy <code className="text-emerald-300 font-mono">/dist</code> files into <code className="text-emerald-300 font-mono">assets/</code>
-                </span>
-                <button
-                  onClick={() => copyToClipboard('npm run build && cp -r dist/* ../AndroidApp/app/src/main/assets/', 'step-build')}
-                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  {copiedId === 'step-build' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  Copy command
-                </button>
-              </div>
-              <div className="bg-slate-900 rounded-xl p-3 font-mono text-xs text-slate-300 overflow-x-auto">
-                # Inside your Node.js game directory:
-                <br />
-                <span className="text-emerald-400">npm run build</span>
-                <br />
-                # Copy dist files into the Android project assets:
-                <br />
-                <span className="text-emerald-400">cp -r dist/* /path/to/android-project/app/src/main/assets/</span>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white flex items-center gap-2">
-                  <span className="text-emerald-400">Step 2:</span> Trigger CafeBazaar purchases in your game code (Promise API)
-                </span>
-                <button
-                  onClick={() => copyToClipboard(`// In your JavaScript or TypeScript game code:
-async function purchaseCoins() {
-  try {
-    // 1. Trigger CafeBazaar in-app purchase dialog
-    const purchase = await window.CafeBazaar.purchase('coins_100');
-    console.log('Purchase successful! Token:', purchase.purchaseToken);
-
-    // 2. Consume token to grant virtual items (for consumable items)
-    await window.CafeBazaar.consumePurchase(purchase.purchaseToken);
-    
-    // 3. Credit coins to player
-    player.coins += 100;
-    alert('Purchased 100 Coins successfully!');
-  } catch (error) {
-    console.error('Purchase failed or canceled:', error);
-  }
-}`, 'step-code')}
-                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  {copiedId === 'step-code' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  Copy code
-                </button>
-              </div>
-              <div className="bg-slate-900 rounded-xl p-3 font-mono text-xs text-slate-300 overflow-x-auto">
-                <pre className="text-indigo-200">
-{`// In your JavaScript, TypeScript, or game loop:
-async function purchaseCoins() {
-  try {
-    const purchase = await window.CafeBazaar.purchase('coins_100');
-    await window.CafeBazaar.consumePurchase(purchase.purchaseToken);
-    player.coins += 100;
-  } catch (error) {
-    console.error('Purchase canceled:', error);
-  }
-}`}
-                </pre>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Project Structure Included in APK */}
+      {/* Included files */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-3">
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <FolderCheck className="w-4 h-4 text-emerald-400" />
             <h3 className="text-xs font-bold uppercase tracking-wider text-white">
-              Files Included in Your Generated Android Project
+              Project Architecture Components
             </h3>
           </div>
           <span className="text-xs font-mono text-emerald-400">
-            Poolakey v2.2.0 • Gradle 8.5 • Kotlin 1.9.23
+            Poolakey v2.2.0 • Adivery v4.9.0 • Gradle 8.5
           </span>
         </div>
-
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 text-xs font-mono">
           <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300 flex items-center gap-2">
             <span className="text-emerald-400">✓</span> MainActivity.kt
@@ -396,19 +250,19 @@ async function purchaseCoins() {
             <span className="text-emerald-400">✓</span> WebAppBridge.kt
           </div>
           <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300 flex items-center gap-2">
+            <span className="text-emerald-400">✓</span> AdiveryManager.kt
+          </div>
+          <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300 flex items-center gap-2">
+            <span className="text-emerald-400">✓</span> AdiveryConfig.kt
+          </div>
+          <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300 flex items-center gap-2">
             <span className="text-emerald-400">✓</span> CafeBazaarBillingManager.kt
-          </div>
-          <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300 flex items-center gap-2">
-            <span className="text-emerald-400">✓</span> CafeBazaarConfig.kt
-          </div>
-          <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300 flex items-center gap-2">
-            <span className="text-emerald-400">✓</span> AndroidManifest.xml
           </div>
           <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300 flex items-center gap-2">
             <span className="text-emerald-400">✓</span> android-bridge.js
           </div>
           <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300 flex items-center gap-2">
-            <span className="text-emerald-400">✓</span> gradlew &amp; wrapper
+            <span className="text-emerald-400">✓</span> bazaar-bridge.esm.js
           </div>
           <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300 flex items-center gap-2">
             <span className="text-emerald-400">✓</span> build-apk.yml (CI)

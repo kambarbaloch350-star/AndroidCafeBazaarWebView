@@ -39,18 +39,6 @@ class WebAppAssetResolver(private val context: Context) {
         }
     }
 
-    /**
-     * Cache whether root assets has index.html
-     */
-    private val hasRootIndex: Boolean by lazy {
-        try {
-            val list = assetManager.list("")
-            list?.contains("index.html") == true
-        } catch (e: Exception) {
-            false
-        }
-    }
-
     fun findEntryPointUrl(): String {
         return VIRTUAL_BASE_URL
     }
@@ -70,7 +58,6 @@ class WebAppAssetResolver(private val context: Context) {
         }
 
         val candidates = mutableListOf<String>()
-
         if (hasDistFolder) {
             if (!path.startsWith("dist/")) {
                 candidates.add("dist/$path")

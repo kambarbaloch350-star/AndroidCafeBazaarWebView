@@ -5,7 +5,6 @@ package com.emochi.quickgames
  * Application: com.emochi.quickgames
  */
 object CafeBazaarConfig {
-
     /**
      * The application package name registered in CafeBazaar.
      */

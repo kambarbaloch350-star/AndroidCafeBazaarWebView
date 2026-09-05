@@ -23,14 +23,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Wheel Prizes (8 Sectors)
     const WHEEL_SECTORS = [
-        { label: '۵۰ سکه', coins: 50, color: '#f59e0b' },
-        { label: '۱۰۰ سکه', coins: 100, color: '#6366f1' },
-        { label: '۲۵۰ سکه', coins: 250, color: '#10b981' },
-        { label: '۵۰۰ سکه', coins: 500, color: '#ec4899' },
-        { label: '۱,۰۰۰ سکه', coins: 1000, color: '#3b82f6' },
-        { label: 'جک‌پات ۲۵۰۰', coins: 2500, color: '#8b5cf6' },
-        { label: '۷۵ سکه', coins: 75, color: '#14b8a6' },
-        { label: '۳۰۰ سکه', coins: 300, color: '#f97316' }
+        { label: '50 سکه', coins: 50, color: '#f59e0b' },
+        { label: '100 سکه', coins: 100, color: '#6366f1' },
+        { label: '250 سکه', coins: 250, color: '#10b981' },
+        { label: '500 سکه', coins: 500, color: '#ec4899' },
+        { label: '1000 سکه', coins: 1000, color: '#3b82f6' },
+        { label: '2500 سکه', coins: 2500, color: '#8b5cf6' },
+        { label: '75 سکه', coins: 75, color: '#14b8a6' },
+        { label: '300 سکه', coins: 300, color: '#f97316' }
     ];
 
     // SKU to Coins Map
@@ -50,18 +50,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Check bridge availability
     if (window.CafeBazaar && window.CafeBazaar.isAvailable()) {
-        setStatus(true, 'متصل به کافه‌بازار و ادیوری');
+        setStatus(true, 'متصل به کافه‌بازار');
     } else {
-        setStatus(true, 'آماده بازی (محیط وب / نیتیو)');
+        setStatus(true, 'آماده اجرا (حالت شبیه‌ساز)');
     }
 
     // Bridge readiness events
     window.addEventListener('CafeBazaarBridgeReady', () => {
-        setStatus(true, 'سرویس کافه‌بازار متصل شد');
+        setStatus(true, 'پل کافه‌بازار فعال شد');
     });
 
     window.addEventListener('AdiveryBridgeReady', () => {
-        console.log('[QuickGames] Adivery Bridge Ready');
+        console.log('[QuickGames] Adivery Bridge Ready and Connected');
     });
 
     // =========================================================================
@@ -72,14 +72,13 @@ document.addEventListener('DOMContentLoaded', () => {
         coinBalance += 30; // 30 coins reward for clearing level
         localStorage.setItem('game_level', currentLevel.toString());
         localStorage.setItem('user_coins', coinBalance.toString());
-
         updateLevelDisplay();
         updateCoinDisplay();
-        showToast(`مرحله ${currentLevel - 1} با موفقیت به پایان رسید! (+۳۰ سکه)`, 'success');
+        showToast(`مرحله ${currentLevel - 1} با موفقیت تمام شد! (+۳۰ سکه)`, 'success');
 
         // Every 2 levels: Show Adivery Interstitial Ad!
         if (currentLevel % 2 === 0) {
-            showToast(`آماده‌سازی تبلیغ بین‌راهی ادیوری برای مرحله ${currentLevel}...`, 'info');
+            showToast(`نمایش تبلیغ بین‌صفحه‌ای بعد از مرحله ${currentLevel}...`, 'info');
             try {
                 if (window.Adivery && typeof window.Adivery.showInterstitial === 'function') {
                     await window.Adivery.showInterstitial();
@@ -122,9 +121,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.handleSpinWheel = async function () {
         if (isSpinning) return;
-
         btnSpinWheel.disabled = true;
-        btnSpinWheel.innerHTML = '<span class="spinner"></span> در حال تماشای تبلیغ ادیوری...';
+        btnSpinWheel.innerHTML = '<span class="spinner"></span> در حال بارگذاری ویدیو...';
 
         try {
             // Request Adivery Rewarded Video Ad
@@ -136,13 +134,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (rewardResult && rewardResult.rewardGranted) {
                 // Ad completed! Spin the wheel
                 isSpinning = true;
-                btnSpinWheel.innerHTML = '🎡 گردونه در حال چرخش...';
+                btnSpinWheel.innerHTML = 'گردونه در حال چرخش...';
 
                 // Pick random winning sector
                 const winningIndex = Math.floor(Math.random() * WHEEL_SECTORS.length);
                 const prize = WHEEL_SECTORS[winningIndex];
-
                 const sliceAngle = 360 / WHEEL_SECTORS.length;
+
                 // Target angle so winning sector points to top
                 const targetSectorAngle = 360 - (winningIndex * sliceAngle + (sliceAngle / 2));
                 // Add 5 full rotations (1800 deg)
@@ -156,22 +154,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     coinBalance += prize.coins;
                     localStorage.setItem('user_coins', coinBalance.toString());
                     updateCoinDisplay();
-
-                    showToast(`🎉 تبریک! شما برنده ${prize.label} از گردونه شانس شدید!`, 'success');
+                    showToast(`تبریک! شما ${prize.label} برنده شدید!`, 'success');
                     btnSpinWheel.disabled = false;
-                    btnSpinWheel.innerHTML = '<span class="btn-icon">🎬</span> چرخاندن مجدد با تماشای تبلیغ ادیوری';
+                    btnSpinWheel.innerHTML = '<span class="btn-icon">🎡</span> <span>چرخاندن گردونه (تماشای ویدیوی جایزه‌دار)</span>';
                 }, 3700);
-
             } else {
-                showToast('برای دریافت شانس گردونه، باید ویدیوی تبلیغ را تا انتها مشاهده کنید.', 'error');
+                showToast('مشاهده ویدیو تکمیل نشد یا تبلیغ در دسترس نیست.', 'error');
                 btnSpinWheel.disabled = false;
-                btnSpinWheel.innerHTML = '<span class="btn-icon">🎬</span> چرخاندن گردونه با تماشای تبلیغ ادیوری';
+                btnSpinWheel.innerHTML = '<span class="btn-icon">🎡</span> <span>چرخاندن گردونه (تماشای ویدیوی جایزه‌دار)</span>';
             }
         } catch (err) {
             console.error('[QuickGames] Wheel reward error:', err);
-            showToast('خطا در دریافت تبلیغ ادیوری. لطفاً مجدداً امتحان کنید.', 'error');
+            showToast('خطا در بارگذاری تبلیغ جایزه‌دار.', 'error');
             btnSpinWheel.disabled = false;
-            btnSpinWheel.innerHTML = '<span class="btn-icon">🎬</span> چرخاندن گردونه با تماشای تبلیغ ادیوری';
+            btnSpinWheel.innerHTML = '<span class="btn-icon">🎡</span> <span>چرخاندن گردونه (تماشای ویدیوی جایزه‌دار)</span>';
         }
     };
 
@@ -180,18 +176,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // =========================================================================
     window.handlePurchase = async function (sku) {
         const coinAmount = SKU_COINS_MAP[sku] || 250;
-        showToast(`در حال اتصال به درگاه پرداخت کافه‌بازار برای [${sku}]...`, 'info');
+        showToast(`ارسال درخواست خرید [${sku}]...`, 'info');
 
         try {
             const result = await window.CafeBazaar.purchase(sku, `order_${Date.now()}`);
-
             if (result && result.success) {
                 // Grant coins immediately
                 coinBalance += coinAmount;
                 localStorage.setItem('user_coins', coinBalance.toString());
                 updateCoinDisplay();
-
-                showToast(`🎉 خرید بسته ${coinAmount} سکه با موفقیت انجام شد!`, 'success');
+                showToast(`خرید موفق! ${coinAmount} سکه به حساب شما اضافه شد.`, 'success');
 
                 // AUTOMATIC SILENT CONSUMPTION:
                 // Consume token in background so product is immediately repurchasable without any manual user effort
@@ -201,11 +195,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         .catch(err => console.warn('[CafeBazaar] Auto-consume note:', err));
                 }
             } else {
-                showToast(`خرید لغو شد یا با خطا مواجه شد: ${result?.message || 'لغو توسط کاربر'}`, 'error');
+                showToast(`خطا در خرید: ${result?.message || 'تراکنش لغو شد'}`, 'error');
             }
         } catch (err) {
             console.error('[CafeBazaar] Purchase error:', err);
-            showToast(`خطا در فرآیند خرید: ${err.message || 'خطای شبکه یا لغو خرید'}`, 'error');
+            showToast(`خطا: ${err.message || 'عملیات ناموفق بود'}`, 'error');
         }
     };
 
@@ -233,7 +227,6 @@ document.addEventListener('DOMContentLoaded', () => {
         toast.className = `toast toast-${type}`;
         toast.textContent = message;
         toastContainer.appendChild(toast);
-
         setTimeout(() => {
             toast.classList.add('toast-fade-out');
             setTimeout(() => toast.remove(), 300);

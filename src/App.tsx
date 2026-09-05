@@ -2,22 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { 
   Smartphone, 
   Code2, 
-  FolderTree, 
   Terminal, 
-  CheckCircle2, 
   Copy, 
   Check, 
   Download, 
   Package, 
   Play, 
-  ShieldCheck, 
-  Coins, 
-  Trophy,
-  Sparkles,
-  Zap,
-  Volume2,
-  Tv,
-  Eye
+  Sparkles, 
+  Zap, 
+  Tv
 } from 'lucide-react';
 import { PROJECT_FILES } from './data/projectFiles';
 import { ProjectFile, BillingLogItem } from './types';
@@ -26,7 +19,7 @@ import { ApkBuildGuide } from './components/ApkBuildGuide';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'preview' | 'apk' | 'code' | 'logcat'>('preview');
-  const [selectedFile, setSelectedFile] = useState<ProjectFile>(PROJECT_FILES[4]); // CafeBazaarConfig.kt or MainActivity
+  const [selectedFile, setSelectedFile] = useState<ProjectFile>(PROJECT_FILES[4]); // AdiveryConfig.kt or WebAppBridge
   const [copied, setCopied] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -42,7 +35,6 @@ export default function App() {
   const [rewardedCountdown, setRewardedCountdown] = useState<number>(3);
   const [isPurchaseSheetOpen, setIsPurchaseSheetOpen] = useState<boolean>(false);
   const [showBanner, setShowBanner] = useState<boolean>(true);
-
   const [sheetProduct, setSheetProduct] = useState<{ id: string; name: string; price: string; coins: number }>({
     id: 'coin_pack_250',
     name: 'بسته ۲۵۰ سکه',
@@ -64,7 +56,7 @@ export default function App() {
       timestamp: '10:00:01.180',
       tag: 'AdiveryManager',
       level: 'I',
-      message: 'Adivery SDK configured in Production mode. Pre-caching Interstitial & Rewarded placements'
+      message: 'Adivery SDK v4.9.0 configured. Pre-caching Interstitial & Rewarded placements'
     },
     {
       id: '3',
@@ -78,7 +70,7 @@ export default function App() {
       timestamp: '10:00:01.500',
       tag: 'WebAppBridge',
       level: 'I',
-      message: 'Exposed window.CafeBazaar and window.Adivery to HTML5 web game'
+      message: 'Exposed window.CafeBazaar and window.Adivery (fixed with full parameter overloads)'
     }
   ]);
 
@@ -173,10 +165,10 @@ export default function App() {
   const COIN_PACKS = [
     { id: 'coin_pack_250', name: 'بسته ۲۵۰ سکه', price: '۲۰,۰۰۰ تومان', coins: 250 },
     { id: 'coin_pack_750', name: 'بسته ۷۵۰ سکه', price: '۶۰,۰۰۰ تومان', coins: 750 },
-    { id: 'coin_pack_2000', name: 'بسته ۲,۰۰۰ سکه (محبوب)', price: '۱۴۰,۰۰۰ تومان', coins: 2000, featured: true },
-    { id: 'coin_pack_5000', name: 'بسته ۵,۰۰۰ سکه', price: '۳۰۰,۰۰۰ تومان', coins: 5000 },
-    { id: 'coin_pack_10000', name: 'بسته ۱۰,۰۰۰ سکه', price: '۵۰۰,۰۰۰ تومان', coins: 10000 },
-    { id: 'coin_pack_25000', name: 'بسته ۲۵,۰۰۰ سکه مگا', price: '۱,۰۰۰,۰۰۰ تومان', coins: 25000, jackpot: true }
+    { id: 'coin_pack_2000', name: 'بسته ۲۰۰۰ سکه (ویژه)', price: '۱۴۰,۰۰۰ تومان', coins: 2000, featured: true },
+    { id: 'coin_pack_5000', name: 'بسته ۵۰۰۰ سکه', price: '۳۰۰,۰۰۰ تومان', coins: 5000 },
+    { id: 'coin_pack_10000', name: 'بسته ۱۰۰۰۰ سکه', price: '۵۰۰,۰۰۰ تومان', coins: 10000 },
+    { id: 'coin_pack_25000', name: 'بسته ۲۵۰۰۰ سکه رویال', price: '۱,۰۰۰,۰۰۰ تومان', coins: 25000, jackpot: true }
   ];
 
   const startPurchaseFlow = (pack: typeof COIN_PACKS[0]) => {
@@ -189,7 +181,6 @@ export default function App() {
     setIsPurchaseSheetOpen(false);
     const token = 'cb_tok_' + Math.random().toString(36).substring(2, 12);
     addLog('PoolakeySDK', 'I', `Purchase SUCCEEDED for ${sheetProduct.id} (token=${token})`);
-    // Automatic consumption in background (removing manual token management)
     addLog('CafeBazaarBilling', 'I', `Auto-consuming purchase token for consumable pack: ${sheetProduct.id}`);
     setCoins(prev => prev + sheetProduct.coins);
     addLog('WebAppConsole', 'I', `Credited +${sheetProduct.coins} coins to player wallet. Ready for next purchase!`);
@@ -213,7 +204,7 @@ export default function App() {
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              CafeBazaar In-App Billing (4X Prices) &bull; Adivery Interstitial &amp; Rewarded Ads
+              Adivery Ads Bridge (Fixed) &bull; CafeBazaar In-App Billing (4X Prices)
             </p>
           </div>
         </div>
@@ -223,7 +214,7 @@ export default function App() {
           <div className="flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700/60">
             <button
               onClick={() => setActiveTab('preview')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'preview'
                   ? 'bg-emerald-500 text-slate-950 shadow-sm'
                   : 'text-slate-400 hover:text-white'
@@ -234,7 +225,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab('apk')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'apk'
                   ? 'bg-amber-400 text-slate-950 shadow-sm'
                   : 'text-amber-400/90 hover:text-amber-300'
@@ -245,7 +236,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab('code')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'code'
                   ? 'bg-indigo-500 text-white shadow-sm'
                   : 'text-slate-400 hover:text-white'
@@ -256,7 +247,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab('logcat')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'logcat'
                   ? 'bg-slate-700 text-white shadow-sm'
                   : 'text-slate-400 hover:text-white'
@@ -332,27 +323,30 @@ export default function App() {
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-white">
                       <span>⚔️</span>
-                      <span>پیشرفت مراحل بازی</span>
+                      <span>پیشروی در مراحل بازی</span>
                     </div>
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-950/80 text-indigo-400 border border-indigo-800/40 font-bold">
                       مرحله {currentLevel}
                     </span>
                   </div>
+
                   <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
                     <div 
                       className="h-full bg-gradient-to-r from-emerald-500 to-indigo-500 transition-all duration-300"
                       style={{ width: `${(currentLevel % 2 === 0) ? 100 : 50}%` }}
                     ></div>
                   </div>
+
                   <p className="text-[10px] text-slate-400">
-                    با عبور از هر ۲ مرحله، تبلیغ بین‌راهی ادیوری (Interstitial) فعال می‌شود.
+                    اتمام هر ۲ مرحله: نمایش تبلیغ ادیوری (Interstitial)
                   </p>
+
                   <button
                     onClick={handleLevelUp}
                     className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-98 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <Zap className="w-3.5 h-3.5 text-amber-300" />
-                    پایان مرحله و دریافت جایزه (+۳۰ سکه)
+                    تکمیل مرحله فعلی (+۳۰ سکه)
                   </button>
                 </div>
 
@@ -361,16 +355,16 @@ export default function App() {
                   <div className="w-full flex justify-between items-center">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-white">
                       <span>🎡</span>
-                      <span>گردونه شانس (ادیوری ویدیویی)</span>
+                      <span>گردونه شانس (ادیوری جایزه‌دار)</span>
                     </div>
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/40 font-semibold">
-                      پاداش‌دار
+                      پاداش ویدیویی
                     </span>
                   </div>
 
                   {/* Wheel Graphical Circle */}
                   <div className="relative w-36 h-36 flex items-center justify-center my-1">
-                    <div className="absolute -top-1.5 text-red-500 text-lg z-10">▼</div>
+                    <div className="absolute -top-1.5 text-red-500 text-lg z-10">🔻</div>
                     <div 
                       className="w-32 h-32 rounded-full border-4 border-slate-700 shadow-lg relative overflow-hidden"
                       style={{
@@ -391,7 +385,7 @@ export default function App() {
                     className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <Tv className="w-3.5 h-3.5" />
-                    {isSpinning ? 'گردونه در حال چرخش...' : 'چرخاندن با تماشای تبلیغ ادیوری'}
+                    {isSpinning ? 'در حال چرخش...' : 'دیدن ویدیوی جایزه‌دار و چرخش گردونه'}
                   </button>
                 </div>
 
@@ -400,7 +394,7 @@ export default function App() {
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-white">
                       <span>🛒</span>
-                      <span>فروشگاه سکه کافه‌بازار (نرخ ۴ برابری)</span>
+                      <span>فروشگاه درون‌برنامه‌ای بازار</span>
                     </div>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-950/80 text-red-400 border border-red-800/40 font-bold">
                       4X Pricing
@@ -421,9 +415,9 @@ export default function App() {
                         <div className="text-xs font-extrabold text-amber-400 mt-1">{pack.price}</div>
                         <button
                           onClick={() => startPurchaseFlow(pack)}
-                          className="w-full py-1 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white rounded-lg text-[11px] font-bold transition-all mt-1"
+                          className="w-full py-1 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white rounded-lg text-[11px] font-bold transition-all mt-1 cursor-pointer"
                         >
-                          خرید
+                          خرید سکه
                         </button>
                       </div>
                     ))}
@@ -434,7 +428,7 @@ export default function App() {
                 {showBanner && (
                   <div className="mt-auto bg-slate-900 border border-slate-800 rounded-xl p-2 flex items-center justify-between text-[11px] text-slate-400">
                     <div className="flex items-center gap-2">
-                      <span className="px-1.5 py-0.5 bg-slate-800 text-[9px] rounded font-bold">تبلیغ ادیوری</span>
+                      <span className="px-1.5 py-0.5 bg-slate-800 text-[9px] rounded font-bold">Ad</span>
                       <span>بنر تبلیغاتی پایینی (Adivery Banner)</span>
                     </div>
                     <span className="text-emerald-400 font-bold">فعال</span>
@@ -448,13 +442,13 @@ export default function App() {
                       <Tv className="w-8 h-8" />
                     </div>
                     <span className="text-xs uppercase font-bold tracking-wider text-indigo-400 mb-1">
-                      تبلیغ بین‌راهی ادیوری (Adivery Interstitial)
+                      تبلیغ تمام‌صفحه ادیوری (Adivery Interstitial)
                     </span>
                     <h3 className="text-base font-bold text-white mb-2">
-                      مرحله {currentLevel} تکمیل شد!
+                      اتمام مرحله {currentLevel}
                     </h3>
                     <p className="text-xs text-slate-400 mb-6 max-w-xs">
-                      این تبلیغ تمام‌صفحه به صورت خودکار بعد از هر ۲ مرحله اجرا می‌شود.
+                      این تبلیغ بین‌صفحه‌ای بعد از اتمام هر ۲ مرحله بازی به کمک پل ارتباطی جاوااسکریپت و کاتلین نمایش داده می‌شود.
                     </p>
                     <button
                       onClick={() => setShowInterstitialAd(false)}
@@ -472,7 +466,7 @@ export default function App() {
                       <Play className="w-8 h-8" />
                     </div>
                     <span className="text-xs uppercase font-bold tracking-wider text-emerald-400 mb-1">
-                      ویدیوی پاداش‌دار ادیوری (Adivery Rewarded Video)
+                      ویدیوی تبلیغاتی جایزه‌دار (Adivery Rewarded Video)
                     </span>
                     <h3 className="text-base font-bold text-white mb-2">
                       در حال پخش ویدیوی تبلیغاتی...
@@ -481,7 +475,7 @@ export default function App() {
                       {rewardedCountdown}
                     </div>
                     <p className="text-xs text-slate-400">
-                      لطفاً تا پایان شمارش صبر کنید تا شانس گردونه فعال شود.
+                      پاداش پس از پایان ویدیو به حساب شما افزوده خواهد شد.
                     </p>
                   </div>
                 )}
@@ -492,13 +486,13 @@ export default function App() {
                     <div className="bg-slate-900 border border-slate-700 rounded-3xl p-4 shadow-2xl flex flex-col gap-3">
                       <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                         <div className="flex items-center gap-2">
-                          <span className="p-1 rounded bg-emerald-500 text-slate-950 font-bold text-xs">کافه‌بازار</span>
-                          <span className="text-xs font-bold text-white">پرداخت درون‌برنامه‌ای</span>
+                          <span className="p-1 rounded bg-emerald-500 text-slate-950 font-bold text-xs">بازار</span>
+                          <span className="text-xs font-bold text-white">درگاه پرداخت درون‌برنامه‌ای بازار</span>
                         </div>
-                        <button onClick={() => setIsPurchaseSheetOpen(false)} className="text-slate-400 text-xs">✕</button>
+                        <button onClick={() => setIsPurchaseSheetOpen(false)} className="text-slate-400 text-xs cursor-pointer">✕</button>
                       </div>
                       <div className="text-xs text-slate-300">
-                        خرید <strong className="text-white">{sheetProduct.name}</strong>
+                        خرید بسته: <strong className="text-white">{sheetProduct.name}</strong>
                       </div>
                       <div className="text-lg font-extrabold text-amber-400">{sheetProduct.price}</div>
                       <div className="flex gap-2 mt-2">
@@ -506,7 +500,7 @@ export default function App() {
                           onClick={confirmPurchase}
                           className="flex-1 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-bold cursor-pointer"
                         >
-                          تایید پرداخت
+                          تایید و پرداخت
                         </button>
                         <button
                           onClick={() => setIsPurchaseSheetOpen(false)}
@@ -521,40 +515,31 @@ export default function App() {
               </div>
             </div>
 
-            {/* Right: Architecture & Instructions Overview */}
+            {/* Right: Architecture & Fixes Overview */}
             <div className="flex-1 flex flex-col gap-4 max-w-xl">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-                <h3 className="text-base font-bold text-white mb-2 flex items-center gap-2">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-emerald-400" />
-                  ویژگی‌های پیاده‌سازی شده در QuickGames
+                  Adivery Bridge Fix Applied
                 </h3>
-                <ul className="text-xs text-slate-300 space-y-2.5 list-disc list-inside">
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  The Adivery advertising bridge between Kotlin Android and JavaScript has been resolved and hardened across all layers:
+                </p>
+                <ul className="text-xs text-slate-300 space-y-2 list-disc list-inside">
                   <li>
-                    <strong className="text-emerald-400">نام بسته جدید:</strong> شناسه بسته به <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">com.emochi.quickgames</code> تغییر یافت.
+                    <strong className="text-emerald-400">Promise Resolvers Unified:</strong> Synchronized <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">window.__pendingRewarded</code> and <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">window.__pendingInterstitial</code> with closure callbacks so promises never hang when ads close or fail.
                   </li>
                   <li>
-                    <strong className="text-emerald-400">تبلیغات ادیوری (Adivery):</strong>
-                    <ul className="pl-5 mt-1 space-y-1 list-circle text-slate-400">
-                      <li>تبلیغ تمام‌صفحه (Interstitial) به صورت خودکار هر ۲ مرحله یک‌بار نمایش داده می‌شود.</li>
-                      <li>گردونه شانس با ویدیوی جایزه‌دار (Rewarded Ad) یکپارچه شد.</li>
-                      <li>بنر تبلیغاتی استاندارد در پایین صفحه قرار گرفت.</li>
-                    </ul>
+                    <strong className="text-emerald-400">Zero-Arg @JavascriptInterface Overloads:</strong> Added explicit zero-argument overloads (<code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">showInterstitial()</code>, <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">showRewarded()</code>, <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">isAdLoaded()</code>) in <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">WebAppBridge.kt</code>, preventing missing method exceptions.
                   </li>
                   <li>
-                    <strong className="text-emerald-400">فروشگاه سکه ۴ برابری (4X Pricing):</strong>
-                    تمام ۶ شناسه درخواستی با نرخ ۴ برابر بازار تعریف شدند:
-                    <code className="block text-[11px] text-amber-300 bg-slate-950 p-2 rounded-lg mt-1 font-mono">
-                      coin_pack_250 (20k), coin_pack_750 (60k), coin_pack_2000 (140k),<br/>
-                      coin_pack_5000 (300k), coin_pack_10000 (500k), coin_pack_25000 (1M)
-                    </code>
+                    <strong className="text-emerald-400">Bridge Helper Protection:</strong> Removed clobbering in <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">MainActivity.kt</code> so <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">android-bridge.js</code> maintains its event listeners.
                   </li>
                   <li>
-                    <strong className="text-emerald-400">حذف مدیریت دستی توکن و مصرف:</strong>
-                    بخش دستی توکن‌ها از رابط کاربری حذف شد و تمام بسته‌های سکه پس از پرداخت موفقیت‌آمیز، به صورت خودکار مصرف (Consume) و سکه‌ها واریز می‌شوند.
+                    <strong className="text-emerald-400">Ad Error &amp; Fallback Handlers:</strong> Added <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">onError</code> and unready ad handling to reject/resolve with descriptive error status instead of freezing.
                   </li>
                   <li>
-                    <strong className="text-emerald-400">حالت Production:</strong>
-                    لاگ‌های دیباگ غیرفعال شده و پروژه کاملاً آماده بیلد نهایی و گیت‌هاب اکشنز است.
+                    <strong className="text-emerald-400">ESM Bridge Updated:</strong> Exported both <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">CafeBazaar</code> and <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">Adivery</code> in <code className="text-emerald-300 bg-slate-950 px-1 py-0.5 rounded">bazaar-bridge.esm.js</code> for Node.js / bundler frameworks.
                   </li>
                 </ul>
               </div>
@@ -566,14 +551,14 @@ export default function App() {
                   className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Code2 className="w-4 h-4" />
-                  مشاهده کدهای کاتلین و تنظیمات گریدل
+                  View Fixed Source Code
                 </button>
                 <button
                   onClick={() => setActiveTab('apk')}
                   className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Package className="w-4 h-4" />
-                  راهنمای بیلد APK در گیت‌هاب
+                  APK Build Instructions
                 </button>
               </div>
             </div>
@@ -592,7 +577,7 @@ export default function App() {
                 <button
                   key={file.path}
                   onClick={() => setSelectedFile(file)}
-                  className={`text-left px-2.5 py-2 rounded-lg text-xs font-mono transition-all flex items-center justify-between ${
+                  className={`text-left px-2.5 py-2 rounded-lg text-xs font-mono transition-all flex items-center justify-between cursor-pointer ${
                     selectedFile.path === file.path
                       ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold'
                       : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
@@ -634,7 +619,7 @@ export default function App() {
                 <span className="text-xs font-bold text-white font-mono">Live Bridge Logcat</span>
                 <button
                   onClick={() => setLogs([])}
-                  className="text-xs text-slate-400 hover:text-white px-2.5 py-1 bg-slate-800 rounded-lg"
+                  className="text-xs text-slate-400 hover:text-white px-2.5 py-1 bg-slate-800 rounded-lg cursor-pointer"
                 >
                   Clear
                 </button>

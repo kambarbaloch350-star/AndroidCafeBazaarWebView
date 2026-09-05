@@ -8,16 +8,14 @@ export async function downloadAndroidProjectZip(
 
   onProgress?.(10, 'Preparing Android Studio project files...');
 
-  // Add all text/source files into the zip archive maintaining directory hierarchy
   ALL_EXPORT_FILES.forEach((file, index) => {
     zip.file(file.path, file.content);
-    const pct = Math.round(10 + (index / ALL_EXPORT_FILES.length) * 60);
+    const pct = Math.round(10 + (index / ALL_EXPORT_FILES.length) * 65);
     onProgress?.(pct, `Packaging ${file.path}...`);
   });
 
-  // Include the Gradle Wrapper binary jar directly in the zip
   try {
-    onProgress?.(72, 'Including gradle-wrapper.jar binary...');
+    onProgress?.(78, 'Checking gradle-wrapper.jar binary...');
     const jarResponse = await fetch('/gradle/wrapper/gradle-wrapper.jar');
     if (jarResponse.ok) {
       const jarBuffer = await jarResponse.arrayBuffer();
@@ -27,7 +25,8 @@ export async function downloadAndroidProjectZip(
     console.warn('Could not load local wrapper jar into zip:', err);
   }
 
-  onProgress?.(80, 'Compressing project archive...');
+  onProgress?.(85, 'Compressing project archive with DEFLATE...');
+
   const blob = await zip.generateAsync({
     type: 'blob',
     compression: 'DEFLATE',
@@ -36,11 +35,10 @@ export async function downloadAndroidProjectZip(
 
   onProgress?.(95, 'Initiating download...');
 
-  // Trigger browser download
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'AndroidCafeBazaarWebView-Studio-Project.zip';
+  link.download = 'QuickGames-Android-Adivery-CafeBazaar.zip';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

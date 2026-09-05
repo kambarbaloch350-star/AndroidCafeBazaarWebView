@@ -3,6 +3,7 @@
  * QuickGames Application Style (com.emochi.quickgames)
  * High performance, responsive dark layout designed for mobile WebView.
  */
+
 :root {
     --bg-dark: #090d16;
     --card-bg: #111827;
@@ -19,10 +20,11 @@
     --text-muted: #9ca3af;
     --radius: 20px;
     --radius-sm: 12px;
+    box-sizing: border-box;
 }
 
-* {
-    box-sizing: border-box;
+*, *::before, *::after {
+    box-sizing: inherit;
     margin: 0;
     padding: 0;
     -webkit-tap-highlight-color: transparent;
@@ -233,7 +235,7 @@ body {
     font-weight: 600;
 }
 
-/* 1. Level Progress Card */
+/* Level Progress Card */
 .game-card {
     display: flex;
     flex-direction: column;
@@ -282,7 +284,7 @@ body {
     transform: scale(0.98);
 }
 
-/* 2. Lucky Spinning Wheel */
+/* Lucky Spinning Wheel */
 .wheel-card {
     display: flex;
     flex-direction: column;
@@ -412,7 +414,7 @@ body {
     text-align: center;
 }
 
-/* 3. Products Grid (4x Market Prices) */
+/* Products Grid (4x Market Prices) */
 .products-grid {
     display: grid;
     grid-template-columns: 1fr;

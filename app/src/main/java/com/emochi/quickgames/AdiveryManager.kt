@@ -44,8 +44,8 @@ class AdiveryManager(
             override fun onInterstitialAdLoaded(placementId: String) {
                 if (placementId == interstitialPlacementId) {
                     isInterstitialLoaded = true
-                    dispatchAdPlacementEvent("interstitial_loaded", placementId)
                 }
+                dispatchAdPlacementEvent("interstitial_loaded", placementId)
             }
 
             override fun onInterstitialAdShown(placementId: String) {
@@ -56,14 +56,16 @@ class AdiveryManager(
                 isInterstitialLoaded = false
                 dispatchAdPlacementEvent("interstitial_closed", placementId)
                 // Pre-cache next interstitial ad for seamless flow
-                Adivery.prepareInterstitialAd(activity, interstitialPlacementId)
+                if (interstitialPlacementId.isNotBlank()) {
+                    Adivery.prepareInterstitialAd(activity, interstitialPlacementId)
+                }
             }
 
             override fun onRewardedAdLoaded(placementId: String) {
                 if (placementId == rewardedPlacementId) {
                     isRewardedLoaded = true
-                    dispatchAdPlacementEvent("rewarded_loaded", placementId)
                 }
+                dispatchAdPlacementEvent("rewarded_loaded", placementId)
             }
 
             override fun onRewardedAdShown(placementId: String) {
@@ -78,7 +80,9 @@ class AdiveryManager(
                 }
                 dispatchAdEvent("rewarded_closed", payload)
                 // Pre-cache next rewarded ad
-                Adivery.prepareRewardedAd(activity, rewardedPlacementId)
+                if (rewardedPlacementId.isNotBlank()) {
+                    Adivery.prepareRewardedAd(activity, rewardedPlacementId)
+                }
             }
 
             override fun onInterstitialAdClicked(placementId: String) {
@@ -87,6 +91,14 @@ class AdiveryManager(
 
             override fun onRewardedAdClicked(placementId: String) {
                 dispatchAdPlacementEvent("rewarded_clicked", placementId)
+            }
+
+            override fun onError(reason: String) {
+                val payload = JSONObject().apply {
+                    put("placementId", "")
+                    put("error", reason)
+                }
+                dispatchAdEvent("ad_error", payload)
             }
         })
     }
@@ -98,6 +110,12 @@ class AdiveryManager(
             true
         } else {
             Adivery.prepareInterstitialAd(activity, targetId)
+            // Dispatch ad_error so web listener does not hang if ad is not loaded
+            val payload = JSONObject().apply {
+                put("placementId", targetId)
+                put("error", "INTERSTITIAL_NOT_LOADED")
+            }
+            dispatchAdEvent("ad_error", payload)
             false
         }
     }
@@ -109,12 +127,19 @@ class AdiveryManager(
             true
         } else {
             Adivery.prepareRewardedAd(activity, targetId)
+            // Dispatch ad_error so web listener does not hang if ad is not loaded
+            val payload = JSONObject().apply {
+                put("placementId", targetId)
+                put("error", "REWARDED_NOT_LOADED")
+            }
+            dispatchAdEvent("ad_error", payload)
             false
         }
     }
 
-    fun isAdLoaded(placementId: String): Boolean {
-        return Adivery.isLoaded(placementId)
+    fun isAdLoaded(placementId: String? = null): Boolean {
+        val targetId = if (!placementId.isNullOrBlank()) placementId else interstitialPlacementId
+        return Adivery.isLoaded(targetId)
     }
 
     private fun dispatchAdPlacementEvent(type: String, placementId: String) {

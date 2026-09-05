@@ -1,10 +1,8 @@
 # ProGuard and R8 rules for Android WebView and CafeBazaar Poolakey SDK
-
 # Keep JavascriptInterface methods for WebAppBridge
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
-
 -keepattributes JavascriptInterface
 -keepclassmembers class com.emochi.quickgames.WebAppBridge {
     <methods>;

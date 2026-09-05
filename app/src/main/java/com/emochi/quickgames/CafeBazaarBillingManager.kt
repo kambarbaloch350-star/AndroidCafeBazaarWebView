@@ -17,7 +17,6 @@ import java.lang.ref.WeakReference
  * Automatic token consumption is enabled for all coin packs.
  */
 class CafeBazaarBillingManager(activity: ComponentActivity) {
-
     companion object {
         const val TAG = "CafeBazaarBilling"
     }
@@ -51,7 +50,6 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
             } else {
                 SecurityCheck.Disable
             }
-
             val paymentConfig = PaymentConfiguration(localSecurityCheck = securityCheck)
             payment = Payment(context = activity.applicationContext, config = paymentConfig)
         } catch (e: Exception) {
@@ -136,7 +134,6 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
                 productId = productId,
                 payload = payload ?: "order_${System.currentTimeMillis()}"
             )
-
             paymentInstance.purchaseProduct(
                 registry = activity.activityResultRegistry,
                 request = purchaseRequest
@@ -167,7 +164,6 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
                             message = "Purchase completed successfully"
                         )
                     )
-
                     // Auto-consume consumable coin packs so user doesn't have to manually manage tokens!
                     if (purchaseInfo.productId.startsWith("coin_pack_")) {
                         consumePurchase(purchaseInfo.purchaseToken)
