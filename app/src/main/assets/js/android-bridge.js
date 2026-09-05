@@ -237,7 +237,7 @@
             } else if (event.type === 'interstitial_closed') {
                 resolvePendingInterstitial(true);
             } else if (event.type === 'ad_error') {
-                const errorMsg = event.data?.error || 'AD_ERROR';
+                const errorMsg = (event.data && event.data.error) ? event.data.error : 'AD_ERROR';
                 resolvePendingRewarded({ rewardGranted: false, error: errorMsg });
                 resolvePendingInterstitial(false);
             }

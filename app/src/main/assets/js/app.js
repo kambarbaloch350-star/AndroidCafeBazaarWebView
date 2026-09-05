@@ -195,7 +195,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         .catch(err => console.warn('[CafeBazaar] Auto-consume note:', err));
                 }
             } else {
-                showToast(`خطا در خرید: ${result?.message || 'تراکنش لغو شد'}`, 'error');
+                const msg = (result && result.message) ? result.message : 'تراکنش لغو شد';
+                showToast(`خطا در خرید: ${msg}`, 'error');
             }
         } catch (err) {
             console.error('[CafeBazaar] Purchase error:', err);
