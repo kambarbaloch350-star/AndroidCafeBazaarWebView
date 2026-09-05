@@ -1,4 +1,5 @@
 <resources>
+    <!-- Base application theme with NoActionBar for full-screen webview experience -->
     <style name="Theme.AndroidCafeBazaarWebView" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryVariant">@color/primary_dark</item>

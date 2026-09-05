@@ -1,0 +1,6 @@
+{
+  "name": "QuickGames",
+  "description": "Native Android Kotlin WebView app with CafeBazaar In-App Billing and Adivery Ads bridge for Node.js games.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

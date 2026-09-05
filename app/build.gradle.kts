@@ -37,6 +37,10 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        freeCompilerArgs = freeCompilerArgs + listOf(
+            "-Xskip-metadata-version-check",
+            "-Xskip-prerelease-check"
+        )
     }
 
     buildFeatures {
@@ -50,6 +54,10 @@ android {
 }
 
 dependencies {
+    // Enforce Kotlin 2.1.10 BOM to align all transitive stdlib and coroutines
+    implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.1.10"))
+    implementation("org.jetbrains.kotlin:kotlin-stdlib")
+
     // Official CafeBazaar In-App Billing SDK (Poolakey v2.2.0)
     implementation("com.github.cafebazaar.Poolakey:poolakey:2.2.0")
 
@@ -63,6 +71,6 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.8.2")
     implementation("androidx.webkit:webkit:1.10.0")
 
-    // Coroutines for background tasks
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    // Coroutines for background tasks if needed
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.emochi.quickgames">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Permissions required for network access, WebView, and Adivery ads -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -8,7 +7,9 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <!--
-      Android 11+ Package Visibility declarations for CafeBazaar IPC
+      Android 11+ (API level 30+) Package Visibility declarations:
+      Poolakey connects to CafeBazaar via AIDL IPC. We explicitly declare
+      CafeBazaar's package name and billing intent action to ensure service binding succeeds.
     -->
     <queries>
         <package android:name="com.farsitel.bazaar" />

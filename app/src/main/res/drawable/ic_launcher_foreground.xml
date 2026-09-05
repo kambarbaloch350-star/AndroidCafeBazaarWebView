@@ -4,6 +4,7 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Shopping bag / marketplace icon representing CafeBazaar Store & Game Coins -->
     <path
         android:fillColor="#FFFFFF"
         android:pathData="M38,36c0,-8.84 7.16,-16 16,-16s16,7.16 16,16h-6c0,-5.52 -4.48,-10 -10,-10s-10,4.48 -10,10h-6z" />
