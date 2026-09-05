@@ -244,14 +244,15 @@ class AdiveryManager(
             override fun onRewardedAdClicked(placementId: String) {
                 dispatchAdPlacementEvent("rewarded_clicked", placementId)
             }
-            override fun onError(placementId: String, reason: String) {
-                val payload = JSONObject().apply {
-                    put("placementId", placementId)
-                    put("error", reason)
-                }
-                dispatchAdEvent("ad_error", payload)
-            }
         })
+    }
+
+    fun dispatchAdError(placementId: String, reason: String) {
+        val payload = JSONObject().apply {
+            put("placementId", placementId)
+            put("error", reason)
+        }
+        dispatchAdEvent("ad_error", payload)
     }
 
     fun showInterstitial(placementId: String? = null): Boolean {
