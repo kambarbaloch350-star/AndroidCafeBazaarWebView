@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>QuickGames - CafeBazaar & Adivery</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Game Header & Coins Balance -->
+        <header class="header">
+            <div class="header-brand">
+                <div class="brand-avatar">🎮</div>
+                <div class="title-group">
+                    <h1>QuickGames</h1>
+                    <p>com.emochi.quickgames</p>
+                </div>
+            </div>
+            <div class="wallet-badge">
+                <span class="coin-icon">🪙</span>
+                <span id="coinBalance" class="balance-amount">50</span>
+                <span class="balance-unit">سکه</span>
+            </div>
+        </header>
+
+        <!-- Level Progression (Adivery Interstitial every 2 levels) -->
+        <section class="game-section">
+            <div class="section-header">
+                <h2>پیشرفت مراحل بازی</h2>
+                <span class="ad-notice-tag">تبلیغ بین‌راهی هر ۲ مرحله</span>
+            </div>
+            <div class="game-card">
+                <div class="level-progress-bar-wrap">
+                    <div id="levelProgressBar" class="level-progress-bar" style="width: 50%;"></div>
+                </div>
+                <button id="btnCompleteLevel" class="btn-primary btn-game" onclick="handleLevelUp()">
+                    پایان مرحله و دریافت جایزه (+۳۰ سکه)
+                </button>
+            </div>
+        </section>
+
+        <!-- Lucky Spinning Wheel (Adivery Rewarded Video) -->
+        <section class="wheel-section">
+            <div class="section-header">
+                <h2>گردونه شانس (جایزه ویدیویی ادیوری)</h2>
+                <span class="reward-tag">ویدیو پاداش‌دار</span>
+            </div>
+            <div class="wheel-card">
+                <div class="wheel-container">
+                    <div class="wheel-pointer">▼</div>
+                    <div id="luckyWheel" class="lucky-wheel">
+                        <div class="wheel-center">🎯</div>
+                    </div>
+                </div>
+                <button id="btnSpinWheel" class="btn-spin" onclick="handleSpinWheel()">
+                    چرخاندن گردونه با تماشای تبلیغ ادیوری
+                </button>
+            </div>
+        </section>
+
+        <!-- CafeBazaar Store (4x Market Prices) -->
+        <section class="store-section">
+            <div class="section-header">
+                <h2>فروشگاه سکه کافه‌بازار (نرخ ۴ برابری)</h2>
+                <span class="bazaar-tag">پرداخت درون‌برنامه‌ای</span>
+            </div>
+            <div class="products-grid">
+                <!-- coin_pack_250: 20,000 Tomans -->
+                <div class="product-card">
+                    <div class="product-names">
+                        <h3>بسته ۲۵۰ سکه</h3>
+                        <span class="sku-label">coin_pack_250</span>
+                    </div>
+                    <div class="price-box">۲۰,۰۰۰ تومان (4X)</div>
+                    <button class="btn-buy" onclick="handlePurchase('coin_pack_250')">خرید</button>
+                </div>
+                <!-- coin_pack_750: 60,000 Tomans -->
+                <div class="product-card">
+                    <div class="product-names">
+                        <h3>بسته ۷۵۰ سکه</h3>
+                        <span class="sku-label">coin_pack_750</span>
+                    </div>
+                    <div class="price-box">۶۰,۰۰۰ تومان (4X)</div>
+                    <button class="btn-buy" onclick="handlePurchase('coin_pack_750')">خرید</button>
+                </div>
+                <!-- coin_pack_2000: 140,000 Tomans -->
+                <div class="product-card featured">
+                    <div class="product-names">
+                        <h3>بسته ۲,۰۰۰ سکه</h3>
+                        <span class="sku-label">coin_pack_2000</span>
+                    </div>
+                    <div class="price-box">۱۴۰,۰۰۰ تومان (4X)</div>
+                    <button class="btn-buy" onclick="handlePurchase('coin_pack_2000')">خرید</button>
+                </div>
+                <!-- coin_pack_5000: 300,000 Tomans -->
+                <div class="product-card">
+                    <div class="product-names">
+                        <h3>بسته ۵,۰۰۰ سکه</h3>
+                        <span class="sku-label">coin_pack_5000</span>
+                    </div>
+                    <div class="price-box">۳۰۰,۰۰۰ تومان (4X)</div>
+                    <button class="btn-buy" onclick="handlePurchase('coin_pack_5000')">خرید</button>
+                </div>
+                <!-- coin_pack_10000: 500,000 Tomans -->
+                <div class="product-card">
+                    <div class="product-names">
+                        <h3>بسته ۱۰,۰۰۰ سکه</h3>
+                        <span class="sku-label">coin_pack_10000</span>
+                    </div>
+                    <div class="price-box">۵۰۰,۰۰۰ تومان (4X)</div>
+                    <button class="btn-buy" onclick="handlePurchase('coin_pack_10000')">خرید</button>
+                </div>
+                <!-- coin_pack_25000: 1,000,000 Tomans -->
+                <div class="product-card jackpot">
+                    <div class="product-names">
+                        <h3>بسته ۲۵,۰۰۰ سکه مگا</h3>
+                        <span class="sku-label">coin_pack_25000</span>
+                    </div>
+                    <div class="price-box">۱,۰۰۰,۰۰۰ تومان (4X)</div>
+                    <button class="btn-buy" onclick="handlePurchase('coin_pack_25000')">خرید مگا</button>
+                </div>
+            </div>
+        </section>
+        <div id="toastContainer" class="toast-container"></div>
+    </div>
+    <script src="js/android-bridge.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Dependencies & Builds
+node_modules/
+build/
+app/build/
+dist/
+coverage/
+.gradle/
+
+# Never ignore gradle wrapper
+!gradle/wrapper/gradle-wrapper.jar
+
+# Misc
+.DS_Store
+*.log
+.env*
+!.env.example
