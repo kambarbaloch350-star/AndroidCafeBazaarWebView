@@ -14,7 +14,7 @@ object CafeBazaarConfig {
      * The RSA public key from your CafeBazaar Developer Console (https://pishkhan.cafebazaar.ir/).
      * Set this value for client-side cryptographic verification of purchase signatures.
      */
-    const val CAFEBAZAAR_PUBLIC_KEY = ""
+    const val CAFEBAZAAR_PUBLIC_KEY = "MIHNMA0GCSqGSIb3DQEBAQUAA4G7ADCBtwKBrwCqG/cZk+gFYsstZCTOrms/8FnqyIpSWhOklqihA2byrtlDrNlPXSMp4ITAAODxe2+P3nCCDGFgsgFDcgXDoBP8+ePi3r4SHvuWSgLh0yh5cnR/g6nvevYZCV38BNxbSmk7uQe2rnq+GLA4XNyUEq25ctPbzsxjnyizxuX4pUnDcgyyxR6xVJahpeg6szoNYJw4iXDEL9Y94Ex14t3QKorwVrVoQlWTQUHczUlvwysCAwEAAQ=="
 
     /**
      * Official in-app coin pack SKUs configured in CafeBazaar console.
@@ -26,7 +26,7 @@ object CafeBazaarConfig {
     const val SKU_COIN_PACK_5000  = "coin_pack_5000"
     const val SKU_COIN_PACK_10000 = "coin_pack_10000"
     const val SKU_COIN_PACK_25000 = "coin_pack_25000"
-
+no
     /**
      * All supported in-app product identifiers.
      */

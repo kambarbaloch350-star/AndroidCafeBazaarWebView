@@ -16,35 +16,35 @@ class AdiveryManager(
     val interstitialPlacementId: String = AdiveryConfig.PLACEMENT_INTERSTITIAL,
     val rewardedPlacementId: String = AdiveryConfig.PLACEMENT_REWARDED
 ) {
-    companion object {
-        const val TAG = "AdiveryManager"
-    }
-
-    interface AdEventListener {
-        fun onAdEvent(type: String, data: JSONObject)
-    }
+    companion object { const val TAG = "AdiveryManager" }
+    interface AdEventListener { fun onAdEvent(type: String, data: JSONObject) }
 
     private var eventListener: AdEventListener? = null
     private var isInterstitialLoaded = false
     private var isRewardedLoaded = false
+    private var listenerRegistered = false
+    private var pendingRewardedPlacement: String? = null
 
-    fun setEventListener(listener: AdEventListener?) {
-        this.eventListener = listener
-    }
+    fun setEventListener(listener: AdEventListener?) { eventListener = listener }
 
     fun prepareAds() {
+        registerGlobalListenerOnce()
         if (interstitialPlacementId.isNotBlank()) {
-            Adivery.prepareInterstitialAd(activity, interstitialPlacementId)
+            runCatching { Adivery.prepareInterstitialAd(activity, interstitialPlacementId) }
+                .onFailure { Log.e(TAG, "prepare interstitial failed", it) }
         }
         if (rewardedPlacementId.isNotBlank()) {
-            Adivery.prepareRewardedAd(activity, rewardedPlacementId)
+            runCatching { Adivery.prepareRewardedAd(activity, rewardedPlacementId) }
+                .onFailure { Log.e(TAG, "prepare rewarded failed", it) }
         }
+    }
 
+    private fun registerGlobalListenerOnce() {
+        if (listenerRegistered) return
+        listenerRegistered = true
         Adivery.addGlobalListener(object : AdiveryListener() {
             override fun onInterstitialAdLoaded(placementId: String) {
-                if (placementId == interstitialPlacementId) {
-                    isInterstitialLoaded = true
-                }
+                if (placementId == interstitialPlacementId) isInterstitialLoaded = true
                 dispatchAdPlacementEvent("interstitial_loaded", placementId)
             }
 
@@ -53,17 +53,19 @@ class AdiveryManager(
             }
 
             override fun onInterstitialAdClosed(placementId: String) {
-                isInterstitialLoaded = false
+                if (placementId == interstitialPlacementId) isInterstitialLoaded = false
                 dispatchAdPlacementEvent("interstitial_closed", placementId)
-                // Pre-cache next interstitial ad for seamless flow
-                if (interstitialPlacementId.isNotBlank()) {
-                    Adivery.prepareInterstitialAd(activity, interstitialPlacementId)
-                }
+                prepareInterstitial(placementId)
             }
 
             override fun onRewardedAdLoaded(placementId: String) {
                 if (placementId == rewardedPlacementId) {
                     isRewardedLoaded = true
+                    // If JS requested an ad while it was loading, show it now.
+                    if (pendingRewardedPlacement == placementId) {
+                        pendingRewardedPlacement = null
+                        showRewardedNow(placementId)
+                    }
                 }
                 dispatchAdPlacementEvent("rewarded_loaded", placementId)
             }
@@ -73,16 +75,29 @@ class AdiveryManager(
             }
 
             override fun onRewardedAdClosed(placementId: String, isRewarded: Boolean) {
-                isRewardedLoaded = false
-                val payload = JSONObject().apply {
+                if (placementId == rewardedPlacementId) isRewardedLoaded = false
+
+                // Emit the grant FIRST. The WebView can safely award immediately,
+                // without depending on the close callback to deliver the reward.
+                if (isRewarded) {
+                    val granted = JSONObject().apply {
+                        put("placementId", placementId)
+                        put("rewardGranted", true)
+                        put("rewarded", true)
+                        put("success", true)
+                    }
+                    dispatchAdEvent("rewarded_completed", granted)
+                    dispatchAdEvent("reward_granted", granted)
+                }
+
+                val closed = JSONObject().apply {
                     put("placementId", placementId)
                     put("rewardGranted", isRewarded)
+                    put("rewarded", isRewarded)
+                    put("success", isRewarded)
                 }
-                dispatchAdEvent("rewarded_closed", payload)
-                // Pre-cache next rewarded ad
-                if (rewardedPlacementId.isNotBlank()) {
-                    Adivery.prepareRewardedAd(activity, rewardedPlacementId)
-                }
+                dispatchAdEvent("rewarded_closed", closed)
+                prepareRewarded(placementId)
             }
 
             override fun onInterstitialAdClicked(placementId: String) {
@@ -105,42 +120,69 @@ class AdiveryManager(
 
     fun showInterstitial(placementId: String? = null): Boolean {
         val targetId = if (!placementId.isNullOrBlank()) placementId else interstitialPlacementId
-        return if (Adivery.isLoaded(targetId)) {
+        if (targetId.isBlank()) return false
+        if (safeIsLoaded(targetId)) {
+            runCatching { Adivery.showAd(targetId) }
+                .onFailure { dispatchAdError(targetId, "INTERSTITIAL_SHOW_FAILED:${it.message ?: "unknown"}") }
+            return true
+        }
+        prepareInterstitial(targetId)
+        dispatchAdError(targetId, "INTERSTITIAL_NOT_LOADED")
+        return false
+    }
+
+    /**
+     * Returns true when the request was accepted. If the rewarded ad is still
+     * loading, the request is queued and shown automatically from onLoaded.
+     */
+    fun showRewarded(placementId: String? = null): Boolean {
+        val targetId = if (!placementId.isNullOrBlank()) placementId else rewardedPlacementId
+        if (targetId.isBlank()) return false
+        if (safeIsLoaded(targetId)) {
+            return showRewardedNow(targetId)
+        }
+
+        pendingRewardedPlacement = targetId
+        prepareRewarded(targetId)
+        dispatchAdPlacementEvent("rewarded_waiting", targetId)
+        return true
+    }
+
+    private fun showRewardedNow(targetId: String): Boolean {
+        return runCatching {
             Adivery.showAd(targetId)
             true
-        } else {
-            Adivery.prepareInterstitialAd(activity, targetId)
-            // Dispatch ad_error so web listener does not hang if ad is not loaded
-            val payload = JSONObject().apply {
-                put("placementId", targetId)
-                put("error", "INTERSTITIAL_NOT_LOADED")
-            }
-            dispatchAdEvent("ad_error", payload)
+        }.getOrElse {
+            dispatchAdError(targetId, "REWARDED_SHOW_FAILED:${it.message ?: "unknown"}")
             false
         }
     }
 
-    fun showRewarded(placementId: String? = null): Boolean {
-        val targetId = if (!placementId.isNullOrBlank()) placementId else rewardedPlacementId
-        return if (Adivery.isLoaded(targetId)) {
-            Adivery.showAd(targetId)
-            true
-        } else {
-            Adivery.prepareRewardedAd(activity, targetId)
-            // Dispatch ad_error so web listener does not hang if ad is not loaded
-            val payload = JSONObject().apply {
-                put("placementId", targetId)
-                put("error", "REWARDED_NOT_LOADED")
-            }
-            dispatchAdEvent("ad_error", payload)
-            false
-        }
+    private fun prepareRewarded(targetId: String) {
+        runCatching { Adivery.prepareRewardedAd(activity, targetId) }
+            .onFailure { dispatchAdError(targetId, "REWARDED_PREPARE_FAILED:${it.message ?: "unknown"}") }
+    }
+
+    private fun prepareInterstitial(targetId: String) {
+        runCatching { Adivery.prepareInterstitialAd(activity, targetId) }
+            .onFailure { dispatchAdError(targetId, "INTERSTITIAL_PREPARE_FAILED:${it.message ?: "unknown"}") }
+    }
+
+    private fun safeIsLoaded(targetId: String): Boolean {
+        return runCatching { Adivery.isLoaded(targetId) }.getOrDefault(false)
     }
 
     fun isAdLoaded(placementId: String? = null): Boolean {
-        val targetId = if (!placementId.isNullOrBlank()) placementId else interstitialPlacementId
-        return Adivery.isLoaded(targetId)
+        val targetId = if (!placementId.isNullOrBlank()) placementId else rewardedPlacementId
+        return safeIsLoaded(targetId) ||
+            if (targetId == rewardedPlacementId) isRewardedLoaded else isInterstitialLoaded
     }
+
+    fun isRewardedLoaded(): Boolean =
+        isRewardedLoaded || (rewardedPlacementId.isNotBlank() && safeIsLoaded(rewardedPlacementId))
+
+    fun isInterstitialLoaded(): Boolean =
+        isInterstitialLoaded || (interstitialPlacementId.isNotBlank() && safeIsLoaded(interstitialPlacementId))
 
     private fun dispatchAdPlacementEvent(type: String, placementId: String) {
         val data = JSONObject().apply { put("placementId", placementId) }

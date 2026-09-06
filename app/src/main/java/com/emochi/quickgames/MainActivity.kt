@@ -57,7 +57,6 @@ class MainActivity : AppCompatActivity() {
         Adivery.configure(application, AdiveryConfig.APP_ID)
         Adivery.setLoggingEnabled(!AdiveryConfig.IS_PRODUCTION)
         adiveryManager = AdiveryManager(this)
-        adiveryManager.prepareAds()
 
         // 2. Initialize CafeBazaar Billing Manager
         billingManager = CafeBazaarBillingManager(this)
@@ -65,6 +64,9 @@ class MainActivity : AppCompatActivity() {
         // 3. Initialize Bridge & Asset Resolver
         webAppBridge = WebAppBridge(this, webView, billingManager, adiveryManager)
         assetResolver = WebAppAssetResolver(this)
+
+        // Register the WebView listener before preloading ads so no native ad event is lost.
+        adiveryManager.prepareAds()
 
         // 4. Configure WebView
         setupWebView()
