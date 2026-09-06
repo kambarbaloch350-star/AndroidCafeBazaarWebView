@@ -1,7 +1,5 @@
 package com.emochi.quickgames
 
-import android.content.Intent
-import android.net.Uri
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
@@ -43,59 +41,6 @@ class WebAppBridge(
 
     @JavascriptInterface
     fun getPackageName(): String = "com.emochi.quickgames"
-
-    /**
-     * Opens CafeBazaar's native comment/rating flow when Bazaar is installed.
-     * Falls back to the app details page when that action is unavailable.
-     */
-    @JavascriptInterface
-    fun openBazaarRating(): Boolean {
-        val activity = activityRef.get() ?: return false
-        val detailsUri = Uri.parse("bazaar://details?id=com.emochi.quickgames")
-
-        activity.runOnUiThread {
-            var launched = false
-            try {
-                // CafeBazaar's comment/rating flow is opened with EDIT on its
-                // details URI. Keep the package explicit so Android does not
-                // route the custom bazaar:// URI to another handler.
-                val ratingIntent = Intent(Intent.ACTION_EDIT, detailsUri).apply {
-                    setPackage("com.farsitel.bazaar")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                if (ratingIntent.resolveActivity(activity.packageManager) != null) {
-                    activity.startActivity(ratingIntent)
-                    launched = true
-                }
-            } catch (_: Exception) {
-                launched = false
-            }
-
-            if (!launched) {
-                try {
-                    val detailsIntent = Intent(Intent.ACTION_VIEW, detailsUri).apply {
-                        setPackage("com.farsitel.bazaar")
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    if (detailsIntent.resolveActivity(activity.packageManager) != null) {
-                        activity.startActivity(detailsIntent)
-                        launched = true
-                    }
-                } catch (_: Exception) {
-                    launched = false
-                }
-            }
-
-            if (!launched) {
-                try {
-                    activity.startActivity(Intent(Intent.ACTION_VIEW, detailsUri))
-                } catch (_: Exception) {
-                    // Let the WebView fallback handle the URL.
-                }
-            }
-        }
-        return true
-    }
 
     // =========================================================================
     // CAFE BAZAAR IN-APP BILLING METHODS
@@ -155,6 +100,17 @@ class WebAppBridge(
             activity.runOnUiThread {
                 activity.showBannerAd()
             }
+            return true
+        }
+        return false
+    }
+
+
+    @JavascriptInterface
+    fun showBannerAt(x: Int, y: Int, width: Int, height: Int, cssScale: Float): Boolean {
+        val activity = activityRef.get()
+        if (activity is MainActivity) {
+            activity.showBannerAdAt(x, y, width, height, cssScale, true)
             return true
         }
         return false

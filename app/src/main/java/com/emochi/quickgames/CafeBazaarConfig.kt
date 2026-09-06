@@ -26,7 +26,7 @@ object CafeBazaarConfig {
     const val SKU_COIN_PACK_5000  = "coin_pack_5000"
     const val SKU_COIN_PACK_10000 = "coin_pack_10000"
     const val SKU_COIN_PACK_25000 = "coin_pack_25000"
-
+no
     /**
      * All supported in-app product identifiers.
      */

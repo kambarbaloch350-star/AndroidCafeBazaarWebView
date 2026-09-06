@@ -1,0 +1,1 @@
+This folder is intended to contain the original Vazirmatn 400/500/600/700/800/900 webfont files. Run download-vazirmatn.sh once (or during CI) to fetch the OFL-licensed Vazirmatn files locally. The app then uses only these local font URLs at runtime.

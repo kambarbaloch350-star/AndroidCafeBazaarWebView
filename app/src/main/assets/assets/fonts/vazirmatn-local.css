@@ -1,0 +1,7 @@
+@font-face{font-family:"Vazirmatn";src:url("./Vazirmatn-400-Regular.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Vazirmatn";src:url("./Vazirmatn-500-Medium.woff2") format("woff2");font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:"Vazirmatn";src:url("./Vazirmatn-600-SemiBold.woff2") format("woff2");font-weight:600;font-style:normal;font-display:swap}
+@font-face{font-family:"Vazirmatn";src:url("./Vazirmatn-700-Bold.woff2") format("woff2");font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:"Vazirmatn";src:url("./Vazirmatn-800-ExtraBold.woff2") format("woff2");font-weight:800;font-style:normal;font-display:swap}
+@font-face{font-family:"Vazirmatn";src:url("./Vazirmatn-900-Black.woff2") format("woff2");font-weight:900;font-style:normal;font-display:swap}
+html,body,#root{font-family:"Vazirmatn",system-ui,sans-serif}

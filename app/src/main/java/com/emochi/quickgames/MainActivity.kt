@@ -188,6 +188,34 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    fun showBannerAdAt(xCss: Int, yCss: Int, widthCss: Int, heightCss: Int, cssScale: Float, visible: Boolean = true) {
+        runOnUiThread {
+            if (bannerAdView == null) {
+                bannerAdView = AdiveryBannerAdView(this).apply {
+                    setPlacementId(AdiveryConfig.PLACEMENT_BANNER)
+                    setBannerSize(com.adivery.sdk.BannerSize.BANNER)
+                }
+                bannerContainer.removeAllViews()
+                bannerContainer.addView(
+                    bannerAdView,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                )
+                bannerAdView?.loadAd()
+            }
+            val scale = if (cssScale > 0f) cssScale else 1f
+            val lp = bannerContainer.layoutParams as FrameLayout.LayoutParams
+            lp.width = if (widthCss > 0) (widthCss * scale).toInt() else ViewGroup.LayoutParams.MATCH_PARENT
+            lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            lp.leftMargin = (xCss * scale).toInt()
+            lp.topMargin = (yCss * scale).toInt()
+            bannerContainer.layoutParams = lp
+            bannerContainer.visibility = if (visible) View.VISIBLE else View.GONE
+        }
+    }
+
     fun hideBannerAd() {
         runOnUiThread {
             bannerContainer.visibility = View.GONE
