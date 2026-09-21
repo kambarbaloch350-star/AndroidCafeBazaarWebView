@@ -23,6 +23,10 @@ OUT="${OUT_DIR:-ci-artifacts}"
 mkdir -p "$OUT"
 FAILURES=0
 
+# Mirror everything into the artifact directory so the published report carries
+# the full console trace of the run.
+exec > >(tee "$OUT/console.log") 2>&1
+
 note() { echo "[smoke] $*"; }
 fail() { echo "[smoke][FAIL] $*"; FAILURES=$((FAILURES + 1)); }
 
@@ -149,7 +153,17 @@ fi
   echo
   echo "Server / bridge log lines:"
   echo '```'
-  adb logcat -d | grep -E "LocalWebServer|WebAppBridge|MainActivity|TapsellManager|NajvaManager" | tail -40
+  adb logcat -d | grep -E "LocalWebServer|WebAppBridge|MainActivity|TapsellManager|NajvaManager|App:" | tail -45
+  echo '```'
+  echo
+  echo "WebApp console (bridge handshake):"
+  echo '```'
+  adb logcat -d -s WebApp:D | grep -E "webapp\]|AUTOTEST" | tail -25
+  echo '```'
+  echo
+  echo "Smoke script console:"
+  echo '```'
+  tail -60 "$OUT/console.log" 2>/dev/null || true
   echo '```'
 } > "$OUT/report.md"
 

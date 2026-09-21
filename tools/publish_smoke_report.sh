@@ -30,8 +30,13 @@ if [ -f "$OUT/report.md" ]; then
   post "$OUT/report.md"
 fi
 
-shopt -s nullglob
-pictures=("$OUT"/*.png)
+# Only the most informative frames are published: one comment set per picture,
+# and the whole timeline stays in the `emulator-screenshots` artifact.
+WANTED="01-boot 03-boot 05-boot 07-running 08-webapp 09-deeplink 10-autotest 11-landscape"
+pictures=()
+for name in $WANTED; do
+  [ -f "$OUT/$name.png" ] && pictures+=("$OUT/$name.png")
+done
 if [ "${#pictures[@]}" -eq 0 ]; then
   echo "[publish] no screenshots found"
   exit 0
@@ -41,7 +46,7 @@ for picture in "${pictures[@]}"; do
   name=$(basename "$picture" .png)
   small="/tmp/$name.jpg"
   if command -v convert >/dev/null 2>&1; then
-    convert "$picture" -resize 400x -quality 60 "$small" 2>/dev/null || cp "$picture" "$small"
+    convert "$picture" -resize 360x -quality 55 "$small" 2>/dev/null || cp "$picture" "$small"
   else
     cp "$picture" "$small"
   fi
