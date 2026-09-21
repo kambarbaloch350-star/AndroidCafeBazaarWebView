@@ -465,11 +465,13 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
             super.onPageStarted(view, url, favicon)
+            bridge?.onPageUrlChanged(url)
             if (BuildConfig.DEBUG) Log.d(TAG, "onPageStarted: $url")
         }
 
         override fun onPageFinished(view: WebView?, url: String?) {
             super.onPageFinished(view, url)
+            bridge?.onPageUrlChanged(url)
             if (BuildConfig.DEBUG) Log.d(TAG, "onPageFinished: $url")
             onDocumentLoaded(bootToken)
             bridge?.notifyContainerReady(pendingDeepLinkRoute)
@@ -657,6 +659,7 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         if (isWebAppReady) return
         isWebAppReady = true
         isBootFailed = false
+        Log.i(TAG, "Web app ready – hiding the native loading plate")
         handler.removeCallbacksAndMessages(null)
         showLoadingStage(getString(R.string.loading_stage_finishing))
 

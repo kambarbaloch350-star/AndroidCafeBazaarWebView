@@ -36,7 +36,7 @@ class App : Application() {
         NajvaManager.initialize(this)
 
         if (BuildConfig.DEBUG) {
-            Log.i(TAG, "App ready: ${NajvaManager.describe()}")
+            Log.i(TAG, "App ready: push[${NajvaManager.describe(this)}]")
         }
     }
 

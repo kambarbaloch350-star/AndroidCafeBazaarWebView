@@ -74,11 +74,37 @@ object NajvaManager {
             if (initialized) return
             initialized = true
 
+            // Channels are cheap and safe to create even without credentials.
             createNotificationChannels(app)
+
+            // Without real credentials the SDK cannot register with the Najva
+            // backend; initializing it anyway only produces stack traces, so the
+            // container degrades gracefully and logs a single actionable line.
+            if (!isConfigured(app)) {
+                Log.i(
+                    TAG,
+                    "Najva credentials are missing (NAJVA_API_KEY / NAJVA_WEBSITE_ID) – " +
+                            "push notifications stay disabled until they are provided."
+                )
+                return
+            }
+
             configureListeners()
             registerClient(app)
         }
     }
+
+    /** True when the API key (UUID) and website id are present in the manifest. */
+    fun isConfigured(context: Context): Boolean = runCatching {
+        val info = context.packageManager.getApplicationInfo(
+            context.packageName,
+            PackageManager.GET_META_DATA
+        )
+        val meta = info.metaData
+        val apiKey = meta?.getString(NajvaConfig.META_API_KEY).orEmpty()
+        val websiteId = meta?.getString(NajvaConfig.META_WEBSITE_ID).orEmpty()
+        apiKey.isNotBlank() && websiteId.isNotBlank()
+    }.getOrDefault(false)
 
     private fun configureListeners() {
         runCatching {
@@ -244,7 +270,11 @@ object NajvaManager {
     }
 
     /** Human-readable diagnostics used by the native loading screen logs. */
-    fun describe(): String = buildString {
+    fun describe(context: Context? = null): String = buildString {
+        if (context != null) {
+            append("configured=").append(isConfigured(context))
+            append(", ")
+        }
         append("initialized=").append(initialized)
         append(", foreground=").append(isForeground)
         append(", token=").append(if (subscribedToken().isNullOrEmpty()) "none" else "ok")

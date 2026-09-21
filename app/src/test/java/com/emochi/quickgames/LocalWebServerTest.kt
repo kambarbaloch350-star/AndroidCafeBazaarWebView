@@ -3,6 +3,7 @@ package com.emochi.quickgames
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -273,6 +274,60 @@ class LocalWebServerTest {
         assertEquals(200, connection.responseCode)
         assertTrue(connection.contentLengthLong > 0)
         assertEquals(0, readAll(connection.inputStream).size)
+    }
+
+    // ------------------------------------------------------------------
+    // Byte ranges (media seeking / large assets)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `range requests return a 206 slice`() {
+        val full = readAll(connect("/js/native-bridge.js").inputStream)
+
+        val connection = connect("/js/native-bridge.js")
+        connection.setRequestProperty("Range", "bytes=0-99")
+        assertEquals(206, connection.responseCode)
+        assertEquals("bytes 0-99/${full.size}", connection.getHeaderField("Content-Range"))
+        assertEquals(100L, connection.getHeaderField("Content-Length")!!.toLong())
+        val slice = readAll(connection.inputStream)
+        assertEquals(100, slice.size)
+        assertTrue("slice must match the entity prefix", slice.contentEquals(full.copyOfRange(0, 100)))
+    }
+
+    @Test
+    fun `suffix ranges and open ended ranges are honoured`() {
+        val full = readAll(connect("/css/style.css").inputStream)
+
+        val suffix = connect("/css/style.css")
+        suffix.setRequestProperty("Range", "bytes=-64")
+        assertEquals(206, suffix.responseCode)
+        val tail = readAll(suffix.inputStream)
+        assertEquals(64, tail.size)
+        assertTrue(tail.contentEquals(full.copyOfRange(full.size - 64, full.size)))
+
+        val open = connect("/css/style.css")
+        open.setRequestProperty("Range", "bytes=10-")
+        assertEquals(206, open.responseCode)
+        val rest = readAll(open.inputStream)
+        assertEquals(full.size - 10, rest.size)
+    }
+
+    @Test
+    fun `a range beyond the entity is rejected with 416`() {
+        val connection = connect("/css/style.css")
+        connection.setRequestProperty("Range", "bytes=99999999-")
+        assertEquals(416, connection.responseCode)
+        assertTrue(connection.getHeaderField("Content-Range")!!.startsWith("bytes */"))
+    }
+
+    @Test
+    fun `partial responses are never gzipped and advertise range support`() {
+        val connection = connect("/js/native-bridge.js")
+        connection.setRequestProperty("Accept-Encoding", "gzip")
+        connection.setRequestProperty("Range", "bytes=0-49")
+        assertEquals(206, connection.responseCode)
+        assertNull(connection.getHeaderField("Content-Encoding"))
+        assertEquals("bytes", connection.getHeaderField("Accept-Ranges"))
     }
 
     // ------------------------------------------------------------------

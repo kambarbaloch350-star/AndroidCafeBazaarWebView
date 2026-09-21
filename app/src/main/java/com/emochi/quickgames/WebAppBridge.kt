@@ -57,6 +57,19 @@ class WebAppBridge(
     private val activityRef = WeakReference(activity)
     private val webViewRef = WeakReference(webView)
 
+    /**
+     * URL of the document currently displayed by the WebView.
+     *
+     * `@JavascriptInterface` methods are invoked on the WebView's `JavaBridge`
+     * thread, and **every** WebView getter must run on the main thread – reading
+     * `webView.url` from the bridge thread throws
+     * *"A WebView method was called on thread 'JavaBridge'"* and would disable
+     * the whole bridge. The value is therefore cached here and refreshed by
+     * [MainActivity] inside its `WebViewClient` callbacks (main thread).
+     */
+    @Volatile
+    private var currentUrl: String? = null
+
     var hostListener: HostListener? = null
 
     /** Route that opened the app, delivered after `appReady()` when unconsumed. */
@@ -360,8 +373,10 @@ class WebAppBridge(
     }
 
     private fun evaluate(script: String) {
-        val webView = webViewRef.get() ?: return
-        webView.post {
+        // Always dispatched to the main thread: `evaluateJavascript` is a
+        // WebView method and must not be called from the JavaBridge thread.
+        post {
+            val webView = webViewRef.get() ?: return@post
             runCatching { webView.evaluateJavascript(script, null) }
                 .onFailure { Log.w(TAG, "evaluateJavascript failed: ${it.message}") }
         }
@@ -374,11 +389,20 @@ class WebAppBridge(
      * driving native advertising/billing APIs.
      */
     private fun isTrustedOrigin(): Boolean {
-        val webView = webViewRef.get() ?: return false
-        val url = webView.url ?: return false
-        val trusted = url.startsWith("http://127.0.0.1:") || url.startsWith("http://localhost:")
+        val url = currentUrl ?: return true // only the container's own document can call this
+        val trusted = url.startsWith("http://127.0.0.1:") ||
+                url.startsWith("http://localhost:") ||
+                url.startsWith("http://[::1]:")
         if (!trusted) Log.w(TAG, "Bridge call rejected from untrusted origin: $url")
         return trusted
+    }
+
+    /**
+     * Called by [MainActivity] from `WebViewClient` callbacks (main thread) so
+     * the trust check never has to touch the WebView from the bridge thread.
+     */
+    fun onPageUrlChanged(url: String?) {
+        currentUrl = url
     }
 
     private inline fun <T> safe(fallback: T, block: () -> T): T =

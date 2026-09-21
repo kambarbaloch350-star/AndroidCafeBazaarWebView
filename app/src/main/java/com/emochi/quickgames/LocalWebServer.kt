@@ -47,6 +47,7 @@ import java.util.zip.GZIPOutputStream
  *
  * Features:
  *  - On-the-fly gzip for text payloads (large JS bundles stay small)
+ *  - Byte ranges (`206 Partial Content`) for media seeking / large assets
  *  - Strong ETags + `304 Not Modified`
  *  - Correct MIME types (wasm / mjs / fonts / media / json / map ...)
  *  - SPA history fallback: extension-less routes serve the entry document
@@ -68,6 +69,9 @@ class LocalWebServer(private val assets: WebAssetSource) {
 
         /** Safety cap for a single response body. */
         private const val MAX_BODY_BYTES = 192L * 1024L * 1024L
+
+        /** Sentinel returned by [parseRange] for an unsatisfiable range. */
+        private val INVALID_RANGE = LongRange.EMPTY
     }
 
     /** Base URL of the running server, e.g. `http://127.0.0.1:41235/`. */
@@ -332,16 +336,34 @@ class LocalWebServer(private val assets: WebAssetSource) {
             return
         }
 
+        // Byte ranges: required by <video>/<audio> seeking and by players that
+        // stream large assets. A single range is honoured; anything more exotic
+        // (multi-range) simply falls back to a full 200 response.
+        val range = parseRange(request.headers["range"], length)
+        if (range == INVALID_RANGE) {
+            runCatching { stream.close() }
+            writeRangeNotSatisfiable(out, length)
+            return
+        }
+        val isPartial = range != null
+        val payloadLength = if (isPartial) range!!.last - range.first + 1 else length
+
         val acceptsGzip = (request.headers["accept-encoding"] ?: "")
             .lowercase(Locale.ROOT).contains("gzip")
         val compress = acceptsGzip &&
+                !isPartial &&
                 length >= GZIP_MIN_BYTES &&
                 MimeTypes.isCompressible(assetPath, mime) &&
                 request.headers["range"] == null
 
         val header = StringBuilder(320)
-        header.append("HTTP/1.1 200 OK\r\n")
+        header.append(if (isPartial) "HTTP/1.1 206 Partial Content\r\n" else "HTTP/1.1 200 OK\r\n")
         header.append("Content-Type: ").append(mime).append("\r\n")
+        if (isPartial) {
+            header.append("Content-Range: bytes ")
+                .append(range!!.first).append('-').append(range!!.last)
+                .append('/').append(length).append("\r\n")
+        }
         etag?.let { header.append("ETag: ").append(it).append("\r\n") }
         if (compress) header.append("Content-Encoding: gzip\r\n")
         header.append("Cache-Control: ").append(cacheControlFor(assetPath)).append("\r\n")
@@ -354,7 +376,7 @@ class LocalWebServer(private val assets: WebAssetSource) {
             // Compressed size is unknown up-front: close-delimited response.
             header.append("Connection: close\r\n")
         } else {
-            header.append("Content-Length: ").append(length).append("\r\n")
+            header.append("Content-Length: ").append(payloadLength).append("\r\n")
             header.append("Connection: close\r\n")
         }
         header.append("\r\n")
@@ -367,13 +389,18 @@ class LocalWebServer(private val assets: WebAssetSource) {
         }
 
         try {
-            if (compress) {
-                val gzip = GZIPOutputStream(out, 64 * 1024, true)
-                pump(stream, gzip)
-                gzip.finish()
-                gzip.flush()
-            } else {
-                pump(stream, out)
+            when {
+                compress -> {
+                    val gzip = GZIPOutputStream(out, 64 * 1024, true)
+                    pump(stream, gzip, MAX_BODY_BYTES)
+                    gzip.finish()
+                    gzip.flush()
+                }
+                isPartial -> {
+                    skipFully(stream, range!!.first)
+                    pump(stream, out, payloadLength)
+                }
+                else -> pump(stream, out, MAX_BODY_BYTES)
             }
             out.flush()
         } catch (e: Exception) {
@@ -384,18 +411,76 @@ class LocalWebServer(private val assets: WebAssetSource) {
         }
     }
 
-    private fun pump(input: InputStream, out: OutputStream) {
+    /** Streams at most [limit] bytes from [input] to [out]. */
+    private fun pump(input: InputStream, out: OutputStream, limit: Long) {
         val buffer = ByteArray(64 * 1024)
         var total = 0L
-        while (true) {
-            val read = input.read(buffer)
+        while (total < limit) {
+            val wanted = minOf(buffer.size.toLong(), limit - total).toInt()
+            val read = input.read(buffer, 0, wanted)
             if (read <= 0) break
             total += read
-            if (total > MAX_BODY_BYTES) {
-                Log.w(TAG, "Response exceeded $MAX_BODY_BYTES bytes – truncated")
-                break
-            }
             out.write(buffer, 0, read)
+        }
+        if (total >= MAX_BODY_BYTES) {
+            Log.w(TAG, "Response truncated at $MAX_BODY_BYTES bytes")
+        }
+    }
+
+    /** Skips exactly [count] bytes (or as close as the stream allows). */
+    private fun skipFully(input: InputStream, count: Long) {
+        if (count <= 0) return
+        var remaining = count
+        val discard = ByteArray(16 * 1024)
+        while (remaining > 0) {
+            val skipped = try {
+                input.skip(remaining)
+            } catch (e: Exception) {
+                0L
+            }
+            if (skipped > 0) {
+                remaining -= skipped
+                continue
+            }
+            val read = input.read(discard, 0, minOf(discard.size.toLong(), remaining).toInt())
+            if (read <= 0) return
+            remaining -= read
+        }
+    }
+
+    /**
+     * Parses a single `bytes=` range.
+     *
+     * @return `null` for "serve the whole entity", [INVALID_RANGE] when the
+     *         request cannot be satisfied, otherwise the inclusive byte window.
+     */
+    private fun parseRange(header: String?, length: Long): LongRange? {
+        if (header == null || length <= 0) return null
+        val trimmed = header.trim().lowercase(Locale.ROOT)
+        if (!trimmed.startsWith("bytes=")) return null
+        val spec = trimmed.removePrefix("bytes=").trim()
+        if (spec.contains(',')) return null // multi-range: answered with the full entity
+        val dash = spec.indexOf('-')
+        if (dash < 0) return null
+        val rawStart = spec.substring(0, dash).trim()
+        val rawEnd = spec.substring(dash + 1).trim()
+
+        return try {
+            if (rawStart.isEmpty()) {
+                // Suffix range: the last N bytes.
+                val suffix = rawEnd.toLong()
+                if (suffix <= 0) return INVALID_RANGE
+                val start = (length - suffix).coerceAtLeast(0)
+                start until length
+            } else {
+                val start = rawStart.toLong()
+                if (start < 0 || start >= length) return INVALID_RANGE
+                val end = if (rawEnd.isEmpty()) length - 1 else rawEnd.toLong()
+                if (end < start) return INVALID_RANGE
+                start..minOf(end, length - 1)
+            }
+        } catch (e: NumberFormatException) {
+            INVALID_RANGE
         }
     }
 
@@ -481,6 +566,17 @@ class LocalWebServer(private val assets: WebAssetSource) {
     // ------------------------------------------------------------------
     // Response helpers
     // ------------------------------------------------------------------
+
+    private fun writeRangeNotSatisfiable(out: BufferedOutputStream, length: Long) {
+        val header = "HTTP/1.1 416 Range Not Satisfiable\r\n" +
+                "Content-Range: bytes */$length\r\n" +
+                "Content-Length: 0\r\n" +
+                "Connection: close\r\n\r\n"
+        runCatching {
+            out.write(header.toByteArray(Charsets.ISO_8859_1))
+            out.flush()
+        }
+    }
 
     private fun writeNotModified(out: BufferedOutputStream, etag: String, mime: String) {
         val header = "HTTP/1.1 304 Not Modified\r\n" +

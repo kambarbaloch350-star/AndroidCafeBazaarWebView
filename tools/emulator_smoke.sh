@@ -83,6 +83,24 @@ else
   fail "the local HTTP server never came up"
 fi
 
+if adb logcat -d -s MainActivity:I | grep -q "hiding the native loading plate"; then
+  note "native loading plate was hidden by the readiness handshake"
+else
+  fail "the loading plate was never hidden (handshake incomplete)"
+fi
+
+# The bridge runs on the WebView's JavaBridge thread: any WebView call made from
+# there throws "A WebView method was called on thread 'JavaBridge'" and silently
+# disables the JS API. Catch it here instead of in production.
+if grep -q "was called on thread 'JavaBridge'" "$OUT/logcat.txt"; then
+  fail "bridge methods touched WebView APIs off the main thread"
+  grep -n "was called on thread" "$OUT/logcat.txt" | head -3
+fi
+if grep -q "Bridge method failed" "$OUT/logcat.txt"; then
+  fail "a bridge method threw an exception"
+  grep -n "Bridge method failed" "$OUT/logcat.txt" | head -3
+fi
+
 sleep 1
 adb exec-out screencap -p > "$OUT/08-webapp.png" 2>/dev/null || true
 
@@ -136,10 +154,31 @@ if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt"; then
   grep -n -A 25 "FATAL EXCEPTION" "$OUT/logcat.txt" | head -60
 fi
 
-if grep -E "java\.lang\.(NullPointerException|IllegalStateException)" "$OUT/logcat.txt" \
-    | grep -v "available" | grep -q .; then
-  note "non-fatal exceptions in logcat:"
-  grep -E "java\.lang\.(NullPointerException|IllegalStateException)" "$OUT/logcat.txt" | head -5
+for tag in NajvaManager TapsellManager WebAppBridge MainActivity LocalWebServer; do
+  if grep -E "E $tag" "$OUT/logcat.txt" | grep -q .; then
+    note "errors logged by $tag (first 3):"
+    grep -E "E $tag" "$OUT/logcat.txt" | head -3
+  fi
+done
+
+# ---------------------------------------------------------- visual assertions
+if command -v convert >/dev/null 2>&1; then
+  for frame in 01-boot 02-boot 03-boot 04-boot 05-boot; do
+    [ -f "$OUT/$frame.png" ] || continue
+    read -r r g b <<<"$(convert "$OUT/$frame.png" -resize 1x1 \
+      -format '%[fx:int(255*r)] %[fx:int(255*g)] %[fx:int(255*b)]' info: 2>/dev/null || echo '0 0 0')"
+    note "$frame average colour: rgb($r,$g,$b)"
+    if [ "$g" -gt "$r" ] && [ "$g" -gt "$b" ] && [ $((r + g + b)) -gt 480 ]; then
+      PLATE_SEEN="$frame"
+    fi
+  done
+  if [ -n "${PLATE_SEEN:-}" ]; then
+    note "green loading plate visible in $PLATE_SEEN"
+  else
+    fail "no light-green loading plate found in the first frames"
+  fi
+else
+  note "ImageMagick unavailable – skipping the pixel assertions"
 fi
 
 # ------------------------------------------------------------------ summary
