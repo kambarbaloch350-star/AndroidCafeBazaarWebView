@@ -10,7 +10,14 @@ export interface ProjectFile {
 export interface BillingLogItem {
   id: string;
   timestamp: string;
-  tag: 'CafeBazaarBilling' | 'WebAppConsole' | 'PoolakeySDK' | 'AdiveryManager' | 'QuickGames';
+  tag:
+    | 'CafeBazaarBilling'
+    | 'WebAppConsole'
+    | 'PoolakeySDK'
+    | 'TapsellManager'
+    | 'NajvaManager'
+    | 'LocalWebServer'
+    | 'Container';
   level: 'D' | 'I' | 'W' | 'E';
   message: string;
 }
@@ -21,4 +28,20 @@ export interface SimulatedPurchase {
   orderId: string;
   purchaseTime: number;
   consumed: boolean;
+}
+
+export type BootStage =
+  | 'idle'
+  | 'server'
+  | 'webview'
+  | 'webapp'
+  | 'ready'
+  | 'error';
+
+export interface AdEventItem {
+  id: string;
+  type: string;
+  detail: string;
+  ok: boolean;
+  at: string;
 }

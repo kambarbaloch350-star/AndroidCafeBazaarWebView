@@ -1,21 +1,225 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Container layout.
+
+  WebView  -> renders assets/web/index.html served by the in-process
+              local HTTP server. It is attached from the very first frame so
+              Chromium can warm up (RendererPriorityPolicy LOW) while the
+              native loading plate is still on screen.
+  Overlay  -> native loading screen (green plate + Vazirmatn + RTL) which is
+              removed only after server + WebView + WebApp readiness.
+-->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background">
-
-    <WebView
-        android:id="@+id/webView"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@color/background" />
+    android:background="@color/loading_background_top">
 
     <FrameLayout
-        android:id="@+id/bannerContainer"
+        android:id="@+id/webViewContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/webview_background" />
+
+    <!-- Native ad plate (Tapsell native ads requested from the WebApp) -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/nativeAdPlate"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
+        android:layout_margin="12dp"
+        android:visibility="gone"
+        app:cardBackgroundColor="@color/native_ad_surface"
+        app:cardCornerRadius="18dp"
+        app:cardElevation="8dp"
+        app:strokeColor="@color/native_ad_border"
+        app:strokeWidth="1dp"
+        tools:visibility="gone">
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="72dp">
+
+            <FrameLayout
+                android:id="@+id/nativeAdContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp" />
+
+            <TextView
+                android:id="@+id/nativeAdStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:padding="22dp"
+                android:text="@string/native_ad_loading"
+                android:textColor="@color/loading_stage"
+                android:visibility="gone" />
+
+            <FrameLayout
+                android:id="@+id/nativeAdClose"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_gravity="top|start"
+                android:background="@drawable/bg_close_button"
+                android:contentDescription="@string/native_ad_close">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:text="✕"
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </FrameLayout>
+        </FrameLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Native loading screen: light green / green plate plate theme, RTL. -->
+    <FrameLayout
+        android:id="@+id/loadingOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/bg_loading_gradient"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="visible">
+
+        <LinearLayout
+            android:id="@+id/loadingContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingStart="32dp"
+            android:paddingEnd="32dp">
+
+            <!-- Green plate with app emblem + progress ring on top of it -->
+            <FrameLayout
+                android:layout_width="148dp"
+                android:layout_height="148dp">
+
+                <FrameLayout
+                    android:layout_width="132dp"
+                    android:layout_height="132dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/bg_plate">
+
+                    <ImageView
+                        android:layout_width="72dp"
+                        android:layout_height="72dp"
+                        android:layout_gravity="center"
+                        android:contentDescription="@string/app_name"
+                        android:src="@drawable/ic_loading_emblem" />
+                </FrameLayout>
+
+                <ProgressBar
+                    android:id="@+id/loadingSpinner"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="148dp"
+                    android:layout_height="148dp"
+                    android:layout_gravity="center"
+                    android:indeterminate="true"
+                    android:indeterminateTint="@color/loading_spinner"
+                    android:progressTint="@color/loading_spinner"
+                    android:progressBackgroundTint="@color/loading_spinner_track" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/loadingTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="26dp"
+                android:fontFamily="@font/vazirmatn_semibold"
+                android:text="@string/loading_title"
+                android:textAppearance="@style/TextAppearance.LoadingTitle" />
+
+            <TextView
+                android:id="@+id/loadingMessage"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:fontFamily="@font/vazirmatn_medium"
+                android:text="@string/loading_message"
+                android:textAppearance="@style/TextAppearance.LoadingMessage" />
+
+            <TextView
+                android:id="@+id/loadingStage"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="@font/vazirmatn_regular"
+                android:text="@string/loading_stage_boot"
+                android:textAppearance="@style/TextAppearance.LoadingStage" />
+        </LinearLayout>
+
+        <!-- Error / retry state replaces the plate content when booting fails -->
+        <LinearLayout
+            android:id="@+id/errorContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginStart="24dp"
+            android:layout_marginEnd="24dp"
+            android:background="@drawable/bg_error_plate"
+            android:elevation="6dp"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingStart="28dp"
+            android:paddingTop="30dp"
+            android:paddingEnd="28dp"
+            android:paddingBottom="30dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:contentDescription="@string/error_title"
+                android:src="@drawable/ic_error_state" />
+
+            <TextView
+                android:id="@+id/errorTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:fontFamily="@font/vazirmatn_bold"
+                android:text="@string/error_title"
+                android:textAppearance="@style/TextAppearance.ErrorTitle" />
+
+            <TextView
+                android:id="@+id/errorMessage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:fontFamily="@font/vazirmatn_regular"
+                android:gravity="center"
+                android:lineSpacingExtra="4dp"
+                android:text="@string/error_message_default"
+                android:textAppearance="@style/TextAppearance.ErrorMessage" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/retryButton"
+                style="@style/Widget.RetryButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:fontFamily="@font/vazirmatn_semibold"
+                android:text="@string/error_retry" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Fullscreen target for WebChromeClient custom views (video / canvas) -->
+    <FrameLayout
+        android:id="@+id/fullscreenContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/black"
         android:visibility="gone" />
 
 </FrameLayout>

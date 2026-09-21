@@ -1,5 +1,12 @@
-<resources>
-    <!-- Base application theme with NoActionBar for full-screen webview experience -->
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      Base application theme.
+
+      * NoActionBar + full screen container: the WebView owns the whole window.
+      * The native loading overlay is drawn on top of the WebView until the
+        local server + WebView + WebApp readiness handshake completes.
+    -->
     <style name="Theme.AndroidCafeBazaarWebView" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryVariant">@color/primary_dark</item>
@@ -7,8 +14,55 @@
         <item name="colorSecondary">@color/accent</item>
         <item name="colorSecondaryVariant">@color/primary_dark</item>
         <item name="colorOnSecondary">@color/white</item>
-        <item name="android:statusBarColor">@color/background</item>
-        <item name="android:navigationBarColor">@color/background</item>
-        <item name="android:windowBackground">@color/background</item>
+
+        <item name="android:statusBarColor">@color/system_bar</item>
+        <item name="android:navigationBarColor">@color/system_bar</item>
+        <item name="android:windowBackground">@color/loading_background_top</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="p">shortEdges</item>
+    </style>
+
+    <style name="TextAppearance.LoadingTitle" parent="TextAppearance.MaterialComponents.Headline5">
+        <item name="android:textColor">@color/loading_title</item>
+        <item name="android:textSize">26sp</item>
+        <item name="android:letterSpacing">0.01</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.LoadingMessage" parent="TextAppearance.MaterialComponents.Subtitle1">
+        <item name="android:textColor">@color/loading_message</item>
+        <item name="android:textSize">17sp</item>
+        <item name="android:letterSpacing">0.02</item>
+    </style>
+
+    <style name="TextAppearance.LoadingStage" parent="TextAppearance.MaterialComponents.Caption">
+        <item name="android:textColor">@color/loading_stage</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="TextAppearance.ErrorTitle" parent="TextAppearance.MaterialComponents.Headline6">
+        <item name="android:textColor">@color/error_title</item>
+        <item name="android:textSize">20sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.ErrorMessage" parent="TextAppearance.MaterialComponents.Body2">
+        <item name="android:textColor">@color/error_message</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+
+    <style name="Widget.RetryButton" parent="Widget.MaterialComponents.Button">
+        <item name="android:minHeight">52dp</item>
+        <item name="android:minWidth">180dp</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="android:textColor">@color/retry_button_text</item>
+        <item name="backgroundTint">@color/retry_button_bg</item>
+        <item name="cornerRadius">26dp</item>
+        <item name="elevation">4dp</item>
+        <item name="android:paddingStart">32dp</item>
+        <item name="android:paddingEnd">32dp</item>
     </style>
 </resources>

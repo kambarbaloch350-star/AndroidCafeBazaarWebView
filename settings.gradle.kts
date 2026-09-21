@@ -10,10 +10,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // JitPack repository is required for CafeBazaar Poolakey SDK
+        // JitPack repository is required for the CafeBazaar Poolakey billing SDK.
         maven { url = java.net.URI("https://jitpack.io") }
-        // Adivery repository
-        maven { url = java.net.URI("https://nexus.adivery.com/repository/adivery/") }
     }
 }
 

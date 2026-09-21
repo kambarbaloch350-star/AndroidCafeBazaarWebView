@@ -1,3 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">QuickGames</string>
+
+    <!-- ==================== Native loading screen ==================== -->
+    <string name="loading_title">QuickGames</string>
+    <string name="loading_message">در حال بارگذاری…</string>
+    <string name="loading_stage_boot">راه‌اندازی سرور داخلی…</string>
+    <string name="loading_stage_webview">آماده‌سازی نمایشگر وب…</string>
+    <string name="loading_stage_webapp">در انتظار آماده‌شدن برنامه…</string>
+    <string name="loading_stage_finishing">آماده‌سازی نهایی…</string>
+
+    <!-- ==================== Error / retry state ==================== -->
+    <string name="error_title">بارگذاری ناموفق بود</string>
+    <string name="error_message_default">ارتباط با سرور داخلی برنامه برقرار نشد. لطفاً دوباره تلاش کنید.</string>
+    <string name="error_message_webview">نمایشگر وب نتوانست برنامه را بارگذاری کند. لطفاً دوباره تلاش کنید.</string>
+    <string name="error_message_crashed">نمایشگر وب به‌طور غیرمنتظره بسته شد. برنامه دوباره بارگذاری می‌شود.</string>
+    <string name="error_retry">تلاش مجدد</string>
+
+    <!-- ==================== Notification permission ==================== -->
+    <string name="notification_channel_default_name">اعلان‌ها</string>
+    <string name="notification_channel_default_description">اعلان‌های عمومی برنامه</string>
+    <string name="notification_channel_important_name">اعلان‌های مهم</string>
+    <string name="notification_channel_important_description">اعلان‌های فوری و پیشنهادهای ویژه</string>
+    <string name="notification_permission_title">اجازه ارسال اعلان</string>
+    <string name="notification_permission_message">برای دریافت اعلان‌های برنامه (خبرهای مهم، پیشنهادها و یادآورها) اجازه ارسال اعلان را فعال کنید.</string>
+    <string name="notification_permission_grant">اجازه می‌دهم</string>
+    <string name="notification_permission_later">بعداً</string>
+
+    <!-- ==================== Native ad placeholder ==================== -->
+    <string name="native_ad_loading">در حال دریافت تبلیغ…</string>
+    <string name="native_ad_unavailable">تبلیغی برای نمایش موجود نیست</string>
+    <string name="native_ad_close">بستن تبلیغ</string>
 </resources>
