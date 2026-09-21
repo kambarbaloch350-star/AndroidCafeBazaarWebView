@@ -36,6 +36,13 @@
     if (state.logs.length > 120) state.logs.pop();
     var el = document.getElementById('log-view');
     if (el) el.textContent = state.logs.join('\n');
+    // Mirrored to the WebView console so the native side (and `adb logcat`)
+    // can follow the boot handshake without a remote debugger.
+    try {
+      console.log('[webapp] ' + message);
+    } catch (err) {
+      /* console is always present in a WebView; never let logging break the app */
+    }
   }
 
   function toast(message, ms) {
@@ -87,7 +94,11 @@
     if (name === 'capabilities') mountCanvasDemo();
   }
 
-  window.addEventListener('hashchange', render);
+  // NOTE: the listener resolves `render` at call time on purpose – the wrapper
+  // further down adds the container/info repaint for in-page navigation.
+  window.addEventListener('hashchange', function () {
+    render();
+  });
 
   // ------------------------------------------------------------------ views
   routes.ads = function () {
@@ -425,11 +436,43 @@
     }
   }
 
+  // ------------------------------------------------------------- self test
+  /**
+   * Scripted probe used by the container's CI smoke test: it exercises the ad
+   * bridge **without** any SDK keys configured, proving that a failing ad
+   * request never blocks or crashes the WebApp.
+   */
+  function runAutotest() {
+    var summary = {
+      native: NativeApp.isNative(),
+      adsAvailable: NativeAds.isAvailable(),
+      health: null,
+      interstitial: null
+    };
+    console.log('AUTOTEST begin ' + JSON.stringify(summary));
+
+    fetch('/__health')
+      .then(function (response) { return response.text(); })
+      .then(function (body) { summary.health = body.trim(); })
+      .catch(function (error) { summary.health = 'error: ' + error; })
+      .then(function () { return NativeAds.showInterstitial(); })
+      .then(function (result) { summary.interstitial = result; })
+      .catch(function (error) { summary.interstitial = { ok: false, reason: String(error) }; })
+      .then(function () {
+        console.log('AUTOTEST done ' + JSON.stringify(summary));
+      });
+  }
+
   // ------------------------------------------------------------ deep linking
   window.DeepLink = {
     handle: function (route) {
       var target = String(route || '').replace(/^#\/?/, '').replace(/^\//, '');
       if (!target) return false;
+      if (target === 'autotest') {
+        location.hash = '#/container';
+        runAutotest();
+        return true;
+      }
       if (routes[target]) {
         location.hash = '#/' + target;
       } else {
