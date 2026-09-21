@@ -93,6 +93,27 @@ jobs:
           add FIREBASE_PROJECT_ID "$FIREBASE_PROJECT_ID"
           add FIREBASE_SENDER_ID "$FIREBASE_SENDER_ID"
 
+      # Pre-flight: the repository-level invariants (no removed advertising SDK,
+      # every resource reference resolves, bridge contract present).
+      - name: Static architecture checks
+        run: python3 tools/static_checks.py
+
+      # JVM unit tests: they boot the real LocalWebServer over the shipped
+      # assets/web bundle and assert routing, MIME types, gzip, ETag and SPA
+      # fallback, so a broken WebApp bundle cannot reach an APK.
+      - name: Unit tests (embedded HTTP server + MIME table)
+        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+
+      - name: Publish unit test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: |
+            app/build/reports/tests/testDebugUnitTest/**
+            app/build/test-results/testDebugUnitTest/**
+          if-no-files-found: warn
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace --no-daemon
 

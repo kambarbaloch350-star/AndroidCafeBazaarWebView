@@ -119,6 +119,13 @@ android {
         abortOnError = false
         checkReleaseBuilds = false
     }
+
+    // The HTTP server, MIME table and asset routing are covered by plain JVM
+    // unit tests. `returnDefaultValues` keeps android.util.Log silent instead of
+    // throwing "not mocked" from the stub android.jar.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -137,6 +144,9 @@ dependencies {
     // https://central.sonatype.com/artifact/com.najva/sdk
     implementation("com.najva:sdk:1.8.4")
     implementation("com.google.firebase:firebase-messaging:23.3.1")
+
+    // Tests
+    testImplementation("junit:junit:4.13.2")
 
     // AndroidX & UI
     implementation("androidx.core:core-ktx:1.13.1")

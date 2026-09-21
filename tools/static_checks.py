@@ -198,7 +198,9 @@ def check_assets() -> None:
 # ------------------------------------------------------------------ adivery
 def check_adivery_removed() -> None:
     forbidden = re.compile(r"adivery", re.IGNORECASE)
-    skip_dirs = {".git", "node_modules", "dist", "build", ".gradle", "tools"}
+    # `.github` is skipped on purpose: the CI job greps the packaged APK for the
+    # removed SDK, so the workflow itself has to name it.
+    skip_dirs = {".git", "node_modules", "dist", "build", ".gradle", "tools", ".github"}
     skip_names = {"README.md", "README.txt", "static_checks.py"}
     for base, dirs, files in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d not in skip_dirs]

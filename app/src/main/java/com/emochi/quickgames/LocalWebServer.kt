@@ -52,7 +52,10 @@ import java.util.zip.GZIPOutputStream
  *  - SPA history fallback: extension-less routes serve the entry document
  *  - Graceful 404 / 405 / 500 responses, never crashes the host app
  */
-class LocalWebServer(private val context: Context) {
+class LocalWebServer(private val assets: WebAssetSource) {
+
+    /** Convenience constructor used by the app (APK assets). */
+    constructor(context: Context) : this(AndroidWebAssetSource(context))
 
     companion object {
         private const val TAG = "LocalWebServer"
@@ -83,16 +86,8 @@ class LocalWebServer(private val context: Context) {
 
     private val activeConnections = AtomicInteger(0)
 
-    private val assetManager = context.assets
-
     /** True when `assets/web/` exists (new layout); false => asset root (legacy). */
-    private val usesWebFolder: Boolean by lazy {
-        try {
-            !assetManager.list(WEB_ROOT).isNullOrEmpty()
-        } catch (e: Exception) {
-            false
-        }
-    }
+    private val usesWebFolder: Boolean by lazy { !assets.isEmptyDir(WEB_ROOT) }
 
     /** Entry document inside the asset namespace, e.g. `web/index.html`. */
     val entryAssetPath: String by lazy {
@@ -341,7 +336,7 @@ class LocalWebServer(private val context: Context) {
             .lowercase(Locale.ROOT).contains("gzip")
         val compress = acceptsGzip &&
                 length >= GZIP_MIN_BYTES &&
-                MimeTypes.isCompressible(mime) &&
+                MimeTypes.isCompressible(assetPath, mime) &&
                 request.headers["range"] == null
 
         val header = StringBuilder(320)
@@ -430,6 +425,10 @@ class LocalWebServer(private val context: Context) {
      * @return asset path + whether this was the SPA fallback.
      */
     private fun resolveAsset(rawPath: String): Pair<String, Boolean>? {
+        // Defence in depth: the server is loopback-only, but a path that tries
+        // to escape the WebApp root must never resolve to anything.
+        if (rawPath.contains("..")) return null
+
         var path = rawPath.trimStart('/')
         if (path.isEmpty()) path = "index.html"
 
@@ -460,24 +459,17 @@ class LocalWebServer(private val context: Context) {
         return null
     }
 
-    private fun assetExists(path: String): Boolean = try {
-        assetManager.open(path).use { }
-        true
-    } catch (e: Exception) {
-        false
-    }
+    private fun assetExists(path: String): Boolean = assets.exists(path)
 
     /** @return the asset stream plus its length in bytes, or null when missing. */
-    private fun openAsset(path: String): Pair<InputStream, Long>? = try {
-        val stream = assetManager.open(path)
-        val available = try {
+    private fun openAsset(path: String): Pair<InputStream, Long>? {
+        val stream = assets.open(path) ?: return null
+        val length = try {
             stream.available().toLong()
         } catch (e: Exception) {
             -1L
         }
-        stream to available
-    } catch (e: Exception) {
-        null
+        return stream to length
     }
 
     private fun decodePath(path: String): String = try {
