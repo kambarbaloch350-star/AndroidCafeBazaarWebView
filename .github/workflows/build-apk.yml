@@ -24,6 +24,10 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          # Repository cache service returns 400 for this account; Gradle's own
+          # dependency cache inside the runner is enough for a clean build.
+          cache-disabled: true
 
       - name: Ensure Gradle wrapper
         run: |
@@ -36,6 +40,30 @@ jobs:
           fi
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
           test -f gradle/wrapper/gradle-wrapper.jar && echo "Gradle wrapper verified."
+
+      # services.gradle.org redirects to a GitHub release asset which occa-
+      # sionally answers 500; the wrapper is retried a few times, then a direct
+      # CDN download is used as a fallback.
+      - name: Provision Gradle distribution
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew --version --no-daemon; then
+              echo "Gradle distribution ready (attempt $attempt)."
+              exit 0
+            fi
+            echo "::warning::Gradle distribution fetch failed (attempt $attempt); retrying…"
+            rm -rf "$HOME/.gradle/wrapper/dists"/*/gradle-8.5-bin.zip.lck || true
+            sleep 15
+          done
+          echo "::warning::Falling back to the Gradle CDN tarball"
+          mkdir -p "$HOME/.gradle/wrapper/dists"
+          curl -fL --retry 5 --retry-all-errors -o /tmp/gradle-8.5-bin.zip \
+            https://downloads.gradle.org/distributions/gradle-8.5-bin.zip
+          DIST_DIR=$(find "$HOME/.gradle/wrapper/dists" -maxdepth 1 -type d -name 'gradle-8.5-bin' | head -1)
+          mkdir -p "$DIST_DIR/fallback/fallback"
+          unzip -q -o /tmp/gradle-8.5-bin.zip -d "$DIST_DIR/fallback/fallback"
+          touch "$DIST_DIR/fallback/fallback.ok"
+          ./gradlew --version --no-daemon
 
       # Native-only configuration (Tapsell / Najva / Firebase). Values are taken
       # from repository secrets when present; otherwise the container builds with
@@ -71,12 +99,49 @@ jobs:
       - name: Build release APK (R8 / resource shrinking enabled)
         run: ./gradlew assembleRelease --stacktrace --no-daemon
 
+      # Real verification of the produced artifact: the WebApp bundle must be
+      # packaged, every font/resource must resolve and the removed advertising
+      # SDK must not reappear anywhere (classes, assets or resources).
+      - name: Verify APK contents
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          ls -lh "$APK"
+          echo "--- packaged WebApp bundle ---"
+          unzip -l "$APK" | grep -E 'assets/web/' | head -20
+          echo "--- fonts / native resources ---"
+          unzip -l "$APK" | grep -E 'res/font/vazirmatn' || echo "::error::Vazirmatn fonts missing"
+          unzip -l "$APK" | grep -cE 'resources.arsc|classes.dex'
+          rm -rf /tmp/apk-inspect && mkdir -p /tmp/apk-inspect
+          (cd /tmp/apk-inspect && unzip -q "$GITHUB_WORKSPACE/$APK")
+          test -f /tmp/apk-inspect/assets/web/index.html
+          test -f /tmp/apk-inspect/assets/web/js/native-bridge.js
+          echo "--- advertising SDK scan ---"
+          if grep -ril 'adivery' /tmp/apk-inspect | head -5 | grep .; then
+            echo "::error::Removed advertising SDK is still packaged"
+            exit 1
+          fi
+          echo "clean: no trace of the removed advertising SDK"
+          echo "--- Tapsell / Najva / Poolakey presence ---"
+          for needle in ir/tapsell com/najva ir/cafebazaar; do
+            if grep -rql "$needle" /tmp/apk-inspect/classes*.dex; then
+              echo "present: $needle"
+            else
+              echo "::error::$needle missing from the APK"
+              exit 1
+            fi
+          done
+          echo "--- bridge + readiness contract ---"
+          grep -rq 'appReady' /tmp/apk-inspect/classes*.dex && echo "appReady exported"
+          grep -rq 'AndroidBridge' /tmp/apk-inspect/classes*.dex && echo "AndroidBridge exported"
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          compression-level: 0
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
@@ -84,3 +149,4 @@ jobs:
           name: app-release-apk
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: warn
+          compression-level: 0
