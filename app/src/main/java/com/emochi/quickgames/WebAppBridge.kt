@@ -198,11 +198,13 @@ class WebAppBridge(
     private fun requestStore(rating: Boolean): Boolean {
         val listener = hostListener ?: return false
         val target: Any? = activityRef.get() ?: webViewRef.get() ?: return false
-        val run = { if (rating) listener.onBridgeRequestRating() else listener.onBridgeRequestStorePage() }
-        return when (target) {
-            is ComponentActivity -> target.runOnUiThread { runCatching { run() } }
-            is WebView -> target.post { runCatching { run() } }
-        }.let { true }
+        val open = { if (rating) listener.onBridgeRequestRating() else listener.onBridgeRequestStorePage() }
+        when (target) {
+            is ComponentActivity -> target.runOnUiThread { runCatching { open() } }
+            is WebView -> target.post { runCatching { open() } }
+            else -> return false
+        }
+        return true
     }
 
     // =====================================================================

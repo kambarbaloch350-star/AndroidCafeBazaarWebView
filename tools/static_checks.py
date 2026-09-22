@@ -25,6 +25,7 @@ from collections import defaultdict
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "app", "src", "main")
 RES = os.path.join(APP, "res")
+KOTLIN = os.path.join(APP, "java")
 JAVA = os.path.join(APP, "java", "com", "emochi", "quickgames")
 ASSETS = os.path.join(APP, "assets")
 
@@ -174,6 +175,53 @@ REQUIRED_ASSETS = [
 ]
 
 
+# Well-known Android framework types: using one without importing it fails the
+# Kotlin compile, and that failure is otherwise only visible after a CI round
+# trip. Keep the list to types the container is actually likely to use.
+ANDROID_TYPES = {
+    "Toast": "android.widget.Toast",
+    "AlertDialog": "android.app.AlertDialog",
+    "ProgressBar": "android.widget.ProgressBar",
+    "LinearLayout": "android.widget.LinearLayout",
+    "FrameLayout": "android.widget.FrameLayout",
+    "ImageView": "android.widget.ImageView",
+    "TextView": "android.widget.TextView",
+    "ScrollView": "android.widget.ScrollView",
+    "Handler": "android.os.Handler",
+    "Looper": "android.os.Looper",
+    "Uri": "android.net.Uri",
+    "Intent": "android.content.Intent",
+    "Configuration": "android.content.res.Configuration",
+    "WeakReference": "java.lang.ref.WeakReference",
+}
+
+
+def check_kotlin_imports() -> None:
+    for base, _dirs, files in os.walk(KOTLIN):
+        for name in files:
+            if not name.endswith(".kt"):
+                continue
+            path = os.path.join(base, name)
+            text = open(path, encoding="utf-8").read()
+            imports = set(re.findall(r"^import\s+([\w.]+)", text, re.M))
+            body = re.sub(r"^import\s+.*$", "", text, flags=re.M)
+            # Comments are removed first: a framework name mentioned in the
+            # documentation must not count as a usage.
+            body = re.sub(r"/\*.*?\*/", " ", body, flags=re.S)
+            body = re.sub(r"//[^\n]*", " ", body)
+            # String literals are replaced last, character by character, so an
+            # unbalanced quote elsewhere in the file cannot swallow real code.
+            body = re.sub(r'"(?:[^"\n\\]|\\.)*"', '""', body)
+            for simple, fq in ANDROID_TYPES.items():
+                if fq in imports:
+                    continue
+                # usage as a type / static call, not a property or a parameter name
+                if re.search(r"(?<![\w.\"'])" + simple + r"(?=[\s.(<])", body):
+                    errors.append(
+                        f"{rel(path)}: uses {simple} without importing {fq}"
+                    )
+
+
 def check_assets() -> None:
     for relative in REQUIRED_ASSETS:
         path = os.path.join(ASSETS, relative)
@@ -249,6 +297,7 @@ def main() -> int:
     check_xml_files()
     check_xml_references()
     check_kotlin_references()
+    check_kotlin_imports()
     check_assets()
     check_adivery_removed()
     check_gradle()
