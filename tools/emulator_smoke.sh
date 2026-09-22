@@ -146,11 +146,44 @@ if adb logcat -d -s MainActivity:W | grep -q "CafeBazaar is not installed"; then
   note "rating intent degraded gracefully (Bazaar absent)"
 fi
 
-# ------------------------------------------------------- back / exit dialog
-note "deep link -> quickgames://open/ads, then hardware BACK"
+# ------------------------------------------------- WebApp back navigation
+note "deep link -> container, then ads, then BACK (WebApp history first)"
+adb shell am start -a android.intent.action.VIEW \
+  -d "quickgames://open/container" "$PKG" >/dev/null 2>&1
+sleep 2
 adb shell am start -a android.intent.action.VIEW \
   -d "quickgames://open/ads" "$PKG" >/dev/null 2>&1
 sleep 2
+adb logcat -c >/dev/null 2>&1 || true
+adb shell input keyevent KEYCODE_BACK >/dev/null 2>&1
+sleep 3
+if adb logcat -d | grep -q "onPageFinished: .*#/container"; then
+  note "BACK walked one page back inside the WebApp (#/container)"
+else
+  fail "BACK did not navigate inside the WebApp"
+fi
+if adb logcat -d -s MainActivity:I | grep -q "Exit confirmation shown"; then
+  fail "the exit dialog appeared although the WebApp could still go back"
+fi
+
+# --------------------------------------------- exit dialog on the first page
+# A freshly launched WebView has no history left, so BACK must fall through to
+# the native exit confirmation instead of killing the app.
+note "fresh launch, then BACK on the first page -> exit dialog"
+adb shell am force-stop "$PKG" >/dev/null 2>&1
+sleep 2
+adb logcat -c >/dev/null 2>&1 || true
+adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
+for _ in $(seq 1 40); do
+  adb logcat -d -s MainActivity:I | grep -q "hiding the native loading plate" && break
+  sleep 1
+done
+if adb logcat -d -s MainActivity:I | grep -q "minimum is 3000 ms"; then
+  note "$(adb logcat -d -s MainActivity:I | grep -o 'Loading screen visible for.*' | tail -1)"
+else
+  fail "the loading screen never reported its minimum-duration floor"
+fi
+sleep 1
 adb shell input keyevent KEYCODE_BACK >/dev/null 2>&1
 sleep 2
 adb exec-out screencap -p > "$OUT/12-backdialog.png" 2>/dev/null || true

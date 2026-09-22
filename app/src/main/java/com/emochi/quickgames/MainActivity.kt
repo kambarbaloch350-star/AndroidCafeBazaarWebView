@@ -721,6 +721,11 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         // for the animated splash to be seen for its minimum duration – a floor,
         // never a delay added on top of real work.
         val remaining = remainingLoadingTime()
+        Log.i(
+            TAG,
+            "Loading screen visible for ${SystemClock.uptimeMillis() - loadingShownAt} ms; " +
+                "minimum is ${MIN_LOADING_VISIBLE_MS} ms"
+        )
         if (remaining > 0) {
             Log.i(TAG, "Loading screen keeps the stage $remaining ms longer")
             handler.postDelayed({ dismissLoadingOverlay() }, remaining)
