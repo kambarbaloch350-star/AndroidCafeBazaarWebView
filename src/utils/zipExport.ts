@@ -38,7 +38,7 @@ export async function downloadAndroidProjectZip(
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'QuickGames-Android-Adivery-CafeBazaar.zip';
+  link.download = 'QuickGames-Android-Container.zip';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

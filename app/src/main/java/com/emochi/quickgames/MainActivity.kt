@@ -1,384 +1,1389 @@
 package com.emochi.quickgames
 
+import android.Manifest
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.OvershootInterpolator
+import org.json.JSONObject
+import android.view.WindowManager
 import android.webkit.ConsoleMessage
+import android.webkit.PermissionRequest
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.Toast
+
+import android.widget.TextView
+
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
-import com.adivery.sdk.Adivery
-import com.adivery.sdk.AdiveryBannerAdView
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
+import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Main Activity hosting the native WebView wrapper for HTML5/JS application.
- * Application Package: com.emochi.quickgames
- * Integrates:
- * 1. CafeBazaar In-App Billing (Poolakey SDK)
- * 2. Adivery Mobile Advertising SDK (Banner, Interstitial, Rewarded Video)
- * 3. Virtual HTTPS Asset Resolution for Node.js / HTML5 games
+ * MainActivity – the native container.
+ *
+ * Boot sequence (strictly ordered, no arbitrary delays):
+ *
+ * ```
+ *  1. Native loading plate appears immediately (green plate + Vazirmatn + RTL)
+ *  2. Local HTTP server starts on a worker thread   -> "راهاندازی سرور داخلی"
+ *  3. WebView is created, tuned and attached        -> "آمادهسازی نمایشگر وب"
+ *  4. WebView loads http://127.0.0.1:<port>/index.html
+ *  5. onPageFinished                                -> "در انتظار آمادهشدن برنامه"
+ *  6. WebApp calls NativeApp.appReady()
+ *  7. Plate fades out, WebView becomes interactive
+ * ```
+ *
+ * Any failure before step 6 lands in the error/retry state instead of leaving
+ * the user in front of a spinner forever.
  */
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
     companion object {
-        const val TAG = "QuickGames"
+        private const val TAG = "MainActivity"
+
+        /** Time allowed for the local server to come up. */
+        private const val SERVER_TIMEOUT_MS = 7_000L
+
+        /** Time allowed for the initial document load. */
+        private const val PAGE_LOAD_TIMEOUT_MS = 30_000L
+
+        /** Time the WebApp has to report readiness after the page finished. */
+        private const val APP_READY_TIMEOUT_MS = 45_000L
+
+        /**
+         * Minimum time the loading screen stays on screen.
+         *
+         * The product wants the animated splash to be *seen* (~3 s), so the
+         * overlay is only dismissed once the WebApp is ready **and** this much
+         * time has passed. It is a floor, never an extra delay on top of real
+         * work: a slow boot is not prolonged by it.
+         */
+        private const val MIN_LOADING_VISIBLE_MS = 3_000L
+
+        /** Cross-fade of the loading screen on the way out. */
+        private const val LOADING_FADE_OUT_MS = 320L
+
+        /** Delay before asking for the notification permission (after first paint). */
+        /** Official CafeBazaar package: Bazaar intents are delivered to it only. */
+        private const val BAZAAR_PACKAGE = "com.farsitel.bazaar"
+
+        /** Grace period before the empty native-ad plate closes itself. */
+        private const val NATIVE_AD_WATCHDOG_MS = 10_000L
+
+        /** Shorter grace period when the request was refused outright. */
+        private const val NATIVE_AD_GIVE_UP_MS = 2_500L
+
+        private const val NOTIFICATION_PERMISSION_DELAY_MS = 900L
     }
 
-    private lateinit var webView: WebView
-    private lateinit var bannerContainer: FrameLayout
-    private var bannerAdView: AdiveryBannerAdView? = null
-    private lateinit var billingManager: CafeBazaarBillingManager
-    private lateinit var adiveryManager: AdiveryManager
-    private lateinit var webAppBridge: WebAppBridge
-    private lateinit var assetResolver: WebAppAssetResolver
+    // ---------------------------------------------------------------------
+    // Views
+    // ---------------------------------------------------------------------
+    private lateinit var webViewContainer: FrameLayout
+    private lateinit var loadingOverlay: View
+    private lateinit var loadingContent: View
+    private lateinit var loadingLogo: View
+    private lateinit var loadingTitle: ShimmerTextView
+    private lateinit var loadingBar: LoadingBarView
+    private lateinit var loadingSubtitle: TextView
+    private lateinit var loadingMessage: TextView
+    private lateinit var loadingCredit: TextView
+    private lateinit var errorContent: View
+    private lateinit var errorMessage: TextView
+    private lateinit var nativeAdPlate: View
+    private lateinit var nativeAdContainer: FrameLayout
+    private lateinit var nativeAdStatus: TextView
+    private lateinit var fullscreenContainer: FrameLayout
+
+    // ---------------------------------------------------------------------
+    // Core components
+    // ---------------------------------------------------------------------
+    private var webView: WebView? = null
+    private var billingManager: CafeBazaarBillingManager? = null
+    private var tapsellManager: TapsellManager? = null
+    private var bridge: WebAppBridge? = null
+    private var backCallback: OnBackPressedCallback? = null
+    private var exitDialog: ExitConfirmationDialog? = null
+
+    // ---------------------------------------------------------------------
+    // State
+    // ---------------------------------------------------------------------
+    private val handler = Handler(Looper.getMainLooper())
+
+    /** Animators of the loading screen; cancelled as soon as it is gone. */
+    private val loadingAnimators = mutableListOf<ObjectAnimator>()
+
+    /** When the loading screen became visible – used for its minimum duration. */
+    private var loadingShownAt = 0L
+    private val bootExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "container-boot").apply { isDaemon = true }
+    }
+
+    @Volatile
+    private var isWebAppReady = false
+
+    @Volatile
+    private var isBootFailed = false
+
+    @Volatile
+    private var serverReady = false
+
+    private val bootStarted = AtomicBoolean(false)
+    private var bootToken = 0
+
+    private var customView: View? = null
+    private var customViewCallback: WebChromeClient.CustomViewCallback? = null
+
+    private var pendingDeepLinkRoute: String? = null
+
+    // ---------------------------------------------------------------------
+    // Activity results
+    // ---------------------------------------------------------------------
+    private var fileChooserCallback: android.webkit.ValueCallback<Array<Uri>>? = null
+
+    private val fileChooserLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val callback = fileChooserCallback
+            fileChooserCallback = null
+            if (callback == null) return@registerForActivityResult
+
+            val data = result.data
+            val uris: Array<Uri>? = when {
+                result.resultCode != RESULT_OK -> null
+                data?.clipData != null -> {
+                    val clip = data.clipData!!
+                    Array(clip.itemCount) { index -> clip.getItemAt(index).uri }
+                }
+                data?.data != null -> arrayOf(data.data!!)
+                else -> null
+            }
+            runCatching { callback.onReceiveValue(uris) }
+        }
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            Log.i(TAG, "POST_NOTIFICATIONS permission granted=$granted")
+        }
+
+    // =====================================================================
+    // Lifecycle
+    // =====================================================================
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        setupImmersiveMode()
+        bindViews()
+        configureSystemBars()
 
-        webView = findViewById(R.id.webView)
-        bannerContainer = findViewById(R.id.bannerContainer)
+        // 1. Native loading screen first – before any I/O or SDK call.
+        playLoadingIntro()
 
-        // 1. Initialize Adivery SDK in Production mode
-        Adivery.configure(application, AdiveryConfig.APP_ID)
-        Adivery.setLoggingEnabled(!AdiveryConfig.IS_PRODUCTION)
-        adiveryManager = AdiveryManager(this)
-
-        // 2. Initialize CafeBazaar Billing Manager
-        billingManager = CafeBazaarBillingManager(this)
-
-        // 3. Initialize Bridge & Asset Resolver
-        webAppBridge = WebAppBridge(this, webView, billingManager, adiveryManager)
-        assetResolver = WebAppAssetResolver(this)
-
-        // Register the WebView listener before preloading ads so no native ad event is lost.
-        adiveryManager.prepareAds()
-
-        // 4. Configure WebView
-        setupWebView()
-
-        // 5. Back Navigation
-        setupBackNavigation()
-
-        // 6. Connect to CafeBazaar Billing service
-        billingManager.startConnection()
-
-        // 7. Load Web Application from Virtual HTTPS Origin
-        val entryUrl = assetResolver.findEntryPointUrl()
-        webView.loadUrl(entryUrl)
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun setupWebView() {
-        val settings: WebSettings = webView.settings
-
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.databaseEnabled = true
-
-        settings.allowFileAccess = true
-        settings.allowContentAccess = true
-        @Suppress("DEPRECATION")
-        settings.allowFileAccessFromFileURLs = true
-        @Suppress("DEPRECATION")
-        settings.allowUniversalAccessFromFileURLs = true
-
-        settings.mediaPlaybackRequiresUserGesture = false
-        settings.cacheMode = WebSettings.LOAD_DEFAULT
-        settings.useWideViewPort = true
-        settings.loadWithOverviewMode = true
-        settings.builtInZoomControls = false
-        settings.displayZoomControls = false
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-
-        // Register native bridge interface
-        webView.addJavascriptInterface(webAppBridge, WebAppBridge.JS_INTERFACE_NAME)
-
-        // Intercept requests and serve local assets over virtual domain
-        webView.webViewClient = object : WebViewClient() {
-            override fun shouldInterceptRequest(
-                view: WebView?,
-                request: WebResourceRequest?
-            ): WebResourceResponse? {
-                val uri = request?.url ?: return null
-                val response = assetResolver.resolve(uri)
-                if (response != null) {
-                    return response
-                }
-                return super.shouldInterceptRequest(view, request)
-            }
-
-            override fun shouldOverrideUrlLoading(
-                view: WebView?,
-                request: WebResourceRequest?
-            ): Boolean {
-                val url = request?.url?.toString() ?: return false
-                if (url.startsWith("https://${WebAppAssetResolver.ASSET_DOMAIN}") ||
-                    url.startsWith("http://${WebAppAssetResolver.ASSET_DOMAIN}") ||
-                    url.startsWith("file:///android_asset/")
-                ) {
-                    return false
-                }
-                // Route external URLs to system intent
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Cannot launch external URL: ${e.message}")
-                }
-                return true
-            }
-
-            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                super.onPageStarted(view, url, favicon)
-                injectBridgeHelper()
-            }
-
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                injectBridgeHelper()
-                webView.post {
-                    webView.evaluateJavascript(
-                        "window.dispatchEvent(new CustomEvent('CafeBazaarBridgeReady')); window.dispatchEvent(new CustomEvent('AdiveryBridgeReady'));",
-                        null
-                    )
-                }
-            }
+        // Advertising + billing are native services: they warm up in parallel
+        // with the WebView boot and can never block or crash the WebApp.
+        tapsellManager = TapsellManager(this).also { manager ->
+            manager.initialize()
+        }
+        billingManager = CafeBazaarBillingManager(this).also { manager ->
+            // Apply the persisted unlock immediately so a restored purchase
+            // suppresses interstitials even before CafeBazaar answers.
+            tapsellManager?.interstitialsSuppressed = manager.isRemoveAdsOwned()
         }
 
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
-                return true
-            }
+        // A notification tap (or external intent) may have opened this Activity.
+        pendingDeepLinkRoute = DeepLinkBus.routeFromIntent(intent)
+
+        startBootSequence()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLink(DeepLinkBus.routeFromIntent(intent))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        webView?.onResume()
+        webView?.resumeTimers()
+    }
+
+    override fun onPause() {
+        webView?.onPause()
+        super.onPause()
+    }
+
+    override fun onStop() {
+        // Keep JS timers running while media plays so background audio and long
+        // WebAssembly tasks are not frozen mid-flight.
+        if (!isAudioPlaying()) {
+            webView?.pauseTimers()
         }
-    }
-
-    fun showBannerAd() {
-        runOnUiThread {
-            if (bannerAdView == null) {
-                bannerAdView = AdiveryBannerAdView(this).apply {
-                    setPlacementId(AdiveryConfig.PLACEMENT_BANNER)
-                    setBannerSize(com.adivery.sdk.BannerSize.BANNER)
-                }
-                bannerContainer.removeAllViews()
-                bannerContainer.addView(
-                    bannerAdView,
-                    FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    )
-                )
-                bannerAdView?.loadAd()
-            }
-            bannerContainer.visibility = View.VISIBLE
-        }
-    }
-
-    fun showBannerAdAt(xCss: Int, yCss: Int, widthCss: Int, heightCss: Int, cssScale: Float, visible: Boolean = true) {
-        runOnUiThread {
-            if (bannerAdView == null) {
-                bannerAdView = AdiveryBannerAdView(this).apply {
-                    setPlacementId(AdiveryConfig.PLACEMENT_BANNER)
-                    setBannerSize(com.adivery.sdk.BannerSize.BANNER)
-                }
-                bannerContainer.removeAllViews()
-                bannerContainer.addView(
-                    bannerAdView,
-                    FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    )
-                )
-                bannerAdView?.loadAd()
-            }
-            val scale = if (cssScale > 0f) cssScale else 1f
-            val lp = bannerContainer.layoutParams as FrameLayout.LayoutParams
-            lp.width = if (widthCss > 0) (widthCss * scale).toInt() else ViewGroup.LayoutParams.MATCH_PARENT
-            lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
-            lp.leftMargin = (xCss * scale).toInt()
-            lp.topMargin = (yCss * scale).toInt()
-            bannerContainer.layoutParams = lp
-            bannerContainer.visibility = if (visible) View.VISIBLE else View.GONE
-        }
-    }
-
-    fun hideBannerAd() {
-        runOnUiThread {
-            bannerContainer.visibility = View.GONE
-        }
-    }
-
-    /**
-     * Injects bridge fallback helpers without overwriting existing android-bridge.js functions.
-     */
-    private fun injectBridgeHelper() {
-        val script = """
-            (function() {
-                // Ensure base namespaces exist
-                window.CafeBazaarBridge = window.CafeBazaarBridge || {};
-                window.AdiveryBridge = window.AdiveryBridge || {};
-
-                // 1. Fallback CafeBazaar object if android-bridge.js not included
-                if (!window.CafeBazaar) {
-                    window.CafeBazaar = {
-                        isNativeBridgeAvailable: function() { return typeof window.AndroidBridge !== 'undefined'; },
-                        isAvailable: function() { return typeof window.AndroidBridge !== 'undefined' && window.AndroidBridge.isAvailable(); },
-                        connect: function() { if (window.AndroidBridge) window.AndroidBridge.connectBilling(); },
-                        purchase: function(id, payload) {
-                            if (!window.AndroidBridge) return Promise.reject(new Error('AndroidBridge not available'));
-                            return new Promise(function(resolve, reject) {
-                                window.__pendingPurchases = window.__pendingPurchases || {};
-                                window.__pendingPurchases[id] = { resolve: resolve, reject: reject };
-                                if (payload) window.AndroidBridge.buyProductWithPayload(id, payload);
-                                else window.AndroidBridge.buyProduct(id);
-                            });
-                        },
-                        consumePurchase: function(token) {
-                            if (!window.AndroidBridge) return Promise.reject(new Error('AndroidBridge not available'));
-                            return new Promise(function(resolve, reject) {
-                                window.__pendingConsumes = window.__pendingConsumes || {};
-                                window.__pendingConsumes[token] = { resolve: resolve, reject: reject };
-                                window.AndroidBridge.consumePurchase(token);
-                            });
-                        },
-                        getPurchases: function() {
-                            if (!window.AndroidBridge) return Promise.reject(new Error('AndroidBridge not available'));
-                            return new Promise(function(resolve, reject) {
-                                window.__pendingQuery = { resolve: resolve, reject: reject };
-                                window.AndroidBridge.getPurchases();
-                            });
-                        }
-                    };
-                    window.BazaarBridge = window.CafeBazaar;
-                }
-
-                // 2. Fallback Adivery object if android-bridge.js not included
-                if (!window.Adivery) {
-                    window.Adivery = {
-                        isNativeBridgeAvailable: function() { return typeof window.AndroidBridge !== 'undefined'; },
-                        showBanner: function() {
-                            if (window.AndroidBridge) return window.AndroidBridge.showBanner();
-                            return false;
-                        },
-                        hideBanner: function() {
-                            if (window.AndroidBridge) return window.AndroidBridge.hideBanner();
-                            return false;
-                        },
-                        showInterstitial: function(placementId) {
-                            if (!window.AndroidBridge) return Promise.resolve(false);
-                            return new Promise(function(resolve) {
-                                window.__pendingInterstitial = resolve;
-                                var shown = window.AndroidBridge.showInterstitial(placementId || '');
-                                if (!shown) {
-                                    window.__pendingInterstitial = null;
-                                    resolve(false);
-                                }
-                            });
-                        },
-                        showRewarded: function(placementId) {
-                            if (!window.AndroidBridge) return Promise.resolve({ rewardGranted: true });
-                            return new Promise(function(resolve) {
-                                window.__pendingRewarded = resolve;
-                                var shown = window.AndroidBridge.showRewarded(placementId || '');
-                                if (!shown) {
-                                    window.__pendingRewarded = null;
-                                    resolve({ rewardGranted: false, error: 'NOT_READY' });
-                                }
-                            });
-                        },
-                        isLoaded: function(placementId) {
-                            if (window.AndroidBridge) return window.AndroidBridge.isAdLoaded(placementId || '');
-                            return false;
-                        }
-                    };
-                }
-
-                // 3. Keep references synced
-                if (!window.AdiveryBridge.showRewarded && window.Adivery) {
-                    Object.assign(window.AdiveryBridge, window.Adivery);
-                }
-
-                // 4. Fallback onAdEvent ONLY if not already defined
-                if (typeof window.AdiveryBridge.onAdEvent !== 'function') {
-                    window.AdiveryBridge.onAdEvent = function(event) {
-                        if (typeof event === 'string') {
-                            try { event = JSON.parse(event); } catch (_) {}
-                        }
-                        if (!event) return;
-                        if (event.type === 'rewarded_closed') {
-                            var data = event.data || { rewardGranted: false };
-                            if (window.__pendingRewarded) {
-                                if (typeof window.__pendingRewarded === 'function') window.__pendingRewarded(data);
-                                else if (typeof window.__pendingRewarded.resolve === 'function') window.__pendingRewarded.resolve(data);
-                                window.__pendingRewarded = null;
-                            }
-                        } else if (event.type === 'interstitial_closed') {
-                            if (window.__pendingInterstitial) {
-                                if (typeof window.__pendingInterstitial === 'function') window.__pendingInterstitial(true);
-                                else if (typeof window.__pendingInterstitial.resolve === 'function') window.__pendingInterstitial.resolve(true);
-                                window.__pendingInterstitial = null;
-                            }
-                        } else if (event.type === 'ad_error') {
-                            var err = (event.data && event.data.error) ? event.data.error : 'AD_ERROR';
-                            if (window.__pendingRewarded) {
-                                var res = { rewardGranted: false, error: err };
-                                if (typeof window.__pendingRewarded === 'function') window.__pendingRewarded(res);
-                                else if (typeof window.__pendingRewarded.resolve === 'function') window.__pendingRewarded.resolve(res);
-                                window.__pendingRewarded = null;
-                            }
-                            if (window.__pendingInterstitial) {
-                                if (typeof window.__pendingInterstitial === 'function') window.__pendingInterstitial(false);
-                                else if (typeof window.__pendingInterstitial.resolve === 'function') window.__pendingInterstitial.resolve(false);
-                                window.__pendingInterstitial = null;
-                            }
-                        }
-                    };
-                }
-            })();
-        """.trimIndent()
-        webView.post {
-            webView.evaluateJavascript(script, null)
-        }
-    }
-
-    private fun setupBackNavigation() {
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (webView.canGoBack()) {
-                    webView.goBack()
-                } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
-                }
-            }
-        })
-    }
-
-    private fun setupImmersiveMode() {
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        val controller = WindowCompat.getInsetsController(window, window.decorView)
-        controller.isAppearanceLightStatusBars = false
-        controller.isAppearanceLightNavigationBars = false
+        super.onStop()
     }
 
     override fun onDestroy() {
-        billingManager.destroy()
-        webAppBridge.cleanUp()
-        webView.destroy()
+        handler.removeCallbacksAndMessages(null)
+        stopLoadingAnimations()
+        runCatching { exitDialog?.dismiss() }
+        exitDialog = null
+        bootExecutor.shutdownNow()
+
+        val view = webView
+        webView = null
+        if (view != null) {
+            runCatching {
+                view.stopLoading()
+                view.webChromeClient = null
+                view.webViewClient = WebViewClient()
+                (view.parent as? ViewGroup)?.removeView(view)
+                view.removeAllViews()
+                view.destroy()
+            }
+        }
+
+        bridge?.cleanUp()
+        bridge = null
+        fileChooserCallback = null
+        tapsellManager?.dispose()
+        billingManager?.destroy()
+        DeepLinkBus.markWebAppDestroyed()
+        NajvaManager.detachActivity(this)
+
+        // The local HTTP server is deliberately NOT stopped here: it is owned by
+        // the process ([WebAppServerController]) so the WebView origin – and with
+        // it localStorage / IndexedDB / cookies / HTTP cache – survives Activity
+        // recreation (rotation, theme change, process restore).
         super.onDestroy()
     }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // The manifest declares these changes, so the Activity is not recreated
+        // and the WebApp keeps its runtime state. Notify the page so it can
+        // re-layout / re-measure its canvas.
+        webView?.let { view ->
+            val orientation =
+                if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) "landscape"
+                else "portrait"
+            view.evaluateJavascript(
+                "(function(){try{window.dispatchEvent(new CustomEvent('nativeapp:resize'," +
+                        "{detail:{width:${view.width},height:${view.height}," +
+                        "orientation:'$orientation',dpr:window.devicePixelRatio||1}}));}catch(e){}})();",
+                null
+            )
+        }
+        configureSystemBars()
+    }
+
+    // =====================================================================
+    // Boot sequence
+    // =====================================================================
+
+    private fun startBootSequence() {
+        if (!bootStarted.compareAndSet(false, true)) {
+            Log.d(TAG, "Boot already in progress – ignoring duplicate start")
+            return
+        }
+        val token = ++bootToken
+        isBootFailed = false
+        isWebAppReady = false
+        serverReady = false
+
+        // 2. The server must exist before the WebView can navigate.
+        bootExecutor.execute {
+            val started = WebAppServerController.getOrStart(applicationContext)
+            handler.post {
+                if (token != bootToken) return@post
+                if (started == null) {
+                    Log.e(TAG, "Local server failed: ${WebAppServerController.lastError}")
+                    showErrorState(getString(R.string.error_message_default))
+                } else {
+                    serverReady = true
+                    Log.i(TAG, "Local server ready on port ${started.port}")
+                    attachWebView(token)
+                }
+            }
+        }
+
+        // Safety net: if the server never reports back, fail fast with retry.
+        handler.postDelayed({
+            if (token == bootToken && !serverReady && !isBootFailed) {
+                Log.e(TAG, "Server start timed out")
+                showErrorState(getString(R.string.error_message_default))
+            }
+        }, SERVER_TIMEOUT_MS)
+    }
+
+    /**
+     * Creates the WebView exactly once and starts the initial navigation.
+     * Re-entrant calls (retry, renderer crash recovery) reuse the instance.
+     */
+    private fun attachWebView(token: Int) {
+        if (isBootFailed) return
+
+        if (webView == null) {
+            if (BuildConfig.DEBUG) {
+                WebView.setWebContentsDebuggingEnabled(true)
+            }
+            val view = createWebView()
+            webView = view
+            webViewContainer.addView(
+                view,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+
+            bridge = WebAppBridge(this, view, billingManager!!, tapsellManager!!).also { b ->
+                b.hostListener = this
+                b.pendingRouteForWebApp = pendingDeepLinkRoute
+                view.addJavascriptInterface(b, WebAppBridge.JS_INTERFACE_NAME)
+            }
+
+            // Warm the renderer up as soon as possible.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                view.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+            }
+            setupBackNavigation()
+        }
+
+
+        val entry = WebAppServerController.entryUrl()
+        if (entry == null) {
+            showErrorState(getString(R.string.error_message_default))
+            return
+        }
+
+        // Never load twice: after a configuration change the WebView is already
+        // on the target document.
+        val current = webView?.url
+        if (current != null && current.startsWith(entry.substringBeforeLast('/'))) {
+            Log.d(TAG, "WebView already on $current – skipping duplicate load")
+            onDocumentLoaded(token)
+            return
+        }
+
+        webView?.loadUrl(entry)
+        handler.postDelayed({ onPageLoadTimeout(token) }, PAGE_LOAD_TIMEOUT_MS)
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun createWebView(): WebView {
+        // ContainerWebView: no text selection / copy, no long-press vibration.
+        val view = ContainerWebView(this)
+        view.setBackgroundColor(getColor(R.color.webview_background))
+        view.isVerticalScrollBarEnabled = true
+        view.isHorizontalScrollBarEnabled = false
+        view.overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        view.settings.configureForHeavyWebApps()
+        view.webViewClient = containerWebViewClient
+        view.webChromeClient = containerChromeClient
+        return view
+    }
+
+    /**
+     * Makes the page behave like an app surface: text cannot be selected, the
+     * iOS-style callout is disabled and images cannot be dragged out.
+     *
+     * The stylesheet is injected into the page itself (and re-applied on every
+     * finished load), so it also covers WebApps that ship their own CSS. The
+     * native side refuses the selection action mode as well – see
+     * [ContainerWebView].
+     */
+    private fun applyCopyProtection(view: WebView?) {
+        if (view == null) return
+        val css = """
+            *:not(input):not(textarea) {
+              -webkit-user-select: none;
+              -moz-user-select: none;
+              -ms-user-select: none;
+              user-select: none;
+              -webkit-touch-callout: none;
+              -webkit-tap-highlight-color: transparent;
+            }
+            img, a { -webkit-user-drag: none; user-drag: none; }
+        """.trimIndent()
+        val script = """
+            (function () {
+              try {
+                var id = 'container-copy-protection';
+                var existing = document.getElementById(id);
+                if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+                var style = document.createElement('style');
+                style.id = id;
+                style.type = 'text/css';
+                style.appendChild(document.createTextNode(${jsStringLiteral(css)}));
+                (document.head || document.documentElement).appendChild(style);
+                document.addEventListener('copy', function (e) { e.preventDefault(); }, true);
+                document.addEventListener('cut', function (e) { e.preventDefault(); }, true);
+                document.addEventListener('contextmenu', function (e) { e.preventDefault(); }, true);
+                return true;
+              } catch (e) { return false; }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script) { result ->
+            if (result?.trim()?.trim('"') == "true") {
+                Log.i(TAG, "Page copy protection active (selection, copy and context menu disabled)")
+            }
+        }
+    }
+
+    /** JSON-encodes a string so it can be embedded safely in injected JS. */
+    private fun jsStringLiteral(value: String): String =
+        JSONObject.quote(value)
+
+    /**
+     * WebView tuning for demanding WebApps: large JS bundles, Canvas, WebGL,
+     * WebAssembly, media playback, IndexedDB and SPA routing.
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun WebSettings.configureForHeavyWebApps() {
+        // ---- JavaScript & storage ----
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        @Suppress("DEPRECATION")
+        databaseEnabled = true
+        javaScriptCanOpenWindowsAutomatically = true
+        setSupportMultipleWindows(false)
+
+        // ---- Layout / rendering ----
+        useWideViewPort = true
+        loadWithOverviewMode = true
+        setSupportZoom(false)
+        builtInZoomControls = false
+        displayZoomControls = false
+        textZoom = 100
+
+        // ---- Media & local resources ----
+        mediaPlaybackRequiresUserGesture = false
+        @Suppress("DEPRECATION")
+        allowFileAccess = false
+        allowContentAccess = true
+        @Suppress("DEPRECATION")
+        allowFileAccessFromFileURLs = false
+        @Suppress("DEPRECATION")
+        allowUniversalAccessFromFileURLs = false
+        mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
+        // ---- Caching: our server sends ETags + immutable hashed bundles ----
+        cacheMode = WebSettings.LOAD_DEFAULT
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            safeBrowsingEnabled = !BuildConfig.DEBUG
+        }
+
+        // ---- AndroidX WebKit features (feature-guarded: never crash) ----
+        runCatching {
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.OFF_SCREEN_PRERASTER)) {
+                // Smoother Canvas / WebGL / video scrolling.
+                WebSettingsCompat.setOffscreenPreRaster(this, true)
+            }
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)
+            ) {
+                // WebApps own their palette; never let the platform invert them.
+                WebSettingsCompat.setAlgorithmicDarkeningAllowed(this, false)
+            }
+        }
+    }
+
+    // =====================================================================
+    // WebViewClient
+    // =====================================================================
+
+    private val containerWebViewClient = object : WebViewClient() {
+
+        override fun shouldInterceptRequest(
+            view: WebView?,
+            request: WebResourceRequest?
+        ): WebResourceResponse? = null // Everything is served by our own HTTP server.
+
+        override fun shouldOverrideUrlLoading(
+            view: WebView?,
+            request: WebResourceRequest?
+        ): Boolean {
+            val uri = request?.url ?: return false
+            val scheme = uri.scheme?.lowercase(Locale.ROOT).orEmpty()
+
+            // Same-origin navigation (assets, SPA routes scrolled via #) stays in-app.
+            if (isInternalUrl(uri)) return false
+
+            return when (scheme) {
+                "http", "https" -> {
+                    if (request.isForMainFrame) {
+                        // External websites open in the user's browser.
+                        openExternally(uri)
+                        true
+                    } else {
+                        // Sub-resources / third-party iframes (CDNs, embeds, APIs)
+                        // are allowed to load inside the WebView.
+                        false
+                    }
+                }
+                "about", "data", "blob", "javascript" -> false
+                else -> {
+                    // tel:, mailto:, market:, bazaar:, intent:, ...
+                    openExternally(uri)
+                    true
+                }
+            }
+        }
+
+        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+            super.onPageStarted(view, url, favicon)
+            bridge?.onPageUrlChanged(url)
+            if (BuildConfig.DEBUG) Log.d(TAG, "onPageStarted: $url")
+        }
+
+        override fun onPageFinished(view: WebView?, url: String?) {
+            super.onPageFinished(view, url)
+            bridge?.onPageUrlChanged(url)
+            if (BuildConfig.DEBUG) Log.d(TAG, "onPageFinished: $url")
+            applyCopyProtection(view)
+            onDocumentLoaded(bootToken)
+            bridge?.notifyContainerReady(pendingDeepLinkRoute)
+        }
+
+        override fun onReceivedError(
+            view: WebView?,
+            request: WebResourceRequest?,
+            error: WebResourceError?
+        ) {
+            super.onReceivedError(view, request, error)
+            if (request?.isForMainFrame == true) {
+                val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) error?.errorCode else null
+                Log.e(TAG, "Main-frame load error ($code): ${error?.description}")
+                showErrorState(getString(R.string.error_message_webview))
+            }
+        }
+
+        @Deprecated("Required for API < 23 WebView versions")
+        override fun onReceivedError(
+            view: WebView?,
+            errorCode: Int,
+            description: String?,
+            failingUrl: String?
+        ) {
+            super.onReceivedError(view, errorCode, description, failingUrl)
+            Log.e(TAG, "Legacy main-frame load error ($errorCode): $description")
+            showErrorState(getString(R.string.error_message_webview))
+        }
+
+        override fun onReceivedHttpError(
+            view: WebView?,
+            request: WebResourceRequest?,
+            errorResponse: WebResourceResponse?
+        ) {
+            super.onReceivedHttpError(view, request, errorResponse)
+            if (request?.isForMainFrame == true) {
+                val status = errorResponse?.statusCode ?: -1
+                Log.e(TAG, "Main-frame HTTP error $status for ${request.url}")
+                if (status >= 500) showErrorState(getString(R.string.error_message_webview))
+            }
+        }
+
+        override fun onRenderProcessGone(
+            view: WebView?,
+            detail: RenderProcessGoneDetail?
+        ): Boolean {
+            // The WebApp's renderer died – typically OOM with huge canvases.
+            // Recover instead of letting the whole process be torn down.
+            val didCrash = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                detail?.didCrash() ?: true
+            } else {
+                true
+            }
+            Log.e(TAG, "Render process gone (crash=$didCrash) – rebuilding WebView")
+
+            runCatching {
+                (view?.parent as? ViewGroup)?.removeView(view)
+                view?.destroy()
+            }
+            webView = null
+            bridge?.cleanUp()
+            bridge = null
+            isWebAppReady = false
+            backCallback?.isEnabled = false
+            backCallback = null
+
+            handler.postDelayed({
+                bootStarted.set(false)
+                startBootSequence()
+            }, 400)
+            return true
+        }
+    }
+
+    // =====================================================================
+    // WebChromeClient (media, fullscreen, console, file chooser)
+    // =====================================================================
+
+    private val containerChromeClient = object : WebChromeClient() {
+
+        override fun onProgressChanged(view: WebView?, newProgress: Int) {
+            super.onProgressChanged(view, newProgress)
+            if (newProgress in 1..99 && !isWebAppReady && !isBootFailed) {
+            }
+        }
+
+        override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+            if (BuildConfig.DEBUG && consoleMessage != null) {
+                Log.d(
+                    "WebApp",
+                    "[${consoleMessage.messageLevel()}] ${consoleMessage.message()} " +
+                            "(${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})"
+                )
+            }
+            return true
+        }
+
+        override fun onPermissionRequest(request: PermissionRequest?) {
+            // Camera / microphone are granted to our own WebApp origin only.
+            val host = request?.origin?.host
+            val trusted = host == "127.0.0.1" || host == "localhost"
+            if (trusted) {
+                runCatching { request?.grant(request.resources) }
+            } else {
+                runCatching { request?.deny() }
+            }
+        }
+
+        override fun onGeolocationPermissionsShowPrompt(
+            origin: String?,
+            callback: android.webkit.GeolocationPermissions.Callback?
+        ) {
+            callback?.invoke(origin, false, false)
+        }
+
+        override fun onShowFileChooser(
+            webView: WebView?,
+            filePathCallback: android.webkit.ValueCallback<Array<Uri>>?,
+            fileChooserParams: FileChooserParams?
+        ): Boolean {
+            // `<input type="file">` support – essential for real WebApps.
+            fileChooserCallback?.onReceiveValue(null)
+            fileChooserCallback = filePathCallback
+            return try {
+                val intent = fileChooserParams?.createIntent()
+                if (intent == null) {
+                    fileChooserCallback = null
+                    false
+                } else {
+                    fileChooserLauncher.launch(intent)
+                    true
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "File chooser failed: ${e.message}")
+                fileChooserCallback = null
+                false
+            }
+        }
+
+        override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+            if (customView != null) {
+                callback?.onCustomViewHidden()
+                return
+            }
+            if (view == null) return
+
+            customView = view
+            customViewCallback = callback
+
+            fullscreenContainer.addView(
+                view,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+            fullscreenContainer.visibility = View.VISIBLE
+            webView?.visibility = View.INVISIBLE
+            enterFullscreen()
+            Log.d(TAG, "Entered fullscreen")
+        }
+
+        override fun onHideCustomView() {
+            val view = customView
+            customView = null
+            if (view != null) {
+                runCatching { fullscreenContainer.removeView(view) }
+            }
+            fullscreenContainer.visibility = View.GONE
+            webView?.visibility = View.VISIBLE
+            exitFullscreen()
+            customViewCallback?.onCustomViewHidden()
+            customViewCallback = null
+            Log.d(TAG, "Exited fullscreen")
+        }
+    }
+
+    // =====================================================================
+    // WebAppBridge.HostListener
+    // =====================================================================
+
+    override fun onWebAppReady() {
+        if (isWebAppReady) return
+        isWebAppReady = true
+        isBootFailed = false
+        Log.i(TAG, "Web app ready – hiding the native loading plate")
+        handler.removeCallbacksAndMessages(null)
+
+        // The WebApp is already running behind the overlay, so this only waits
+        // for the animated splash to be seen for its minimum duration – a floor,
+        // never a delay added on top of real work.
+        val remaining = remainingLoadingTime()
+        Log.i(
+            TAG,
+            "Loading screen visible for ${SystemClock.uptimeMillis() - loadingShownAt} ms; " +
+                "minimum is ${MIN_LOADING_VISIBLE_MS} ms"
+        )
+        if (remaining > 0) {
+            Log.i(TAG, "Loading screen keeps the stage $remaining ms longer")
+            handler.postDelayed({ dismissLoadingOverlay() }, remaining)
+        } else {
+            dismissLoadingOverlay()
+        }
+
+        // Deliver a route that arrived through a push notification tap, now that
+        // the WebApp's router exists.
+        handler.postDelayed({
+            pendingDeepLinkRoute?.let { route ->
+                DeepLinkBus.publish(route)
+                pendingDeepLinkRoute = null
+            }
+            DeepLinkBus.flush()
+        }, 120)
+
+        // Ask for the notification permission only after a successful first
+        // paint, so the system dialog never covers the loading plate.
+        handler.postDelayed({
+            requestNotificationPermissionIfNeeded()
+        }, NOTIFICATION_PERMISSION_DELAY_MS)
+    }
+
+    override fun onWebAppError(message: String) {
+        showErrorState(message)
+    }
+
+    override fun onBridgeRequestBack() {
+        onBackPressedDispatcher.onBackPressed()
+    }
+
+    override fun onBridgeRequestNativeAd(
+        visible: Boolean,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int
+    ) {
+        if (visible) showNativeAd(x, y, width, height) else hideNativeAd()
+    }
+
+    override fun onBridgeOwnedProductsChanged(owned: Set<String>) {
+        // Permanent unlock bought or restored – stop showing interstitials.
+        tapsellManager?.interstitialsSuppressed = owned.contains(CafeBazaarConfig.SKU_REMOVE_ADS)
+    }
+
+    override fun onBridgeRequestRating(): Boolean = openBazaar(rating = true)
+
+    override fun onBridgeRequestStorePage(): Boolean = openBazaar(rating = false)
+
+    /**
+     * Opens the CafeBazaar page of this app.
+     *
+     * `bazaar://details?id=<package>` is the official Bazaar intent; with
+     * `ACTION_EDIT` Bazaar opens the rating dialog directly. When Bazaar is not
+     * installed (emulator, sideloaded build) the intent cannot be resolved and
+     * the user is notified instead of crashing.
+     */
+    private fun openBazaar(rating: Boolean): Boolean {
+        val uri = Uri.parse("bazaar://details?id=$packageName")
+        val intent = Intent(if (rating) Intent.ACTION_EDIT else Intent.ACTION_VIEW, uri).apply {
+            setPackage(BAZAAR_PACKAGE)
+            addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY or Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+        }
+
+        val resolved = runCatching { intent.resolveActivity(packageManager) != null }
+            .getOrDefault(false)
+        if (!resolved) {
+            Log.w(TAG, "CafeBazaar is not installed – cannot open $uri")
+            Toast.makeText(this, getString(R.string.bazaar_not_installed), Toast.LENGTH_SHORT).show()
+            return false
+        }
+
+        return runCatching {
+            startActivity(intent)
+            Log.i(TAG, "Opened CafeBazaar (${if (rating) "rating" else "details"}) for $packageName")
+            true
+        }.getOrElse {
+            Log.e(TAG, "Failed to open CafeBazaar: ${it.message}")
+            false
+        }
+    }
+
+    // =====================================================================
+    // Native ad plate (Tapsell)
+    // =====================================================================
+
+    private fun showNativeAd(x: Int, y: Int, width: Int, height: Int) {
+        val manager = tapsellManager ?: return
+        // A plate that never receives an ad must never linger on top of the
+        // WebApp: the watchdog hides it again when the SDK attached nothing.
+        cancelNativeAdWatchdog()
+        val density = resources.displayMetrics.density
+
+        val margin = (12 * density).toInt()
+        val params = nativeAdPlate.layoutParams as FrameLayout.LayoutParams
+        params.width = ViewGroup.LayoutParams.MATCH_PARENT
+        params.height = ViewGroup.LayoutParams.WRAP_CONTENT
+        params.leftMargin = margin
+        params.rightMargin = margin
+        params.gravity = android.view.Gravity.BOTTOM
+        // `y` is the distance of the plate from the bottom of the WebApp
+        // viewport, expressed in CSS pixels (0 = bottom aligned).
+        params.bottomMargin = if (y > 0) {
+            (y * density).toInt().coerceAtLeast(margin)
+        } else {
+            margin
+        }
+        nativeAdPlate.layoutParams = params
+
+        nativeAdContainer.removeAllViews()
+        nativeAdStatus.visibility = View.VISIBLE
+        nativeAdStatus.text = getString(R.string.native_ad_loading)
+        nativeAdPlate.visibility = View.VISIBLE
+
+        manager.attachNativeContainer(nativeAdContainer)
+        val accepted = manager.showNative()
+        if (!accepted) {
+            nativeAdStatus.text = getString(R.string.native_ad_unavailable)
+        }
+        handler.postDelayed(
+            nativeAdWatchdog,
+            if (accepted) NATIVE_AD_WATCHDOG_MS else NATIVE_AD_GIVE_UP_MS
+        )
+    }
+
+    private fun hideNativeAd() {
+        cancelNativeAdWatchdog()
+        tapsellManager?.destroyNative()
+        nativeAdContainer.removeAllViews()
+        nativeAdPlate.visibility = View.GONE
+    }
+
+    private fun cancelNativeAdWatchdog() {
+        handler.removeCallbacks(nativeAdWatchdog)
+    }
+
+    /**
+     * Safety net for the native ad plate: if the SDK never rendered a view into
+     * the container the plate is closed again, so a failed ad request can never
+     * cover the WebApp.
+     */
+    private val nativeAdWatchdog = Runnable {
+        if (nativeAdPlate.visibility != View.VISIBLE) return@Runnable
+        val rendered = nativeAdContainer.childCount > 0
+        if (!rendered) {
+            Log.w(TAG, "Native ad plate never received a view – hiding it again")
+            hideNativeAd()
+        }
+    }
+
+    // =====================================================================
+    // Loading / error UI
+    // =====================================================================
+
+    /**
+     * Choreography of the animated loading screen
+     * -------------------------------------------
+     * The logo pops in with an overshoot while its halo fades up, then the copy
+     * slides in line by line (title → tagline → loading line), the credit rises
+     * from the bottom, and from there the logo floats, the halo breathes and the
+     * ring keeps turning until the screen is dismissed.
+     */
+    private fun playLoadingIntro() {
+        loadingShownAt = SystemClock.uptimeMillis()
+        stopLoadingAnimations()
+
+        val density = resources.displayMetrics.density
+        val rise = 18f * density
+
+        // 1. Copy starts hidden and slightly low; the logo is scaled down.
+        listOf(loadingTitle, loadingSubtitle, loadingMessage, loadingCredit).forEach {
+            it.alpha = 0f
+            it.translationY = rise
+        }
+        loadingLogo.alpha = 0f
+        loadingLogo.scaleX = 0.62f
+        loadingLogo.scaleY = 0.62f
+        loadingBar.alpha = 0f
+        loadingBar.scaleX = 0.6f
+
+        // 2. The logo lands first with a soft overshoot …
+        loadingLogo.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(620)
+            .setInterpolator(OvershootInterpolator(1.05f))
+            .start()
+
+        // 3. … then the copy arrives line by line, the title shimmering.
+        slideIn(loadingTitle, 260)
+        slideIn(loadingSubtitle, 400)
+        slideIn(loadingMessage, 540)
+        slideIn(loadingBar, 640)
+        slideIn(loadingCredit, 820)
+
+        // 4. And it stays alive: the logo breathes and floats, the title sweeps,
+        //    the progress line slides.
+        loadingTitle.start()
+        loadingBar.animate().cancel()
+        loadingBar.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .setStartDelay(640)
+            .setDuration(420)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .start()
+        loadingBar.start()
+
+        val logoFloat = ObjectAnimator.ofPropertyValuesHolder(
+            loadingLogo,
+            PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, 0f, -6f * density)
+        ).apply {
+            duration = 1900L
+            startDelay = 700L
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+        }
+        val logoBreath = ObjectAnimator.ofPropertyValuesHolder(
+            loadingLogo,
+            PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.045f),
+            PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.045f)
+        ).apply {
+            duration = 1900L
+            startDelay = 700L
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+        }
+        loadingAnimators += logoFloat.also { it.start() }
+        loadingAnimators += logoBreath.also { it.start() }
+    }
+
+    /** Fade + rise for one line of the loading copy. */
+    private fun slideIn(view: View, delay: Long) {
+        view.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(delay)
+            .setDuration(420)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .start()
+    }
+
+    private fun stopLoadingAnimations() {
+        loadingAnimators.forEach { it.cancel() }
+        loadingAnimators.clear()
+        loadingTitle.stop()
+        loadingBar.stop()
+    }
+
+    /** Milliseconds the loading screen still has to stay, honouring the floor. */
+    private fun remainingLoadingTime(): Long {
+        if (loadingShownAt == 0L) return 0L
+        val visibleFor = SystemClock.uptimeMillis() - loadingShownAt
+        return (MIN_LOADING_VISIBLE_MS - visibleFor).coerceAtLeast(0L)
+    }
+
+    private fun dismissLoadingOverlay() {
+        if (loadingOverlay.visibility != View.VISIBLE) return
+        stopLoadingAnimations()
+        // The content lifts slightly while the whole canvas fades, so the WebApp
+        // is revealed rather than cut to.
+        loadingContent.animate()
+            .alpha(0f)
+            .translationY(-12f * resources.displayMetrics.density)
+            .setDuration(LOADING_FADE_OUT_MS)
+            .start()
+        loadingCredit.animate()
+            .alpha(0f)
+            .setDuration(LOADING_FADE_OUT_MS / 2)
+            .start()
+        loadingOverlay.animate()
+            .alpha(0f)
+            .setDuration(LOADING_FADE_OUT_MS)
+            .withEndAction {
+                loadingOverlay.visibility = View.GONE
+                loadingOverlay.alpha = 1f
+                loadingContent.alpha = 1f
+                loadingContent.translationY = 0f
+            }
+            .start()
+    }
+
+
+    private fun showErrorState(message: String) {
+        if (isBootFailed) return
+        isBootFailed = true
+        handler.removeCallbacksAndMessages(null)
+        stopLoadingAnimations()
+
+        loadingOverlay.visibility = View.VISIBLE
+        loadingOverlay.alpha = 1f
+        loadingContent.visibility = View.GONE
+        errorContent.visibility = View.VISIBLE
+        errorMessage.text = message
+        Log.e(TAG, "Boot failed: $message")
+    }
+
+    private fun retryBoot() {
+        Log.i(TAG, "Retrying boot")
+        handler.removeCallbacksAndMessages(null)
+        isBootFailed = false
+        isWebAppReady = false
+        bootStarted.set(false)
+        loadingOverlay.visibility = View.VISIBLE
+        loadingOverlay.alpha = 1f
+        errorContent.visibility = View.GONE
+        loadingContent.visibility = View.VISIBLE
+        playLoadingIntro()
+
+        val view = webView
+        val token = ++bootToken
+        val entry = WebAppServerController.entryUrl()
+        if (view != null && entry != null && WebAppServerController.isRunning()) {
+            view.loadUrl(entry)
+            handler.postDelayed({ onPageLoadTimeout(token) }, PAGE_LOAD_TIMEOUT_MS)
+            return
+        }
+        // Server is gone: rebuild the whole stack (the controller restarts it).
+        if (view != null) {
+            runCatching {
+                (view.parent as? ViewGroup)?.removeView(view)
+                view.destroy()
+            }
+            webView = null
+            bridge?.cleanUp()
+            bridge = null
+            backCallback?.isEnabled = false
+            backCallback = null
+        }
+        serverReady = false
+        startBootSequence()
+    }
+
+    private fun onDocumentLoaded(token: Int) {
+        if (isWebAppReady || isBootFailed) return
+        handler.postDelayed({ onAppReadyTimeout(token) }, APP_READY_TIMEOUT_MS)
+    }
+
+    private fun onPageLoadTimeout(token: Int) {
+        if (token != bootToken || isWebAppReady || isBootFailed) return
+        Log.w(TAG, "Page load timed out")
+        showErrorState(getString(R.string.error_message_webview))
+    }
+
+    private fun onAppReadyTimeout(token: Int) {
+        if (token != bootToken || isWebAppReady || isBootFailed) return
+        Log.w(TAG, "WebApp never called NativeApp.appReady()")
+        showErrorState(getString(R.string.error_message_webview))
+    }
+
+    // =====================================================================
+    // Back navigation
+    // =====================================================================
+
+    private fun setupBackNavigation() {
+        if (backCallback != null) return
+        val callback = object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // 1. Media / canvas fullscreen closes first.
+                if (customView != null) {
+                    containerChromeClient.onHideCustomView()
+                    return
+                }
+                // 2. Native ad plate.
+                if (nativeAdPlate.visibility == View.VISIBLE) {
+                    hideNativeAd()
+                    return
+                }
+                // 3. A full-screen ad of the SDK owns the back button while shown.
+                if (tapsellManager?.isShowingAd == true) return
+                // 4. The exit dialog is open: back means "stay in the game".
+                if (exitDialog?.isShowing == true) {
+                    exitDialog?.dismiss()
+                    return
+                }
+                // 5. Ask the page first – even while booting, a loaded document
+                //    may already have its own screen stack.
+                if (webView == null) {
+                    askBeforeLeaving()
+                    return
+                }
+                // 6. Ask the WebApp to navigate one page back; whatever it does
+                //    not handle falls through to the exit confirmation. The app
+                //    is never left without that confirmation.
+                requestWebAppBack { handled ->
+                    if (!handled) askBeforeLeaving()
+                }
+            }
+        }
+        backCallback = callback
+        onBackPressedDispatcher.addCallback(this, callback)
+    }
+
+    /**
+     * Asks the WebApp to go one page back, in this order:
+     *
+     *  1. `window.NativeApp.onBackPressed()` – the hook a WebApp implements
+     *     directly or through `NativeApp.setBackHandler(fn)`; returning `true`
+     *     means "handled, stay inside the app".
+     *  2. a cancelable `nativeapp:back` DOM event – for WebApps that prefer
+     *     `event.preventDefault()`;
+     *  3. `history.back()` when the page pushed history entries (SPA routes).
+     *
+     * When nothing handled it – including "there is no previous page" – the
+     * callback receives `handled = false` and the exit confirmation is shown.
+     */
+    private fun requestWebAppBack(onResult: (Boolean) -> Unit) {
+        val view = webView
+        if (view == null) {
+            Log.i(TAG, "Back: no WebView yet -> exit confirmation")
+            onResult(false)
+            return
+        }
+        val script = """
+            (function () {
+              try {
+                var app = window.NativeApp;
+                if (app && typeof app.onBackPressed === 'function' && app.onBackPressed() === true) {
+                  return true;
+                }
+                var event = new Event('nativeapp:back', { cancelable: true, bubbles: true });
+                if (!window.dispatchEvent(event)) {
+                  return true; // a listener called preventDefault()
+                }
+                if (window.__nativeBackHandler && window.__nativeBackHandler() === true) {
+                  return true;
+                }
+                if (window.history && window.history.length > 1) {
+                  window.history.back();
+                  return true;
+                }
+                return false;
+              } catch (e) {
+                return false;
+              }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script) { result ->
+            if (result?.trim()?.trim('"') == "true") {
+                Log.i(TAG, "Back: handled inside the WebApp (previous page)")
+                return@evaluateJavascript
+            }
+            // Last chance: real WebView history (in-page anchors, extra hops).
+            val current = webView
+            if (current != null && current.canGoBack()) {
+                Log.i(TAG, "Back: WebView history step")
+                current.goBack()
+                return@evaluateJavascript
+            }
+            Log.i(TAG, "Back: nothing left to go back to in the WebApp")
+            onResult(false)
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Exit flow
+    // ---------------------------------------------------------------------
+
+    /** Shows the light green "خروج از بازی؟" sheet (rating nudge included). */
+    private fun askBeforeLeaving() {
+        if (isFinishing || isDestroyed) return
+        if (exitDialog?.isShowing == true) return
+        val dialog = ExitConfirmationDialog(this, object : ExitConfirmationDialog.Callbacks {
+            override fun onRateRequested() {
+                Log.i(TAG, "Exit dialog: rating requested")
+                exitDialog = null
+                val opened = openBazaar(rating = true)
+                Toast.makeText(
+                    this@MainActivity,
+                    if (opened) R.string.exit_dialog_rated else R.string.exit_dialog_rate_unavailable,
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            override fun onExitConfirmed() {
+                Log.i(TAG, "Exit dialog: leave confirmed")
+                exitDialog = null
+                leaveApp()
+            }
+
+            override fun onDismissed() {
+                Log.i(TAG, "Exit dialog: cancelled")
+                exitDialog = null
+            }
+        })
+        exitDialog = dialog
+        Log.i(TAG, "Exit confirmation shown")
+        runCatching { dialog.show() }.onFailure {
+            Log.w(TAG, "Could not show the exit dialog: ${it.message}")
+            exitDialog = null
+        }
+    }
+
+    /** Really leaves the app – the only path that finishes the Activity. */
+    private fun leaveApp() {
+        backCallback?.isEnabled = false
+        onBackPressedDispatcher.onBackPressed()
+    }
+
+    // =====================================================================
+    // Fullscreen (media / canvas)
+    // =====================================================================
+
+    private fun enterFullscreen() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    private fun exitFullscreen() {
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.show(WindowInsetsCompat.Type.systemBars())
+        configureSystemBars()
+    }
+
+    // =====================================================================
+    // Permissions & deep links
+    // =====================================================================
+
+    /** Android 13+ runtime permission required before Najva can show notifications. */
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (NajvaManager.hasNotificationPermission(this)) return
+        runCatching { notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+            .onFailure { Log.w(TAG, "Notification permission request failed: ${it.message}") }
+    }
+
+    private fun handleDeepLink(route: String?) {
+        if (route.isNullOrBlank()) return
+        Log.i(TAG, "Deep link received: $route")
+        pendingDeepLinkRoute = route
+        bridge?.pendingRouteForWebApp = route
+        // Buffered inside DeepLinkBus until the WebApp calls appReady().
+        DeepLinkBus.publish(route)
+        if (isWebAppReady) {
+            DeepLinkBus.flush()
+            pendingDeepLinkRoute = null
+        }
+    }
+
+    // =====================================================================
+    // Helpers
+    // =====================================================================
+
+    private fun bindViews() {
+        webViewContainer = findViewById(R.id.webViewContainer)
+        loadingOverlay = findViewById(R.id.loadingOverlay)
+        loadingContent = findViewById(R.id.loadingContent)
+        loadingLogo = findViewById(R.id.loadingLogo)
+        loadingBar = findViewById(R.id.loadingBar)
+        loadingTitle = findViewById(R.id.loadingTitle)
+        loadingSubtitle = findViewById(R.id.loadingSubtitle)
+        loadingMessage = findViewById(R.id.loadingMessage)
+        loadingCredit = findViewById(R.id.loadingCredit)
+        errorContent = findViewById(R.id.errorContent)
+        errorMessage = findViewById(R.id.errorMessage)
+        nativeAdPlate = findViewById(R.id.nativeAdPlate)
+        nativeAdContainer = findViewById(R.id.nativeAdContainer)
+        nativeAdStatus = findViewById(R.id.nativeAdStatus)
+        fullscreenContainer = findViewById(R.id.fullscreenContainer)
+
+        findViewById<View>(R.id.retryButton).setOnClickListener { retryBoot() }
+        findViewById<View>(R.id.nativeAdClose).setOnClickListener { hideNativeAd() }
+    }
+
+    private fun configureSystemBars() {
+        // System bars stay visible; the WebView owns the content area below them.
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        window.statusBarColor = getColor(R.color.system_bar)
+        window.navigationBarColor = getColor(R.color.system_bar)
+
+        // The bars are white in **both** themes (see values-night/colors.xml), so
+        // their icons must always be the dark variant: light icons on a white
+        // bar are invisible, which is exactly the bug this replaces.
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = true
+        controller.isAppearanceLightNavigationBars = true
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+    }
+
+    private fun isInternalUrl(uri: Uri): Boolean {
+        val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase(Locale.ROOT) ?: return false
+        if (host != "127.0.0.1" && host != "localhost") return false
+        val port = WebAppServerController.current()?.port
+        return port == null || uri.port == -1 || uri.port == port
+    }
+
+    private fun openExternally(uri: Uri) {
+        runCatching {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, uri).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+        }.onFailure { Log.w(TAG, "No activity can handle $uri: ${it.message}") }
+    }
+
+    private fun isAudioPlaying(): Boolean = runCatching {
+        val audioManager = getSystemService(AUDIO_SERVICE) as? AudioManager ?: return false
+        audioManager.isMusicActive
+    }.getOrDefault(false)
 }

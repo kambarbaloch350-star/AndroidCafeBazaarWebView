@@ -1,0 +1,17 @@
+/*
+ * Vazirmatn (Persian) — bundled locally so the WebApp never needs a CDN.
+ * The variable font covers every weight between 100 and 900.
+ */
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("./vazirmatn-variable.woff2") format("woff2-variations"),
+       url("./vazirmatn-variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF;
+}
+
+html, body, button, input, textarea, select {
+  font-family: "Vazirmatn", system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif;
+}

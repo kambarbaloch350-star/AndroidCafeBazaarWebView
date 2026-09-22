@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Soft light-green glow behind the exit dialog's brand badge. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:centerColor="#2E34D399"
+        android:endColor="#00FFFFFF"
+        android:gradientRadius="60%"
+        android:startColor="#40B8E7CC"
+        android:type="radial" />
+</shape>

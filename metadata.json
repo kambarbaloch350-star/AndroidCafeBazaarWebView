@@ -1,6 +1,8 @@
 {
-  "name": "QuickGames",
-  "description": "Native Android Kotlin WebView app with CafeBazaar In-App Billing and Adivery Ads bridge for Node.js games.",
+  "name": "QuickGames WebApp Container",
+  "description": "Native Android container for heavy local WebApps: embedded loopback HTTP server -> WebView (assets/web/index.html), Tapsell advertising, Najva push notifications and CafeBazaar in-app billing.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

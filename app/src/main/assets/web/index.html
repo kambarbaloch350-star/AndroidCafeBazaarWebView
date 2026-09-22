@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5.0" />
+  <title>هسته اجرای برنامه — Native Container</title>
+  <meta name="theme-color" content="#10B981" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="format-detection" content="telephone=no" />
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%2310B981'/%3E%3Cpath d='M18 17l-5 7 5 7M30 17l5 7-5 7' stroke='%23fff' stroke-width='3.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+
+  <!-- Local (offline) Vazirmatn — no CDN request, instant RTL typography -->
+  <link rel="stylesheet" href="./fonts/vazirmatn-local.css" />
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <!-- Boot splash inside the WebApp: hidden the moment the app is interactive.
+       It is separate from the *native* loading plate and is only there to keep
+       first paint clean while the modules below initialize. -->
+  <div id="web-boot" class="web-boot" aria-hidden="true">
+    <div class="web-boot__spinner"></div>
+  </div>
+
+  <header class="app-bar">
+    <div class="app-bar__brand">
+      <svg viewBox="0 0 48 48" width="30" height="30" aria-hidden="true">
+        <rect width="48" height="48" rx="12" fill="var(--brand)"/>
+        <path d="M18 17l-5 7 5 7M30 17l5 7-5 7" stroke="#fff" stroke-width="3.4"
+              fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div>
+        <strong>هسته اجرای برنامه</strong>
+        <small>Android Container • Local HTTP Server + WebView</small>
+      </div>
+    </div>
+    <div id="runtime-badge" class="badge badge--muted">در حال بررسی…</div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <a class="tab" href="#/ads" role="tab">تبلیغات</a>
+    <a class="tab" href="#/capabilities" role="tab">قابلیت‌ها</a>
+    <a class="tab" href="#/container" role="tab">محتوا</a>
+    <a class="tab" href="#/about" role="tab">درباره</a>
+  </nav>
+
+  <main id="view" class="view" role="main">
+    <!-- Views are rendered by js/app.js -->
+  </main>
+
+  <footer class="status-bar">
+    <span id="status-text" class="status-bar__text">در حال بارگذاری...</span>
+    <span id="status-dot" class="status-bar__dot"></span>
+  </footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- Native bridge facade (exposes NativeApp / NativeAds / CafeBazaar) -->
+  <script src="./js/native-bridge.js"></script>
+  <!-- Application code -->
+  <script src="./js/app.js"></script>
+</body>
+</html>

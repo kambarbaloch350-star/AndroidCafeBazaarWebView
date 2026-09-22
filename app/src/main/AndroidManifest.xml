@@ -1,41 +1,125 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions required for network access, WebView, and Adivery ads -->
+    <!--
+      Network access is required for:
+        * the WebApp's own remote API calls (fetch / XHR / WebSocket),
+        * Tapsell ad delivery,
+        * Najva push registration (FCM).
+      The WebApp bundle itself is served by an in-process loopback HTTP server,
+      so no packaged web server, no file:// hacks and no internet round trip is
+      needed to open it.
+    -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
+    <!-- Android 13+ runtime permission for system push notifications (Najva). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Optional hardware: the WebView degrades gracefully without them. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
     <!--
-      Android 11+ (API level 30+) Package Visibility declarations:
-      Poolakey connects to CafeBazaar via AIDL IPC. We explicitly declare
-      CafeBazaar's package name and billing intent action to ensure service binding succeeds.
+      Android 11+ package visibility.
+      Poolakey binds to the CafeBazaar billing service through AIDL, so the
+      package name and the billing action must be declared explicitly. The
+      remaining intents keep external link / file-picker handling working.
     -->
     <queries>
         <package android:name="com.farsitel.bazaar" />
         <intent>
             <action android:name="ir.cafebazaar.pardakht.InAppBillingService.BIND" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT" />
+            <data android:mimeType="*/*" />
+        </intent>
     </queries>
 
     <application
+        android:name=".App"
         android:allowBackup="true"
-        android:label="@string/app_name"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true"
         android:icon="@mipmap/ic_launcher"
-       android:roundIcon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AndroidCafeBazaarWebView"
-        android:hardwareAccelerated="true">
+        android:theme="@style/Theme.AndroidCafeBazaarWebView">
+
+        <!-- ============================ Container ============================ -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
-            android:windowSoftInputMode="adjustResize">
+            android:launchMode="singleTask"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection|navigation">
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!--
+              Deep links: a push notification (or any other app) can open the
+              container and hand a route to the WebApp router, e.g.
+                  quickgames://open/game/42   ->   WebApp route "game/42"
+                  https://host/#/game/42      ->   WebApp route "game/42"
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="quickgames" />
+            </intent-filter>
         </activity>
+
+        <!-- ======================= Najva push (native) ======================= -->
+        <!--
+          Najva configuration lives exclusively in the native layer. Both values
+          are injected at build time (local.properties / gradle.properties) and
+          are never exposed to the WebApp or to the JavaScript bridge.
+        -->
+        <meta-data
+            android:name="com.najva.sdk.metadata.API_KEY"
+            android:value="${najvaApiKey}" />
+        <meta-data
+            android:name="com.najva.sdk.metadata.WEBSITE_ID"
+            android:value="${najvaWebsiteId}" />
+
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="true" />
+        <meta-data
+            android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
+
+        <!--
+          The FCM <service> entries (including Najva's own listener) are declared
+          by the SDK manifests and merged in automatically. Nothing is declared
+          here on purpose, so the merged manifest keeps exactly one messaging
+          service and no duplicate intent filter.
+        -->
     </application>
 
 </manifest>

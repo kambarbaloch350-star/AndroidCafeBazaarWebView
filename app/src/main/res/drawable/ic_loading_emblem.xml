@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Native emblem shown inside the green plate while the container boots.
+  Drawn as a vector so it stays crisp on every density.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="72dp"
+    android:height="72dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Code / app window frame -->
+    <path
+        android:fillColor="#047857"
+        android:pathData="M9,6h30a3,3 0 0 1 3,3v30a3,3 0 0 1 -3,3H9a3,3 0 0 1 -3,-3V9a3,3 0 0 1 3,-3z" />
+    <path
+        android:fillColor="#34D399"
+        android:pathData="M9,12h30v4H9z" />
+
+    <!-- Window dots -->
+    <path
+        android:fillColor="#F1FBF4"
+        android:pathData="M12.5,13.2m-1.3,0a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0" />
+    <path
+        android:fillColor="#B8E7CC"
+        android:pathData="M17.5,13.2m-1.3,0a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0" />
+
+    <!-- Angle brackets: < / > -->
+    <path
+        android:fillColor="#F1FBF4"
+        android:pathData="M17.8,22.4l-4.2,4.1 4.2,4.1 1.7,-1.8 -2.4,-2.3 2.4,-2.3z" />
+    <path
+        android:fillColor="#F1FBF4"
+        android:pathData="M30.2,22.4l4.2,4.1 -4.2,4.1 -1.7,-1.8 2.4,-2.3 -2.4,-2.3z" />
+    <path
+        android:fillColor="#7FE3B0"
+        android:pathData="M26.3,20.6l-4.6,13.6 -2.3,-0.8 4.6,-13.6z" />
+</vector>

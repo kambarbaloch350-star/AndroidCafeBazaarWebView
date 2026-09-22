@@ -1,3 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">QuickGames</string>
+    <string name="app_name">لبزبند</string>
+
+    <!-- ==================== Native loading screen ==================== -->
+    <string name="loading_title">لبزبند</string>
+    <string name="loading_message">لیب لوڈ بوھگ ءَ ایں۔</string>
+    <string name="loading_subtitle">بلوچی مئے وتی شہد ایں زبان ایں</string>
+
+    <!-- ==================== Error / retry state ==================== -->
+    <string name="error_title">بارگذاری ناموفق بود</string>
+    <string name="error_message_default">ارتباط با سرور داخلی برنامه برقرار نشد. لطفاً دوباره تلاش کنید.</string>
+    <string name="error_message_webview">نمایشگر وب نتوانست برنامه را بارگذاری کند. لطفاً دوباره تلاش کنید.</string>
+    <string name="error_message_crashed">نمایشگر وب به‌طور غیرمنتظره بسته شد. برنامه دوباره بارگذاری می‌شود.</string>
+    <string name="error_retry">تلاش مجدد</string>
+
+    <!-- ==================== Notification permission ==================== -->
+    <string name="notification_channel_default_name">اعلان‌ها</string>
+    <string name="notification_channel_default_description">اعلان‌های عمومی برنامه</string>
+    <string name="notification_channel_important_name">اعلان‌های مهم</string>
+    <string name="notification_channel_important_description">اعلان‌های فوری و پیشنهادهای ویژه</string>
+    <string name="notification_permission_title">اجازه ارسال اعلان</string>
+    <string name="notification_permission_message">برای دریافت اعلان‌های برنامه (خبرهای مهم، پیشنهادها و یادآورها) اجازه ارسال اعلان را فعال کنید.</string>
+    <string name="notification_permission_grant">اجازه می‌دهم</string>
+    <string name="notification_permission_later">بعداً</string>
+
+    <!-- ==================== Native ad placeholder ==================== -->
+    <string name="native_ad_loading">در حال دریافت تبلیغ…</string>
+    <string name="native_ad_unavailable">تبلیغی برای نمایش موجود نیست</string>
+    <string name="native_ad_close">بستن تبلیغ</string>
+    <string name="bazaar_not_installed">برای ثبت امتیاز، برنامه کافه‌بازار باید روی دستگاه نصب باشد.</string>
+    <string name="loading_credit">A Game By BalochAfzar</string>
+
+    <!-- Exit confirmation dialog -->
+    <string name="exit_dialog_title">می‌خواهید از بازی خارج شوید؟</string>
+    <string name="exit_dialog_message">امتیاز دادن به لبزبند کمک زیادی به ما می‌کند.</string>
+    <string name="exit_dialog_rate">امتیاز بده</string>
+    <string name="exit_dialog_cancel">انصراف</string>
+    <string name="exit_dialog_exit">خروج</string>
+    <string name="exit_dialog_rated">سپاس! پنجرهٔ امتیازدهی بازار باز شد.</string>
+    <string name="exit_dialog_rate_unavailable">برای امتیاز دادن باید برنامهٔ بازار نصب باشد.</string>
 </resources>

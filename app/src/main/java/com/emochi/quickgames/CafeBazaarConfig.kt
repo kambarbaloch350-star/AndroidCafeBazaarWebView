@@ -28,6 +28,13 @@ object CafeBazaarConfig {
     const val SKU_COIN_PACK_25000 = "coin_pack_25000"
 
     /**
+     * One-time (non-consumable) purchase that removes interstitial ads from the
+     * game. Poolakey keeps it in the active purchase list, so the game only has
+     * to call `CafeBazaar.getPurchases()` to know whether ads are disabled.
+     */
+    const val SKU_REMOVE_ADS = "remove_ads"
+
+    /**
      * All supported in-app product identifiers.
      */
     val SUPPORTED_PRODUCTS: Set<String> = setOf(
@@ -36,8 +43,24 @@ object CafeBazaarConfig {
         SKU_COIN_PACK_2000,
         SKU_COIN_PACK_5000,
         SKU_COIN_PACK_10000,
-        SKU_COIN_PACK_25000
+        SKU_COIN_PACK_25000,
+        SKU_REMOVE_ADS
     )
+
+    /** True when the SKU is consumed after purchase (coin packs). */
+    fun isConsumable(sku: String): Boolean = sku.startsWith("coin_pack_")
+
+    /** True when the SKU unlocks a permanent feature (remove ads). */
+    fun isNonConsumable(sku: String): Boolean = sku == SKU_REMOVE_ADS
+
+    /**
+     * The permanent unlocks inside a raw purchase list.
+     *
+     * The container stores exactly this set, and a non-empty intersection with
+     * [SKU_REMOVE_ADS] is what suppresses interstitial ads.
+     */
+    fun permanentUnlocks(productIds: Iterable<String>): Set<String> =
+        productIds.filter { isNonConsumable(it) }.toSet()
 
     /**
      * Coin amounts awarded for each SKU.
@@ -55,17 +78,22 @@ object CafeBazaarConfig {
     }
 
     /**
-     * 4x Market prices in Tomans.
+     * Reference prices in Tomans (2x the base rate).
+     *
+     * The authoritative price is always the one returned by CafeBazaar during the
+     * purchase flow; this table only exists so the container can advertise an
+     * expected value when the store is unreachable.
      */
     fun getPriceTomans(sku: String): Long {
         return when (sku) {
-            SKU_COIN_PACK_250   -> 20000L   // 4x base (5,000 -> 20,000)
-            SKU_COIN_PACK_750   -> 60000L   // 4x base (15,000 -> 60,000)
-            SKU_COIN_PACK_2000  -> 140000L  // 4x base (35,000 -> 140,000)
-            SKU_COIN_PACK_5000  -> 300000L  // 4x base (75,000 -> 300,000)
-            SKU_COIN_PACK_10000 -> 500000L // 4x base (125,000 -> 500,000)
-            SKU_COIN_PACK_25000 -> 1000000L // 4x base (250,000 -> 1,000,000)
-            else                -> 20000L
+            SKU_COIN_PACK_250   -> 10000L     // 2x base (5,000 -> 10,000)
+            SKU_COIN_PACK_750   -> 30000L     // 2x base (15,000 -> 30,000)
+            SKU_COIN_PACK_2000  -> 70000L     // 2x base (35,000 -> 70,000)
+            SKU_COIN_PACK_5000  -> 150000L    // 2x base (75,000 -> 150,000)
+            SKU_COIN_PACK_10000 -> 250000L    // 2x base (125,000 -> 250,000)
+            SKU_COIN_PACK_25000 -> 500000L    // 2x base (250,000 -> 500,000)
+            SKU_REMOVE_ADS      -> 49000L
+            else                -> 10000L
         }
     }
 

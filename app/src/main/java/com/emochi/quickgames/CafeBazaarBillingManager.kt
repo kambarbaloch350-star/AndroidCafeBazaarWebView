@@ -1,6 +1,7 @@
 package com.emochi.quickgames
 
 import android.app.Activity
+import android.content.Context
 import android.util.Log
 import androidx.activity.ComponentActivity
 import ir.cafebazaar.poolakey.Connection
@@ -19,9 +20,26 @@ import java.lang.ref.WeakReference
 class CafeBazaarBillingManager(activity: ComponentActivity) {
     companion object {
         const val TAG = "CafeBazaarBilling"
+
+        /** SharedPreferences file that mirrors the permanent unlocks. */
+        private const val PREFS_NAME = "cafebazaar_billing"
+
+        /** Key holding the owned non-consumable product IDs. */
+        private const val KEY_OWNED_PRODUCTS = "owned_non_consumables"
     }
 
     private val activityRef = WeakReference(activity)
+    private val appContext: Context = activity.applicationContext
+
+    /**
+     * Non-consumable products the user owns (`remove_ads`).
+     *
+     * Kept in memory **and** mirrored into `SharedPreferences` so the purchase
+     * survives restarts and can gate interstitials even when CafeBazaar is
+     * temporarily unreachable.
+     */
+    private val ownedProducts: MutableSet<String> = loadOwnedProducts()
+
     private var payment: Payment? = null
     private var paymentConnection: Connection? = null
     private var isConnected: Boolean = false
@@ -31,6 +49,9 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         fun onPurchaseResult(result: PurchaseResult)
         fun onConsumeResult(result: ConsumeResult)
         fun onPurchasesQueryResult(result: QueryPurchasesResult)
+
+        /** Fired when the set of permanent (non-consumable) unlocks changes. */
+        fun onOwnedProductsChanged(owned: Set<String>)
     }
 
     private var eventListener: BillingEventListener? = null
@@ -92,6 +113,57 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
 
     fun isBillingAvailable(): Boolean = isConnected
 
+    /** True when the user bought the permanent "remove ads" unlock. */
+    fun isRemoveAdsOwned(): Boolean =
+        safe(false) { ownedProducts.contains(CafeBazaarConfig.SKU_REMOVE_ADS) }
+
+    /** Snapshot of every owned non-consumable product. */
+    fun ownedNonConsumables(): Set<String> = safe(emptySet<String>()) { HashSet(ownedProducts) }
+
+    private fun markOwned(productId: String) {
+        if (!CafeBazaarConfig.isNonConsumable(productId)) return
+        if (ownedProducts.add(productId)) persistOwnedProducts()
+    }
+
+    private fun syncOwnedProducts(purchased: List<String>) {
+        val permanent = CafeBazaarConfig.permanentUnlocks(purchased)
+        if (permanent != ownedProducts) {
+            ownedProducts.clear()
+            ownedProducts.addAll(permanent)
+            persistOwnedProducts() // persists *and* notifies once
+        }
+    }
+
+    private fun persistOwnedProducts() {
+        runCatching {
+            prefs().edit()
+                .putStringSet(KEY_OWNED_PRODUCTS, HashSet(ownedProducts))
+                .apply()
+        }.onFailure { Log.w(TAG, "Could not persist owned products: ${it.message}") }
+        notifyOwnedProductsChanged()
+    }
+
+    private fun loadOwnedProducts(): MutableSet<String> {
+        val stored = runCatching {
+            prefs().getStringSet(KEY_OWNED_PRODUCTS, emptySet()) ?: emptySet()
+        }.getOrDefault(emptySet())
+        return HashSet(stored)
+    }
+
+    private fun prefs() = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun notifyOwnedProductsChanged() {
+        eventListener?.onOwnedProductsChanged(ownedNonConsumables())
+    }
+
+    private inline fun <T> safe(fallback: T, block: () -> T): T =
+        try {
+            block()
+        } catch (e: Exception) {
+            Log.w(TAG, "billing call failed: ${e.message}")
+            fallback
+        }
+
     fun purchase(productId: String, payload: String? = null) {
         val activity = activityRef.get() ?: run {
             notifyPurchaseResult(
@@ -152,6 +224,9 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
                     )
                 }
                 purchaseSucceed { purchaseInfo ->
+                    // Permanent unlocks are remembered locally so interstitials
+                    // stay off even before the next store query.
+                    markOwned(purchaseInfo.productId)
                     // Purchase succeeded: Notify web layer
                     notifyPurchaseResult(
                         PurchaseResult(
@@ -164,8 +239,10 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
                             message = "Purchase completed successfully"
                         )
                     )
-                    // Auto-consume consumable coin packs so user doesn't have to manually manage tokens!
-                    if (purchaseInfo.productId.startsWith("coin_pack_")) {
+                    // Auto-consume consumable coin packs so the user does not
+                    // have to manage tokens; permanent unlocks (remove_ads) are
+                    // deliberately left in the purchase list.
+                    if (CafeBazaarConfig.isConsumable(purchaseInfo.productId)) {
                         consumePurchase(purchaseInfo.purchaseToken)
                     }
                 }
@@ -250,6 +327,7 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         try {
             paymentInstance.getPurchasedProducts {
                 querySucceed { purchases: List<PurchaseInfo> ->
+                    syncOwnedProducts(purchases.map { it.productId })
                     val resultList = purchases.map { p ->
                         PurchaseResult(
                             success = true,
@@ -286,8 +364,9 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     private fun queryAndAutoConsumePurchases() {
         payment?.getPurchasedProducts {
             querySucceed { purchases ->
+                syncOwnedProducts(purchases.map { it.productId })
                 for (p in purchases) {
-                    if (p.productId.startsWith("coin_pack_")) {
+                    if (CafeBazaarConfig.isConsumable(p.productId)) {
                         consumePurchase(p.purchaseToken)
                     }
                 }

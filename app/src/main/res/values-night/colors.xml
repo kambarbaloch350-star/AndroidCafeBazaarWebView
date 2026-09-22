@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ==================== Dark (night) variants ==================== -->
+    <!--
+      The loading screen is deliberately identical in day and night mode: a pure
+      white canvas with green artwork. Dark variants here would repaint the
+      splash dark green on devices in dark mode, which is not what this app
+      wants – the artwork is white by design.
+    -->
+    <color name="loading_background_top">#FFFFFFFF</color>
+    <color name="loading_background_bottom">#FFFFFFFF</color>
+    <color name="plate_surface">#FFFFFFFF</color>
+    <color name="plate_surface_end">#FFFFFFFF</color>
+    <color name="plate_ring">#34D399</color>
+    <color name="plate_inner_ring">#DCF3E4</color>
+    <color name="plate_shadow">#1A047857</color>
+
+    <color name="loading_title">#0B7A57</color>
+    <color name="loading_message">#0F766E</color>
+    <color name="loading_stage">#4B7F6C</color>
+    <color name="loading_spinner">#10B981</color>
+    <color name="loading_spinner_track">#B8E7CC</color>
+
+    <color name="error_ring">#FBBF24</color>
+    <color name="error_icon">#FCD34D</color>
+    <color name="error_title">#FDE68A</color>
+    <color name="error_message">#9ED9C0</color>
+    <color name="retry_button_bg">#10B981</color>
+    <color name="retry_button_bg_pressed">#059669</color>
+    <color name="retry_button_text">#04170F</color>
+
+    <color name="system_bar">#FFFFFFFF</color>
+    <color name="webview_background">#04170F</color>
+
+    <color name="native_ad_surface">#0B3A2A</color>
+    <color name="native_ad_border">#115E48</color>
+</resources>
