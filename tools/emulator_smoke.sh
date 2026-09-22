@@ -257,10 +257,18 @@ adb logcat -c >/dev/null 2>&1 || true
 adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
 sleep 1.2
 adb exec-out screencap -p > "$OUT/14-splash-night.png" 2>/dev/null || true
-sleep 1
+# The splash has a 3 s floor, so the timing line only appears once it is done.
+NIGHT_OK=0
+for _ in $(seq 1 25); do
+  if adb logcat -d -s MainActivity:I | grep -q "Loading screen visible for"; then
+    NIGHT_OK=1
+    break
+  fi
+  sleep 1
+done
 adb shell cmd uimode night no >/dev/null 2>&1 || true
-if adb logcat -d -s MainActivity:I | grep -q "Loading screen visible for"; then
-  note "night-mode boot completed with the splash on screen"
+if [ "$NIGHT_OK" = "1" ]; then
+  note "night-mode boot completed: $(adb logcat -d -s MainActivity:I | grep -o 'Loading screen visible for.*' | tail -1)"
 else
   fail "the night-mode boot did not report the loading screen timing"
 fi
