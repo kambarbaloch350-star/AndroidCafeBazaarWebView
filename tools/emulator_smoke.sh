@@ -207,23 +207,50 @@ else
 fi
 
 # ------------------------------------------- copy protection / no haptics
+# The stylesheet is injected on every finished page load, so the window is
+# cleared *before* this relaunch to make the assertion deterministic.
 note "long press on the page must not select or copy anything"
 adb logcat -c >/dev/null 2>&1 || true
+adb shell am force-stop "$PKG" >/dev/null 2>&1
+sleep 2
+adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
+for _ in $(seq 1 40); do
+  adb logcat -d -s MainActivity:I | grep -q "hiding the native loading plate" && break
+  sleep 1
+done
+sleep 1
 adb shell input swipe 360 700 360 700 900 >/dev/null 2>&1
 sleep 2
 adb exec-out screencap -p > "$OUT/13-longpress.png" 2>/dev/null || true
 if adb logcat -d -s MainActivity:I | grep -q "copy protection active"; then
-  note "the page copy protection stylesheet is injected"
+  note "the page copy protection is applied (selection, copy and context menu off)"
 else
-  fail "the copy protection stylesheet was never injected"
+  fail "the copy protection was never applied to the page"
 fi
 if adb logcat -d | grep -qiE "Vibrat|HapticFeedback"; then
   fail "a vibration/haptic feedback was requested while holding the page"
 else
   note "no haptic feedback was requested by holding the page"
 fi
-# The on-screen text must still be there (nothing got stuck in a selection).
-adb exec-out screencap -p > /dev/null 2>&1 || true
+
+# ------------------------------------------------------- night-mode splash
+# Regression guard for the reported bug: a device in dark mode used to repaint
+# the animated splash dark green.
+note "night mode: the loading screen must stay white"
+adb shell cmd uimode night yes >/dev/null 2>&1 || true
+adb shell am force-stop "$PKG" >/dev/null 2>&1
+sleep 2
+adb logcat -c >/dev/null 2>&1 || true
+adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
+sleep 1.2
+adb exec-out screencap -p > "$OUT/14-splash-night.png" 2>/dev/null || true
+sleep 1
+adb shell cmd uimode night no >/dev/null 2>&1 || true
+if adb logcat -d -s MainActivity:I | grep -q "Loading screen visible for"; then
+  note "night-mode boot completed with the splash on screen"
+else
+  fail "the night-mode boot did not report the loading screen timing"
+fi
 
 # ------------------------------------------------------------------ lifecycle
 note "background / foreground cycle (onPause -> onResume) and rotation"
