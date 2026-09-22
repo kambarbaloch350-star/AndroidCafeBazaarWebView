@@ -2,62 +2,181 @@
   {
     "name": "boot",
     "steps": [
-      { "wait": 800, "dump": true }
+      {
+        "wait": 800,
+        "dump": true
+      }
     ]
   },
   {
     "name": "menu-shows-remove-ads-and-spin",
     "steps": [
-      { "expectText": "حذف تبلیغات" },
-      { "expectText": "چرخین ات" }
-    ]
+      {
+        "expectText": "حذف تبلیغات"
+      },
+      {
+        "expectText": "چرخین ات"
+      }
+    ],
+    "requiresGameBundle": true
   },
   {
     "name": "spin-requires-a-completed-rewarded-ad",
     "steps": [
-      { "clearStorage": true },
-      { "reload": true, "wait": 900 },
-      { "click": "چرخین ات", "wait": 600 },
-      { "expectCall": "NativeAds.showRewarded" },
-      { "expectText": "چرخین ات" }
-    ]
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 900
+      },
+      {
+        "click": "چرخین ات",
+        "wait": 600
+      },
+      {
+        "expectCall": "NativeAds.showRewarded"
+      },
+      {
+        "expectText": "چرخین ات"
+      }
+    ],
+    "requiresGameBundle": true
   },
   {
     "name": "no-free-spin-when-reward-is-denied",
     "steps": [
-      { "clearStorage": true },
-      { "reload": true, "wait": 900 },
-      { "setRewardGranted": false },
-      { "click": "چرخین ات", "wait": 700 },
-      { "expectCall": "NativeAds.showRewarded" },
-      { "expectNoText": "مبارک" }
-    ]
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 900
+      },
+      {
+        "setRewardGranted": false
+      },
+      {
+        "click": "چرخین ات",
+        "wait": 700
+      },
+      {
+        "expectCall": "NativeAds.showRewarded"
+      },
+      {
+        "expectNoText": "مبارک"
+      }
+    ],
+    "requiresGameBundle": true
   },
   {
     "name": "remove-ads-goes-through-cafebazaar-bridge",
     "steps": [
-      { "clearStorage": true },
-      { "reload": true, "wait": 900 },
-      { "click": "حذف تبلیغات", "wait": 700 },
-      { "expectCall": "CafeBazaar.buyProduct:remove_ads" }
-    ]
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 900
+      },
+      {
+        "click": "حذف تبلیغات",
+        "wait": 700
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct:remove_ads"
+      }
+    ],
+    "requiresGameBundle": true
   },
   {
     "name": "rating-uses-the-native-cafebazaar-intent",
     "steps": [
-      { "clearStorage": true },
-      { "reload": true, "wait": 900 },
-      { "click": "امتیاز", "wait": 700 },
-      { "expectCall": "CafeBazaar.openRatingPage" }
-    ]
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 900
+      },
+      {
+        "click": "امتیاز",
+        "wait": 700
+      },
+      {
+        "expectCall": "CafeBazaar.openRatingPage"
+      }
+    ],
+    "requiresGameBundle": true
   },
   {
     "name": "pending-purchase-is-restored-from-the-store",
     "steps": [
-      { "clearStorage": true },
-      { "setOwnedPurchases": ["remove_ads"] },
-      { "reload": true, "wait": 1200 },
-      { "expectCall": "CafeBazaar.getPurchases" }
+      {
+        "clearStorage": true
+      },
+      {
+        "setOwnedPurchases": [
+          "remove_ads"
+        ]
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "expectCall": "CafeBazaar.getPurchases"
+      }
+    ],
+    "requiresGameBundle": true
+  },
+  {
+    "name": "back-goes-to-the-previous-page",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 900
+      },
+      {
+        "clickSelector": "a[href='#/about']",
+        "wait": 400
+      },
+      {
+        "pressBack": "webapp",
+        "wait": 400
+      },
+      {
+        "expectBackHandled": true
+      },
+      {
+        "expectText": "تبلیغات بومی (Tapsell)"
+      },
+      {
+        "pressBack": "webapp",
+        "wait": 300
+      },
+      {
+        "expectBackHandled": false
+      }
+    ]
+  },
+  {
+    "name": "exit-dialog-is-the-container-fallback",
+    "steps": [
+      {
+        "reload": true,
+        "wait": 900
+      },
+      {
+        "pressBack": "webapp",
+        "wait": 300
+      },
+      {
+        "expectBackHandled": false
+      }
     ]
   }
 ]

@@ -12,6 +12,7 @@
  * Public API
  * ----------
  *   NativeApp.appReady()                  tell the container the WebApp is ready
+ *   NativeApp.setBackHandler(fn)          handle the phone's back button
  *   NativeApp.isNative()                  true inside the container
  *   NativeApp.getInfo()                   container metadata (JsonObject)
  *   NativeApp.getStartupRoute()           deep-link route that opened the app
@@ -150,6 +151,7 @@
   // NativeApp
   // ---------------------------------------------------------------------
   var appReadySent = false;
+  var backHandler = null;
 
   var NativeApp = {
     /** True when running inside the Android container. */
@@ -189,6 +191,47 @@
 
     /** Asks the container to navigate back. */
     navigateBack: function () { return !!call('navigateBack', false); },
+
+    /**
+     * Registers the handler the container calls when the phone's back button is
+     * pressed. Return `true` when the WebApp navigated one page back (or closed
+     * a modal) – the container then stays in the app. Return `false` (or do not
+     * register a handler at all) and the container shows its exit dialog.
+     *
+     * @param {function(): boolean} handler
+     * @returns {boolean} true when the handler was accepted.
+     *
+     * @example
+     *   NativeApp.setBackHandler(function () {
+     *     if (closeAnyOpenModal()) return true;   // modal closed
+     *     if (state.screen === 'level') { state.goto('chapters'); return true; }
+     *     return false;                           // nothing left -> exit dialog
+     *   });
+     */
+    setBackHandler: function (handler) {
+      backHandler = typeof handler === 'function' ? handler : null;
+      return backHandler !== null;
+    },
+
+    /**
+     * Entry point used by the container. Calls the registered back handler; a
+     * WebApp may also override this function directly.
+     *
+     * The container dispatches a cancelable `nativeapp:back` DOM event when this
+     * returns false, so `document.addEventListener('nativeapp:back', e => {
+     * e.preventDefault(); … })` works as well.
+     *
+     * @returns {boolean} true when the back press was handled inside the page.
+     */
+    onBackPressed: function () {
+      if (!backHandler) return false;
+      try {
+        return backHandler() === true;
+      } catch (e) {
+        if (window.console && console.warn) console.warn('[NativeApp] back handler failed', e);
+        return false;
+      }
+    },
 
     /** Show/hide the native ad plate. */
     showNativeAd: function () { return !!call('showNative', false); },

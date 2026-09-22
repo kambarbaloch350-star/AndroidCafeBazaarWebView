@@ -68,7 +68,11 @@ def collect_resources() -> dict[str, set[str]]:
                     else:
                         name = child.attrib.get("name")
                         if name:
+                            # A style is declared as `Theme.App.Thing` but
+                            # referenced as `R.style.Theme_App_Thing`.
                             res[child.tag].add(name)
+                            if child.tag == "style":
+                                res[child.tag].add(name.replace(".", "_"))
 
     # file based resources: drawable / layout / font / mipmap / xml / anim
     for kind in ("drawable", "layout", "font", "xml", "menu", "mipmap-anydpi-v26", "anim", "values"):

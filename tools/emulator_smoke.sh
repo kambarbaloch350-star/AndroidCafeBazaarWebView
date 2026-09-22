@@ -146,6 +146,33 @@ if adb logcat -d -s MainActivity:W | grep -q "CafeBazaar is not installed"; then
   note "rating intent degraded gracefully (Bazaar absent)"
 fi
 
+# ------------------------------------------------------- back / exit dialog
+note "deep link -> quickgames://open/ads, then hardware BACK"
+adb shell am start -a android.intent.action.VIEW \
+  -d "quickgames://open/ads" "$PKG" >/dev/null 2>&1
+sleep 2
+adb shell input keyevent KEYCODE_BACK >/dev/null 2>&1
+sleep 2
+adb exec-out screencap -p > "$OUT/12-backdialog.png" 2>/dev/null || true
+if adb logcat -d -s MainActivity:I | grep -q "Exit confirmation shown"; then
+  note "hardware BACK opened the exit confirmation"
+else
+  fail "the exit confirmation never appeared on BACK"
+fi
+# BACK again must cancel the dialog instead of leaving the app
+adb shell input keyevent KEYCODE_BACK >/dev/null 2>&1
+sleep 1
+if adb logcat -d -s MainActivity:I | grep -q "Exit dialog: cancelled"; then
+  note "BACK on the dialog cancels it (stays in the app)"
+else
+  fail "BACK on the dialog did not cancel it"
+fi
+if adb shell dumpsys activity activities 2>/dev/null | grep -q "$PKG/.MainActivity"; then
+  note "the app is still in the foreground after cancelling"
+else
+  fail "cancelling the dialog left the app"
+fi
+
 # ------------------------------------------------------------------ lifecycle
 note "background / foreground cycle (onPause -> onResume) and rotation"
 adb shell input keyevent KEYCODE_HOME >/dev/null 2>&1

@@ -106,6 +106,16 @@ jobs:
           set -o pipefail
           ./gradlew testDebugUnitTest --stacktrace --no-daemon 2>&1 | tee build.log
 
+      # WebApp contract: boots the packaged bundle in jsdom with a scripted
+      # AndroidBridge and drives it like a player (readiness handshake, back
+      # navigation, ads, billing, rating). Scenarios that need the real game
+      # bundle are reported as SKIP while the placeholder demo is packaged.
+      - name: WebApp bridge contract (jsdom)
+        run: |
+          set -o pipefail
+          npm install --no-save --no-audit --no-fund jsdom@30 2>&1 | tail -2
+          node tools/game-tests/run.mjs 2>&1 | tee -a build.log
+
       # Compiler/test diagnostics are re-printed as GitHub annotations. They are
       # readable through the checks API even when the raw job log cannot be
       # downloaded, which is what makes a red build self-explanatory.

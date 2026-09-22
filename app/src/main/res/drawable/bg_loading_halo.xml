@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Soft green halo that breathes behind the logo on the loading screen. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:centerColor="#4D34D399"
+        android:endColor="#00DCF3E4"
+        android:gradientRadius="60%"
+        android:startColor="#66B8E7CC"
+        android:type="radial" />
+</shape>

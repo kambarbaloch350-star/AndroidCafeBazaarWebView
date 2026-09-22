@@ -547,6 +547,20 @@
     });
   }
 
+  // ---- hardware back button -------------------------------------------------
+  // The container calls this when the phone's back button is pressed. Returning
+  // true means "handled inside the WebApp"; returning false falls through to the
+  // container's exit dialog. A real game would walk its own screen stack here
+  // (level -> chapter list -> main menu -> false).
+  NativeApp.setBackHandler(function () {
+    var name = currentRoute();
+    if (name !== 'ads') {
+      location.hash = '#/ads';   // back to the first page instead of leaving
+      return true;
+    }
+    return false;                // nothing left to go back to -> exit dialog
+  });
+
   // Re-paint the container view whenever it is shown.
   var originalRender = render;
   render = function () {

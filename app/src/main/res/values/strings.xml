@@ -5,7 +5,7 @@
     <!-- ==================== Native loading screen ==================== -->
     <string name="loading_title">لبزبند</string>
     <string name="loading_message">لیب لوڈ بوھگ ءَ ایں۔</string>
-    <string name="loading_subtitle">اولی بلوچی لیب پہ بکوچ راج ءَ</string>
+    <string name="loading_subtitle">بلوچی مئے وتی شہد ایں زبان ایں</string>
     <string name="loading_stage_boot">راه‌اندازی سرور محلی…</string>
     <string name="loading_stage_webview">آماده‌سازی نمایشگر وب…</string>
     <string name="loading_stage_webapp">در انتظار آماده‌شدن برنامه…</string>
@@ -33,4 +33,14 @@
     <string name="native_ad_unavailable">تبلیغی برای نمایش موجود نیست</string>
     <string name="native_ad_close">بستن تبلیغ</string>
     <string name="bazaar_not_installed">برای ثبت امتیاز، برنامه کافه‌بازار باید روی دستگاه نصب باشد.</string>
+    <string name="loading_credit">A Game By Jawad Kalmati</string>
+
+    <!-- Exit confirmation dialog -->
+    <string name="exit_dialog_title">می‌خواهید از بازی خارج شوید؟</string>
+    <string name="exit_dialog_message">امتیاز دادن به لبزبند کمک زیادی به ما می‌کند.</string>
+    <string name="exit_dialog_rate">امتیاز بده</string>
+    <string name="exit_dialog_cancel">انصراف</string>
+    <string name="exit_dialog_exit">خروج</string>
+    <string name="exit_dialog_rated">سپاس! پنجرهٔ امتیازدهی بازار باز شد.</string>
+    <string name="exit_dialog_rate_unavailable">برای امتیاز دادن باید برنامهٔ بازار نصب باشد.</string>
 </resources>

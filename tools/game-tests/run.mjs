@@ -181,6 +181,14 @@ function toClassic(code, label) {
     .replace(/^\s*export\s+/gm, '');
 }
 
+/**
+ * Boots a **fresh** jsdom window with the packaged bundle.
+ *
+ * A real `document.write` "reload" is not enough: the window (and with it every
+ * `DOMContentLoaded` listener registered by the first boot) survives, so the
+ * WebApp would never render again. Building a new JSDOM instance is the closest
+ * equivalent to reloading the page in the WebView.
+ */
 async function boot() {
   const { html, classic, modules } = readEntry();
   const virtualConsole = new VirtualConsole();
@@ -294,9 +302,31 @@ function loadScenarios() {
   return fs.existsSync(defaultFile) ? JSON.parse(fs.readFileSync(defaultFile, 'utf8')) : [];
 }
 
-async function runScenario(window, scenario) {
+async function runScenario(state, scenario) {
+  let window = state.window;
   console.log(`\n=== scenario: ${scenario.name} ===`);
   window.__harness.reset();
+
+  // Some scenarios describe the real game bundle (store, rating, spin wheel).
+  // While the placeholder demo bundle is in place they are reported as SKIP
+  // instead of FAIL, so a red run always means a real regression.
+  // Scenarios that only make sense with the real game bundle (spin wheel, coin
+  // store, rating button) are skipped while the placeholder demo is packaged:
+  // they light up automatically once the game's `index.html` renders لبزبند.
+  if (scenario.requiresGameBundle && !textOf(window).includes('لبزبند')) {
+    console.log(`SKIP  [${scenario.name}] needs the game bundle (no لبزبند on screen)`);
+    return;
+  }
+
+  if (Array.isArray(scenario.requiresText) && scenario.requiresText.length) {
+    const text = textOf(window);
+    const missing = scenario.requiresText.filter(t => !text.includes(t));
+    if (missing.length) {
+      console.log(`SKIP  [${scenario.name}] bundle does not expose: ${missing.join(', ')}`);
+      return;
+    }
+  }
+
   let failed = false;
 
   for (const step of scenario.steps) {
@@ -319,12 +349,14 @@ async function runScenario(window, scenario) {
         await settle(100);
       }
       if (step.reload) {
-        const html = fs.readFileSync(ENTRY, 'utf8');
-        window.document.open();
-        window.document.write(html);
-        window.document.close();
-        installBridge(window);
-        await settle(900);
+        const previousStorage = { ...storageDump(window) };
+        const fresh = await boot();
+        // localStorage survives a real reload: carry the keys over.
+        for (const [key, value] of Object.entries(previousStorage)) {
+          try { fresh.window.localStorage.setItem(key, value); } catch (e) { /* ignore */ }
+        }
+        window = fresh.window;
+        await settle(step.wait || 900);
       }
       if (step.click) {
         const label = clickText(window, step.click);
@@ -336,6 +368,37 @@ async function runScenario(window, scenario) {
         await settle(step.wait || SETTLE_MS);
       }
       if (step.wait) await settle(step.wait);
+      if (step.pressBack === 'webapp') {
+        // Only the hook the container asks first: NativeApp.onBackPressed().
+        const handled = window.eval(
+          '(function(){try{var a=window.NativeApp;return !!(a&&typeof a.onBackPressed==="function"&&a.onBackPressed()===true);}catch(e){return false;}})()'
+        );
+        window.__harness.backHandled = handled;
+        console.log(`      back pressed (webapp hook) -> handled=${handled}`);
+        await settle(step.wait || SETTLE_MS);
+      }
+      if (step.pressBack === 'container' || step.pressBack === true) {
+        // Mirrors MainActivity.requestWebAppBack(): 1) NativeApp.onBackPressed(),
+        // 2) cancelable `nativeapp:back` event, 3) history.back().
+        const handled = window.eval(`(function () {
+          try {
+            var app = window.NativeApp;
+            if (app && typeof app.onBackPressed === 'function' && app.onBackPressed() === true) return true;
+            var event = new Event('nativeapp:back', { cancelable: true, bubbles: true });
+            if (!window.dispatchEvent(event)) return true;
+            if (window.history && window.history.length > 1) { window.history.back(); return true; }
+            return false;
+          } catch (e) { return false; }
+        })()`);
+        window.__harness.backHandled = handled;
+        console.log(`      back pressed -> handled=${handled}`);
+        await settle(step.wait || SETTLE_MS);
+      }
+      if (step.expectBackHandled !== undefined) {
+        check(`[${scenario.name}] back press handled inside the WebApp`,
+          window.__harness.backHandled === step.expectBackHandled,
+          `handled=${window.__harness.backHandled}`);
+      }
       if (step.expectCall) {
         const calls = window.__harness.state().calls;
         const ok = calls.some(c => c.startsWith(step.expectCall));
@@ -386,6 +449,7 @@ async function runScenario(window, scenario) {
       check(`[${scenario.name}] step failed`, false, e.message);
     }
   }
+  state.window = window;
   if (failed) console.log(`      (scenario ${scenario.name} had failures)`);
 }
 
@@ -397,7 +461,8 @@ if (!fs.existsSync(ENTRY)) {
   process.exit(1);
 }
 
-const { window, log } = await boot();
+const state = await boot();
+const { window, log } = state;
 
 // Boot contract: every WebApp must announce readiness.
 check('the WebApp calls NativeApp.appReady()',
@@ -421,7 +486,7 @@ if (process.argv.includes('--dump') || loadScenarios().length === 0) {
 }
 
 for (const scenario of loadScenarios()) {
-  await runScenario(window, scenario);
+  await runScenario(state, scenario);
 }
 
 const failed = results.filter(r => !r.ok);

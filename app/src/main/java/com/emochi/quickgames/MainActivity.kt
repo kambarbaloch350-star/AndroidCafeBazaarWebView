@@ -1,6 +1,9 @@
 package com.emochi.quickgames
 
 import android.Manifest
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.res.Configuration
@@ -11,9 +14,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.view.WindowManager
 import android.webkit.ConsoleMessage
 import android.webkit.PermissionRequest
@@ -74,6 +80,19 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         /** Time the WebApp has to report readiness after the page finished. */
         private const val APP_READY_TIMEOUT_MS = 45_000L
 
+        /**
+         * Minimum time the loading screen stays on screen.
+         *
+         * The product wants the animated splash to be *seen* (~3 s), so the
+         * overlay is only dismissed once the WebApp is ready **and** this much
+         * time has passed. It is a floor, never an extra delay on top of real
+         * work: a slow boot is not prolonged by it.
+         */
+        private const val MIN_LOADING_VISIBLE_MS = 3_000L
+
+        /** Cross-fade of the loading screen on the way out. */
+        private const val LOADING_FADE_OUT_MS = 320L
+
         /** Delay before asking for the notification permission (after first paint). */
         /** Official CafeBazaar package: Bazaar intents are delivered to it only. */
         private const val BAZAAR_PACKAGE = "com.farsitel.bazaar"
@@ -94,6 +113,14 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private lateinit var loadingOverlay: View
     private lateinit var loadingContent: View
     private lateinit var loadingStage: TextView
+    private lateinit var loadingEmblem: View
+    private lateinit var loadingRing: LoadingRingView
+    private lateinit var loadingHalo: View
+    private lateinit var loadingLogo: View
+    private lateinit var loadingTitle: TextView
+    private lateinit var loadingSubtitle: TextView
+    private lateinit var loadingMessage: TextView
+    private lateinit var loadingCredit: TextView
     private lateinit var errorContent: View
     private lateinit var errorMessage: TextView
     private lateinit var nativeAdPlate: View
@@ -109,11 +136,18 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private var tapsellManager: TapsellManager? = null
     private var bridge: WebAppBridge? = null
     private var backCallback: OnBackPressedCallback? = null
+    private var exitDialog: ExitConfirmationDialog? = null
 
     // ---------------------------------------------------------------------
     // State
     // ---------------------------------------------------------------------
     private val handler = Handler(Looper.getMainLooper())
+
+    /** Animators of the loading screen; cancelled as soon as it is gone. */
+    private val loadingAnimators = mutableListOf<ObjectAnimator>()
+
+    /** When the loading screen became visible – used for its minimum duration. */
+    private var loadingShownAt = 0L
     private val bootExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "container-boot").apply { isDaemon = true }
     }
@@ -175,8 +209,9 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         bindViews()
         configureSystemBars()
 
-        // 1. Native loading plate first – before any I/O or SDK call.
+        // 1. Native loading screen first – before any I/O or SDK call.
         showLoadingStage(getString(R.string.loading_stage_boot))
+        playLoadingIntro()
 
         // Advertising + billing are native services: they warm up in parallel
         // with the WebView boot and can never block or crash the WebApp.
@@ -223,6 +258,9 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        stopLoadingAnimations()
+        runCatching { exitDialog?.dismiss() }
+        exitDialog = null
         bootExecutor.shutdownNow()
 
         val view = webView
@@ -679,16 +717,16 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         handler.removeCallbacksAndMessages(null)
         showLoadingStage(getString(R.string.loading_stage_finishing))
 
-        // Give the plate one frame to paint the final stage, then fade out.
-        // The WebApp is already running behind it – nothing is delayed here.
-        loadingOverlay.animate()
-            .alpha(0f)
-            .setDuration(260)
-            .withEndAction {
-                loadingOverlay.visibility = View.GONE
-                loadingOverlay.alpha = 1f
-            }
-            .start()
+        // The WebApp is already running behind the overlay, so this only waits
+        // for the animated splash to be seen for its minimum duration – a floor,
+        // never a delay added on top of real work.
+        val remaining = remainingLoadingTime()
+        if (remaining > 0) {
+            Log.i(TAG, "Loading screen keeps the stage $remaining ms longer")
+            handler.postDelayed({ dismissLoadingOverlay() }, remaining)
+        } else {
+            dismissLoadingOverlay()
+        }
 
         // Deliver a route that arrived through a push notification tap, now that
         // the WebApp's router exists.
@@ -839,6 +877,123 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     // Loading / error UI
     // =====================================================================
 
+    /**
+     * Choreography of the animated loading screen
+     * -------------------------------------------
+     * The logo pops in with an overshoot while its halo fades up, then the copy
+     * slides in line by line (title → tagline → loading line), the credit rises
+     * from the bottom, and from there the logo floats, the halo breathes and the
+     * ring keeps turning until the screen is dismissed.
+     */
+    private fun playLoadingIntro() {
+        loadingShownAt = SystemClock.uptimeMillis()
+        stopLoadingAnimations()
+
+        val density = resources.displayMetrics.density
+        val rise = 16f * density
+
+        // 1. Everything starts hidden and slightly low.
+        listOf(loadingTitle, loadingSubtitle, loadingMessage, loadingCredit).forEach {
+            it.alpha = 0f
+            it.translationY = rise
+        }
+        loadingStage.alpha = 0f
+        loadingEmblem.alpha = 0f
+        loadingEmblem.scaleX = 0.7f
+        loadingEmblem.scaleY = 0.7f
+        loadingHalo.alpha = 0f
+        loadingHalo.scaleX = 0.8f
+        loadingHalo.scaleY = 0.8f
+
+        // 2. The emblem lands first, with a soft overshoot.
+        loadingEmblem.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(520)
+            .setInterpolator(OvershootInterpolator(1.1f))
+            .start()
+        loadingHalo.animate()
+            .alpha(0.55f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(600)
+            .setStartDelay(80)
+            .start()
+
+        // 3. Copy, line by line.
+        slideIn(loadingTitle, 240)
+        slideIn(loadingSubtitle, 380)
+        slideIn(loadingMessage, 520)
+        slideIn(loadingStage, 620)
+        slideIn(loadingCredit, 760)
+
+        // 4. Then it keeps breathing: halo pulse, logo float, ring rotation.
+        loadingRing.start()
+
+        val haloPulse = ObjectAnimator.ofPropertyValuesHolder(
+            loadingHalo,
+            PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.16f),
+            PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.16f),
+            PropertyValuesHolder.ofFloat(View.ALPHA, 0.55f, 0.14f)
+        ).apply {
+            duration = 1500L
+            startDelay = 700L
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+        }
+        val logoFloat = ObjectAnimator.ofPropertyValuesHolder(
+            loadingLogo,
+            PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, 0f, -5f * density)
+        ).apply {
+            duration = 1700L
+            startDelay = 700L
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+        }
+        loadingAnimators += haloPulse.also { it.start() }
+        loadingAnimators += logoFloat.also { it.start() }
+    }
+
+    /** Fade + rise for one line of the loading copy. */
+    private fun slideIn(view: View, delay: Long) {
+        view.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(delay)
+            .setDuration(420)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .start()
+    }
+
+    private fun stopLoadingAnimations() {
+        loadingAnimators.forEach { it.cancel() }
+        loadingAnimators.clear()
+        loadingRing.stop()
+    }
+
+    /** Milliseconds the loading screen still has to stay, honouring the floor. */
+    private fun remainingLoadingTime(): Long {
+        if (loadingShownAt == 0L) return 0L
+        val visibleFor = SystemClock.uptimeMillis() - loadingShownAt
+        return (MIN_LOADING_VISIBLE_MS - visibleFor).coerceAtLeast(0L)
+    }
+
+    private fun dismissLoadingOverlay() {
+        if (loadingOverlay.visibility != View.VISIBLE) return
+        stopLoadingAnimations()
+        loadingOverlay.animate()
+            .alpha(0f)
+            .setDuration(LOADING_FADE_OUT_MS)
+            .withEndAction {
+                loadingOverlay.visibility = View.GONE
+                loadingOverlay.alpha = 1f
+            }
+            .start()
+    }
+
     private fun showLoadingStage(stage: String) {
         if (isBootFailed) return
         loadingContent.visibility = View.VISIBLE
@@ -850,6 +1005,7 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         if (isBootFailed) return
         isBootFailed = true
         handler.removeCallbacksAndMessages(null)
+        stopLoadingAnimations()
 
         loadingOverlay.visibility = View.VISIBLE
         loadingOverlay.alpha = 1f
@@ -870,6 +1026,7 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         errorContent.visibility = View.GONE
         loadingContent.visibility = View.VISIBLE
         showLoadingStage(getString(R.string.loading_stage_boot))
+        playLoadingIntro()
 
         val view = webView
         val token = ++bootToken
@@ -931,33 +1088,125 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
                     hideNativeAd()
                     return
                 }
-                // 3. Let the WebApp intercept back first (SPA history / modals).
-                val view = webView
-                if (view != null && isWebAppReady) {
-                    view.evaluateJavascript(
-                        "(function(){try{return (window.NativeApp && " +
-                                "typeof window.NativeApp.onBackPressed === 'function') " +
-                                "? !!window.NativeApp.onBackPressed() : false;}catch(e){return false;}})();"
-                    ) { result ->
-                        if (result == "true") return@evaluateJavascript
-                        performDefaultBack()
-                    }
+                // 3. A full-screen ad of the SDK owns the back button while shown.
+                if (tapsellManager?.isShowingAd == true) return
+                // 4. The exit dialog is open: back means "stay in the game".
+                if (exitDialog?.isShowing == true) {
+                    exitDialog?.dismiss()
                     return
                 }
-                performDefaultBack()
+                // 5. Still booting: there is no page to go back to yet.
+                if (!isWebAppReady) {
+                    if (isBootFailed) askBeforeLeaving() else leaveApp()
+                    return
+                }
+                // 6. Ask the WebApp to navigate one page back; whatever it does
+                //    not handle falls through to the exit confirmation.
+                requestWebAppBack { handled ->
+                    if (!handled) askBeforeLeaving()
+                }
             }
         }
         backCallback = callback
         onBackPressedDispatcher.addCallback(this, callback)
     }
 
-    private fun performDefaultBack() {
+    /**
+     * Asks the WebApp to go one page back, in this order:
+     *
+     *  1. `window.NativeApp.onBackPressed()` – the hook a WebApp implements
+     *     directly or through `NativeApp.setBackHandler(fn)`; returning `true`
+     *     means "handled, stay inside the app".
+     *  2. a cancelable `nativeapp:back` DOM event – for WebApps that prefer
+     *     `event.preventDefault()`;
+     *  3. `history.back()` when the page pushed history entries (SPA routes).
+     *
+     * When nothing handled it – including "there is no previous page" – the
+     * callback receives `handled = false` and the exit confirmation is shown.
+     */
+    private fun requestWebAppBack(onResult: (Boolean) -> Unit) {
         val view = webView
-        if (view != null && view.canGoBack()) {
-            view.goBack()
+        if (view == null || !isWebAppReady) {
+            onResult(false)
             return
         }
-        // Nothing left inside the container: leave the app.
+        val script = """
+            (function () {
+              try {
+                var app = window.NativeApp;
+                if (app && typeof app.onBackPressed === 'function' && app.onBackPressed() === true) {
+                  return true;
+                }
+                var event = new Event('nativeapp:back', { cancelable: true, bubbles: true });
+                if (!window.dispatchEvent(event)) {
+                  return true; // a listener called preventDefault()
+                }
+                if (window.__nativeBackHandler && window.__nativeBackHandler() === true) {
+                  return true;
+                }
+                if (window.history && window.history.length > 1) {
+                  window.history.back();
+                  return true;
+                }
+                return false;
+              } catch (e) {
+                return false;
+              }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script) { result ->
+            if (result?.trim()?.trim('"') == "true") return@evaluateJavascript
+            // Last chance: real WebView history (in-page anchors, extra hops).
+            val current = webView
+            if (current != null && current.canGoBack()) {
+                current.goBack()
+                return@evaluateJavascript
+            }
+            onResult(false)
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Exit flow
+    // ---------------------------------------------------------------------
+
+    /** Shows the light green "خروج از بازی؟" sheet (rating nudge included). */
+    private fun askBeforeLeaving() {
+        if (isFinishing || isDestroyed) return
+        if (exitDialog?.isShowing == true) return
+        val dialog = ExitConfirmationDialog(this, object : ExitConfirmationDialog.Callbacks {
+            override fun onRateRequested() {
+                Log.i(TAG, "Exit dialog: rating requested")
+                exitDialog = null
+                val opened = openBazaar(rating = true)
+                Toast.makeText(
+                    this@MainActivity,
+                    if (opened) R.string.exit_dialog_rated else R.string.exit_dialog_rate_unavailable,
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            override fun onExitConfirmed() {
+                Log.i(TAG, "Exit dialog: leave confirmed")
+                exitDialog = null
+                leaveApp()
+            }
+
+            override fun onDismissed() {
+                Log.i(TAG, "Exit dialog: cancelled")
+                exitDialog = null
+            }
+        })
+        exitDialog = dialog
+        Log.i(TAG, "Exit confirmation shown")
+        runCatching { dialog.show() }.onFailure {
+            Log.w(TAG, "Could not show the exit dialog: ${it.message}")
+            exitDialog = null
+        }
+    }
+
+    /** Really leaves the app – the only path that finishes the Activity. */
+    private fun leaveApp() {
         backCallback?.isEnabled = false
         onBackPressedDispatcher.onBackPressed()
     }
@@ -1014,6 +1263,14 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         loadingOverlay = findViewById(R.id.loadingOverlay)
         loadingContent = findViewById(R.id.loadingContent)
         loadingStage = findViewById(R.id.loadingStage)
+        loadingEmblem = findViewById(R.id.loadingEmblem)
+        loadingRing = findViewById(R.id.loadingRing)
+        loadingHalo = findViewById(R.id.loadingHalo)
+        loadingLogo = findViewById(R.id.loadingLogo)
+        loadingTitle = findViewById(R.id.loadingTitle)
+        loadingSubtitle = findViewById(R.id.loadingSubtitle)
+        loadingMessage = findViewById(R.id.loadingMessage)
+        loadingCredit = findViewById(R.id.loadingCredit)
         errorContent = findViewById(R.id.errorContent)
         errorMessage = findViewById(R.id.errorMessage)
         nativeAdPlate = findViewById(R.id.nativeAdPlate)

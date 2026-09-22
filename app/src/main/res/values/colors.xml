@@ -31,6 +31,23 @@
     <color name="loading_spinner">#10B981</color>
     <color name="loading_spinner_track">#B8E7CC</color>
 
+    <!-- Exit confirmation dialog (light green) -->
+    <color name="exit_scrim">#5C064E3B</color>
+    <color name="exit_surface">#F3FCF6</color>
+    <color name="exit_surface_end">#E1F6E9</color>
+    <color name="exit_border">#B8E7CC</color>
+    <color name="exit_title">#0B7A57</color>
+    <color name="exit_message">#3F6F5D</color>
+    <color name="exit_rate_bg">#10B981</color>
+    <color name="exit_rate_bg_pressed">#059669</color>
+    <color name="exit_rate_text">#FFFFFF</color>
+    <color name="exit_neutral_bg">#FFFFFF</color>
+    <color name="exit_neutral_border">#CBEBD8</color>
+    <color name="exit_cancel_text">#0F766E</color>
+    <color name="exit_quit_bg">#FEE2E2</color>
+    <color name="exit_quit_bg_pressed">#FECACA</color>
+    <color name="exit_quit_text">#B91C1C</color>
+
     <!-- Error / retry state -->
     <color name="error_ring">#F59E0B</color>
     <color name="error_icon">#B45309</color>

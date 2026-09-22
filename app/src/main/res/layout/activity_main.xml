@@ -101,19 +101,43 @@
             android:paddingStart="32dp"
             android:paddingEnd="32dp">
 
-            <!-- App logo: small and centred on the white loading screen. -->
-            <ImageView
-                android:layout_width="88dp"
-                android:layout_height="88dp"
-                android:contentDescription="@string/app_name"
-                android:scaleType="fitCenter"
-                android:src="@drawable/logo_labzband" />
+            <!-- ================= Animated loading artwork =================
+                 White canvas, green artwork: a pulsing halo, the app logo and
+                 a rotating gradient ring, then the copy and the credit. -->
+            <FrameLayout
+                android:id="@+id/loadingEmblem"
+                android:layout_width="128dp"
+                android:layout_height="128dp">
+
+                <!-- Soft green halo that breathes behind the logo -->
+                <View
+                    android:id="@+id/loadingHalo"
+                    android:layout_width="118dp"
+                    android:layout_height="118dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/bg_loading_halo" />
+
+                <com.emochi.quickgames.LoadingRingView
+                    android:id="@+id/loadingRing"
+                    android:layout_width="132dp"
+                    android:layout_height="132dp"
+                    android:layout_gravity="center" />
+
+                <ImageView
+                    android:id="@+id/loadingLogo"
+                    android:layout_width="86dp"
+                    android:layout_height="86dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@string/app_name"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/logo_labzband" />
+            </FrameLayout>
 
             <TextView
                 android:id="@+id/loadingTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
+                android:layout_marginTop="24dp"
                 android:fontFamily="@font/vazirmatn_bold"
                 android:text="@string/loading_title"
                 android:textAppearance="@style/TextAppearance.LoadingTitle" />
@@ -123,7 +147,7 @@
                 android:id="@+id/loadingSubtitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="10dp"
                 android:fontFamily="@font/vazirmatn_medium"
                 android:gravity="center"
                 android:text="@string/loading_subtitle"
@@ -133,31 +157,36 @@
                 android:id="@+id/loadingMessage"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
+                android:layout_marginTop="22dp"
                 android:fontFamily="@font/vazirmatn_regular"
                 android:gravity="center"
                 android:text="@string/loading_message"
                 android:textAppearance="@style/TextAppearance.LoadingMessage" />
 
-            <ProgressBar
-                android:id="@+id/loadingSpinner"
-                style="?android:attr/progressBarStyle"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_marginTop="16dp"
-                android:indeterminate="true"
-                android:indeterminateTint="@color/loading_spinner" />
-
             <TextView
                 android:id="@+id/loadingStage"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:fontFamily="@font/vazirmatn_medium"
+                android:layout_marginTop="8dp"
+                android:fontFamily="@font/vazirmatn_regular"
                 android:gravity="center"
                 android:text="@string/loading_stage_boot"
                 android:textAppearance="@style/TextAppearance.LoadingStage" />
+
         </LinearLayout>
+
+        <!-- Credit, pinned to the bottom of the loading canvas -->
+        <TextView
+            android:id="@+id/loadingCredit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="34dp"
+            android:fontFamily="@font/vazirmatn_medium"
+            android:gravity="center"
+            android:letterSpacing="0.06"
+            android:text="@string/loading_credit"
+            android:textAppearance="@style/TextAppearance.LoadingCredit" />
 
         <!-- Error / retry state replaces the plate content when booting fails -->
         <LinearLayout

@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Exit confirmation dialog
+  ========================
+  Light green card, RTL, Vazirmatn throughout:
+    · brand badge + "می‌خواهید از بازی خارج شوید؟"
+    · the rating nudge "امتیاز دادن به لبزبند کمک زیادی به ما می‌کند."
+    · three actions: امتیاز بده (CafeBazaar rating intent), انصراف, خروج
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layoutDirection="rtl"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
+
+    <LinearLayout
+        android:id="@+id/exitCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_exit_card"
+        android:elevation="14dp"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingStart="22dp"
+        android:paddingEnd="22dp"
+        android:paddingTop="26dp"
+        android:paddingBottom="22dp">
+
+        <FrameLayout
+            android:layout_width="84dp"
+            android:layout_height="84dp">
+
+            <View
+                android:id="@+id/exitBadgeHalo"
+                android:layout_width="84dp"
+                android:layout_height="84dp"
+                android:background="@drawable/bg_loading_halo" />
+
+            <ImageView
+                android:id="@+id/exitBadge"
+                android:layout_width="76dp"
+                android:layout_height="76dp"
+                android:layout_gravity="center"
+                android:background="@drawable/bg_exit_badge"
+                android:contentDescription="@string/app_name"
+                android:padding="10dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/logo_labzband" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/exitTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:fontFamily="@font/vazirmatn_bold"
+            android:gravity="center"
+            android:text="@string/exit_dialog_title"
+            android:textColor="@color/exit_title"
+            android:textSize="20sp" />
+
+        <TextView
+            android:id="@+id/exitMessage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:fontFamily="@font/vazirmatn_regular"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:text="@string/exit_dialog_message"
+            android:textColor="@color/exit_message"
+            android:textSize="15sp" />
+
+        <!-- Primary action: rate on CafeBazaar -->
+        <TextView
+            android:id="@+id/exitRateButton"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:layout_marginTop="22dp"
+            android:background="@drawable/bg_button_primary"
+            android:clickable="true"
+            android:elevation="2dp"
+            android:focusable="true"
+            android:fontFamily="@font/vazirmatn_bold"
+            android:gravity="center"
+            android:text="@string/exit_dialog_rate"
+            android:textColor="@color/exit_rate_text"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/exitCancelButton"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_button_neutral"
+            android:clickable="true"
+            android:focusable="true"
+            android:fontFamily="@font/vazirmatn_medium"
+            android:gravity="center"
+            android:text="@string/exit_dialog_cancel"
+            android:textColor="@color/exit_cancel_text"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/exitQuitButton"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_button_quit"
+            android:clickable="true"
+            android:focusable="true"
+            android:fontFamily="@font/vazirmatn_medium"
+            android:gravity="center"
+            android:text="@string/exit_dialog_exit"
+            android:textColor="@color/exit_quit_text"
+            android:textSize="16sp" />
+    </LinearLayout>
+</FrameLayout>
