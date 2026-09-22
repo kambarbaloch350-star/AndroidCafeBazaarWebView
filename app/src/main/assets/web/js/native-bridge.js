@@ -393,7 +393,15 @@
       call('consumePurchase', undefined, String(purchaseToken));
       return true;
     },
-    getPurchases: function () { return !!call('getPurchases', false); }
+    getPurchases: function () { return !!call('getPurchases', false); },
+
+    // ---- CafeBazaar store intents (rating / app page) ----
+    /** Opens the CafeBazaar rating dialog for this app. */
+    openRatingPage: function () { return !!call('openRatingPage', false); },
+    /** Opens the CafeBazaar app page (updates, comments). */
+    openStorePage: function () { return !!call('openStorePage', false); },
+    /** Legacy alias. */
+    rateApp: function () { return !!call('openRatingPage', false); }
   };
 
   // ---------------------------------------------------------------------

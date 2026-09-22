@@ -164,8 +164,10 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
                             message = "Purchase completed successfully"
                         )
                     )
-                    // Auto-consume consumable coin packs so user doesn't have to manually manage tokens!
-                    if (purchaseInfo.productId.startsWith("coin_pack_")) {
+                    // Auto-consume consumable coin packs so the user does not
+                    // have to manage tokens; permanent unlocks (remove_ads) are
+                    // deliberately left in the purchase list.
+                    if (CafeBazaarConfig.isConsumable(purchaseInfo.productId)) {
                         consumePurchase(purchaseInfo.purchaseToken)
                     }
                 }
@@ -287,7 +289,7 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         payment?.getPurchasedProducts {
             querySucceed { purchases ->
                 for (p in purchases) {
-                    if (p.productId.startsWith("coin_pack_")) {
+                    if (CafeBazaarConfig.isConsumable(p.productId)) {
                         consumePurchase(p.purchaseToken)
                     }
                 }

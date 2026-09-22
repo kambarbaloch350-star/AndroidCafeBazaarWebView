@@ -52,6 +52,12 @@ class WebAppBridge(
         fun onWebAppError(message: String)
         fun onBridgeRequestBack()
         fun onBridgeRequestNativeAd(visible: Boolean, x: Int, y: Int, width: Int, height: Int)
+
+        /** Opens the CafeBazaar page of this app so the user can rate it. */
+        fun onBridgeRequestRating(): Boolean
+
+        /** Opens the CafeBazaar page of this app (updates / comments). */
+        fun onBridgeRequestStorePage(): Boolean
     }
 
     private val activityRef = WeakReference(activity)
@@ -166,6 +172,37 @@ class WebAppBridge(
     @JavascriptInterface
     fun consumeStartupRoute() {
         pendingRouteForWebApp = null
+    }
+
+    // =====================================================================
+    // Store interactions (rating / app page – CafeBazaar intent)
+    // =====================================================================
+
+    /**
+     * Opens the CafeBazaar *rating* dialog for this app (Bazaar intent
+     * `ACTION_EDIT` + `bazaar://details?id=<package>`).
+     *
+     * @return true when an activity able to handle the intent was found.
+     */
+    @JavascriptInterface
+    fun openRatingPage(): Boolean = requestStore(true)
+
+    /** Opens the CafeBazaar app page (updates, comments, install). */
+    @JavascriptInterface
+    fun openStorePage(): Boolean = requestStore(false)
+
+    /** Legacy alias used by older WebApp builds. */
+    @JavascriptInterface
+    fun rateApp(): Boolean = openRatingPage()
+
+    private fun requestStore(rating: Boolean): Boolean {
+        val listener = hostListener ?: return false
+        val target: Any? = activityRef.get() ?: webViewRef.get() ?: return false
+        val run = { if (rating) listener.onBridgeRequestRating() else listener.onBridgeRequestStorePage() }
+        return when (target) {
+            is ComponentActivity -> target.runOnUiThread { runCatching { run() } }
+            is WebView -> target.post { runCatching { run() } }
+        }.let { true }
     }
 
     // =====================================================================

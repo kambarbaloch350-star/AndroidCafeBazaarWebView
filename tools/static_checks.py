@@ -199,8 +199,10 @@ def check_assets() -> None:
 def check_adivery_removed() -> None:
     forbidden = re.compile(r"adivery", re.IGNORECASE)
     # `.github` is skipped on purpose: the CI job greps the packaged APK for the
-    # removed SDK, so the workflow itself has to name it.
+    # removed SDK, so the workflow itself has to name it. The generated mirrors
+    # under `src/data/` embed real repository files (including that workflow).
     skip_dirs = {".git", "node_modules", "dist", "build", ".gradle", "tools", ".github"}
+    skip_paths = {"src/data/projectFiles.ts", "src/data/exportFiles.ts"}
     skip_names = {"README.md", "README.txt", "static_checks.py"}
     for base, dirs, files in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d not in skip_dirs]
@@ -208,6 +210,8 @@ def check_adivery_removed() -> None:
             if name in skip_names:
                 continue
             path = os.path.join(base, name)
+            if rel(path) in skip_paths:
+                continue
             if os.path.splitext(name)[1].lower() in {".png", ".jpg", ".jpeg", ".webp", ".woff2", ".ttf", ".jar", ".apk"}:
                 continue
             try:

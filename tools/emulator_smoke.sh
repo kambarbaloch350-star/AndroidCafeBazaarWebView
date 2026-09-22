@@ -129,6 +129,23 @@ else
   fail "the ad-bridge self test did not complete"
 fi
 
+# ------------------------------------------------- Café Bazaar rating intent
+note "deep link -> quickgames://open/rating (CafeBazaar rating intent)"
+adb shell am start -a android.intent.action.VIEW \
+  -d "quickgames://open/rating" "$PKG" >/dev/null 2>&1
+sleep 3
+RATING=$(adb logcat -d -s WebApp:D | grep -o "RATING test .*" | tail -1)
+if [ -n "$RATING" ]; then
+  note "$RATING"
+else
+  fail "the rating bridge path was never exercised"
+fi
+# On the emulator CafeBazaar is not installed: the container must degrade
+# gracefully (log + toast) instead of crashing.
+if adb logcat -d -s MainActivity:W | grep -q "CafeBazaar is not installed"; then
+  note "rating intent degraded gracefully (Bazaar absent)"
+fi
+
 # ------------------------------------------------------------------ lifecycle
 note "background / foreground cycle (onPause -> onResume) and rotation"
 adb shell input keyevent KEYCODE_HOME >/dev/null 2>&1

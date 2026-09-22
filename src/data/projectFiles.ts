@@ -130,6 +130,13 @@ android {
         abortOnError = false
         checkReleaseBuilds = false
     }
+
+    // The HTTP server, MIME table and asset routing are covered by plain JVM
+    // unit tests. \`returnDefaultValues\` keeps android.util.Log silent instead of
+    // throwing "not mocked" from the stub android.jar.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -148,6 +155,9 @@ dependencies {
     // https://central.sonatype.com/artifact/com.najva/sdk
     implementation("com.najva:sdk:1.8.4")
     implementation("com.google.firebase:firebase-messaging:23.3.1")
+
+    // Tests
+    testImplementation("junit:junit:4.13.2")
 
     // AndroidX & UI
     implementation("androidx.core:core-ktx:1.13.1")
@@ -419,7 +429,7 @@ class App : Application() {
         NajvaManager.initialize(this)
 
         if (BuildConfig.DEBUG) {
-            Log.i(TAG, "App ready: \${NajvaManager.describe()}")
+            Log.i(TAG, "App ready: push[\${NajvaManager.describe(this)}]")
         }
     }
 
@@ -946,11 +956,13 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
             super.onPageStarted(view, url, favicon)
+            bridge?.onPageUrlChanged(url)
             if (BuildConfig.DEBUG) Log.d(TAG, "onPageStarted: $url")
         }
 
         override fun onPageFinished(view: WebView?, url: String?) {
             super.onPageFinished(view, url)
+            bridge?.onPageUrlChanged(url)
             if (BuildConfig.DEBUG) Log.d(TAG, "onPageFinished: $url")
             onDocumentLoaded(bootToken)
             bridge?.notifyContainerReady(pendingDeepLinkRoute)
@@ -1138,6 +1150,7 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         if (isWebAppReady) return
         isWebAppReady = true
         isBootFailed = false
+        Log.i(TAG, "Web app ready – hiding the native loading plate")
         handler.removeCallbacksAndMessages(null)
         showLoadingStage(getString(R.string.loading_stage_finishing))
 
@@ -1517,12 +1530,16 @@ import java.util.zip.GZIPOutputStream
  *
  * Features:
  *  - On-the-fly gzip for text payloads (large JS bundles stay small)
+ *  - Byte ranges (\`206 Partial Content\`) for media seeking / large assets
  *  - Strong ETags + \`304 Not Modified\`
  *  - Correct MIME types (wasm / mjs / fonts / media / json / map ...)
  *  - SPA history fallback: extension-less routes serve the entry document
  *  - Graceful 404 / 405 / 500 responses, never crashes the host app
  */
-class LocalWebServer(private val context: Context) {
+class LocalWebServer(private val assets: WebAssetSource) {
+
+    /** Convenience constructor used by the app (APK assets). */
+    constructor(context: Context) : this(AndroidWebAssetSource(context))
 
     companion object {
         private const val TAG = "LocalWebServer"
@@ -1535,6 +1552,9 @@ class LocalWebServer(private val context: Context) {
 
         /** Safety cap for a single response body. */
         private const val MAX_BODY_BYTES = 192L * 1024L * 1024L
+
+        /** Sentinel returned by [parseRange] for an unsatisfiable range. */
+        private val INVALID_RANGE = LongRange.EMPTY
     }
 
     /** Base URL of the running server, e.g. \`http://127.0.0.1:41235/\`. */
@@ -1553,16 +1573,8 @@ class LocalWebServer(private val context: Context) {
 
     private val activeConnections = AtomicInteger(0)
 
-    private val assetManager = context.assets
-
     /** True when \`assets/web/\` exists (new layout); false => asset root (legacy). */
-    private val usesWebFolder: Boolean by lazy {
-        try {
-            !assetManager.list(WEB_ROOT).isNullOrEmpty()
-        } catch (e: Exception) {
-            false
-        }
-    }
+    private val usesWebFolder: Boolean by lazy { !assets.isEmptyDir(WEB_ROOT) }
 
     /** Entry document inside the asset namespace, e.g. \`web/index.html\`. */
     val entryAssetPath: String by lazy {
@@ -1807,16 +1819,34 @@ class LocalWebServer(private val context: Context) {
             return
         }
 
+        // Byte ranges: required by <video>/<audio> seeking and by players that
+        // stream large assets. A single range is honoured; anything more exotic
+        // (multi-range) simply falls back to a full 200 response.
+        val range = parseRange(request.headers["range"], length)
+        if (range == INVALID_RANGE) {
+            runCatching { stream.close() }
+            writeRangeNotSatisfiable(out, length)
+            return
+        }
+        val isPartial = range != null
+        val payloadLength = if (isPartial) range!!.last - range.first + 1 else length
+
         val acceptsGzip = (request.headers["accept-encoding"] ?: "")
             .lowercase(Locale.ROOT).contains("gzip")
         val compress = acceptsGzip &&
+                !isPartial &&
                 length >= GZIP_MIN_BYTES &&
-                MimeTypes.isCompressible(mime) &&
+                MimeTypes.isCompressible(assetPath, mime) &&
                 request.headers["range"] == null
 
         val header = StringBuilder(320)
-        header.append("HTTP/1.1 200 OK\\r\\n")
+        header.append(if (isPartial) "HTTP/1.1 206 Partial Content\\r\\n" else "HTTP/1.1 200 OK\\r\\n")
         header.append("Content-Type: ").append(mime).append("\\r\\n")
+        if (isPartial) {
+            header.append("Content-Range: bytes ")
+                .append(range!!.first).append('-').append(range!!.last)
+                .append('/').append(length).append("\\r\\n")
+        }
         etag?.let { header.append("ETag: ").append(it).append("\\r\\n") }
         if (compress) header.append("Content-Encoding: gzip\\r\\n")
         header.append("Cache-Control: ").append(cacheControlFor(assetPath)).append("\\r\\n")
@@ -1829,7 +1859,7 @@ class LocalWebServer(private val context: Context) {
             // Compressed size is unknown up-front: close-delimited response.
             header.append("Connection: close\\r\\n")
         } else {
-            header.append("Content-Length: ").append(length).append("\\r\\n")
+            header.append("Content-Length: ").append(payloadLength).append("\\r\\n")
             header.append("Connection: close\\r\\n")
         }
         header.append("\\r\\n")
@@ -1842,13 +1872,18 @@ class LocalWebServer(private val context: Context) {
         }
 
         try {
-            if (compress) {
-                val gzip = GZIPOutputStream(out, 64 * 1024, true)
-                pump(stream, gzip)
-                gzip.finish()
-                gzip.flush()
-            } else {
-                pump(stream, out)
+            when {
+                compress -> {
+                    val gzip = GZIPOutputStream(out, 64 * 1024, true)
+                    pump(stream, gzip, MAX_BODY_BYTES)
+                    gzip.finish()
+                    gzip.flush()
+                }
+                isPartial -> {
+                    skipFully(stream, range!!.first)
+                    pump(stream, out, payloadLength)
+                }
+                else -> pump(stream, out, MAX_BODY_BYTES)
             }
             out.flush()
         } catch (e: Exception) {
@@ -1859,18 +1894,76 @@ class LocalWebServer(private val context: Context) {
         }
     }
 
-    private fun pump(input: InputStream, out: OutputStream) {
+    /** Streams at most [limit] bytes from [input] to [out]. */
+    private fun pump(input: InputStream, out: OutputStream, limit: Long) {
         val buffer = ByteArray(64 * 1024)
         var total = 0L
-        while (true) {
-            val read = input.read(buffer)
+        while (total < limit) {
+            val wanted = minOf(buffer.size.toLong(), limit - total).toInt()
+            val read = input.read(buffer, 0, wanted)
             if (read <= 0) break
             total += read
-            if (total > MAX_BODY_BYTES) {
-                Log.w(TAG, "Response exceeded $MAX_BODY_BYTES bytes – truncated")
-                break
-            }
             out.write(buffer, 0, read)
+        }
+        if (total >= MAX_BODY_BYTES) {
+            Log.w(TAG, "Response truncated at $MAX_BODY_BYTES bytes")
+        }
+    }
+
+    /** Skips exactly [count] bytes (or as close as the stream allows). */
+    private fun skipFully(input: InputStream, count: Long) {
+        if (count <= 0) return
+        var remaining = count
+        val discard = ByteArray(16 * 1024)
+        while (remaining > 0) {
+            val skipped = try {
+                input.skip(remaining)
+            } catch (e: Exception) {
+                0L
+            }
+            if (skipped > 0) {
+                remaining -= skipped
+                continue
+            }
+            val read = input.read(discard, 0, minOf(discard.size.toLong(), remaining).toInt())
+            if (read <= 0) return
+            remaining -= read
+        }
+    }
+
+    /**
+     * Parses a single \`bytes=\` range.
+     *
+     * @return \`null\` for "serve the whole entity", [INVALID_RANGE] when the
+     *         request cannot be satisfied, otherwise the inclusive byte window.
+     */
+    private fun parseRange(header: String?, length: Long): LongRange? {
+        if (header == null || length <= 0) return null
+        val trimmed = header.trim().lowercase(Locale.ROOT)
+        if (!trimmed.startsWith("bytes=")) return null
+        val spec = trimmed.removePrefix("bytes=").trim()
+        if (spec.contains(',')) return null // multi-range: answered with the full entity
+        val dash = spec.indexOf('-')
+        if (dash < 0) return null
+        val rawStart = spec.substring(0, dash).trim()
+        val rawEnd = spec.substring(dash + 1).trim()
+
+        return try {
+            if (rawStart.isEmpty()) {
+                // Suffix range: the last N bytes.
+                val suffix = rawEnd.toLong()
+                if (suffix <= 0) return INVALID_RANGE
+                val start = (length - suffix).coerceAtLeast(0)
+                start until length
+            } else {
+                val start = rawStart.toLong()
+                if (start < 0 || start >= length) return INVALID_RANGE
+                val end = if (rawEnd.isEmpty()) length - 1 else rawEnd.toLong()
+                if (end < start) return INVALID_RANGE
+                start..minOf(end, length - 1)
+            }
+        } catch (e: NumberFormatException) {
+            INVALID_RANGE
         }
     }
 
@@ -1900,6 +1993,10 @@ class LocalWebServer(private val context: Context) {
      * @return asset path + whether this was the SPA fallback.
      */
     private fun resolveAsset(rawPath: String): Pair<String, Boolean>? {
+        // Defence in depth: the server is loopback-only, but a path that tries
+        // to escape the WebApp root must never resolve to anything.
+        if (rawPath.contains("..")) return null
+
         var path = rawPath.trimStart('/')
         if (path.isEmpty()) path = "index.html"
 
@@ -1930,24 +2027,17 @@ class LocalWebServer(private val context: Context) {
         return null
     }
 
-    private fun assetExists(path: String): Boolean = try {
-        assetManager.open(path).use { }
-        true
-    } catch (e: Exception) {
-        false
-    }
+    private fun assetExists(path: String): Boolean = assets.exists(path)
 
     /** @return the asset stream plus its length in bytes, or null when missing. */
-    private fun openAsset(path: String): Pair<InputStream, Long>? = try {
-        val stream = assetManager.open(path)
-        val available = try {
+    private fun openAsset(path: String): Pair<InputStream, Long>? {
+        val stream = assets.open(path) ?: return null
+        val length = try {
             stream.available().toLong()
         } catch (e: Exception) {
             -1L
         }
-        stream to available
-    } catch (e: Exception) {
-        null
+        return stream to length
     }
 
     private fun decodePath(path: String): String = try {
@@ -1959,6 +2049,17 @@ class LocalWebServer(private val context: Context) {
     // ------------------------------------------------------------------
     // Response helpers
     // ------------------------------------------------------------------
+
+    private fun writeRangeNotSatisfiable(out: BufferedOutputStream, length: Long) {
+        val header = "HTTP/1.1 416 Range Not Satisfiable\\r\\n" +
+                "Content-Range: bytes */$length\\r\\n" +
+                "Content-Length: 0\\r\\n" +
+                "Connection: close\\r\\n\\r\\n"
+        runCatching {
+            out.write(header.toByteArray(Charsets.ISO_8859_1))
+            out.flush()
+        }
+    }
 
     private fun writeNotModified(out: BufferedOutputStream, etag: String, mime: String) {
         val header = "HTTP/1.1 304 Not Modified\\r\\n" +
@@ -2359,6 +2460,19 @@ class WebAppBridge(
     private val activityRef = WeakReference(activity)
     private val webViewRef = WeakReference(webView)
 
+    /**
+     * URL of the document currently displayed by the WebView.
+     *
+     * \`@JavascriptInterface\` methods are invoked on the WebView's \`JavaBridge\`
+     * thread, and **every** WebView getter must run on the main thread – reading
+     * \`webView.url\` from the bridge thread throws
+     * *"A WebView method was called on thread 'JavaBridge'"* and would disable
+     * the whole bridge. The value is therefore cached here and refreshed by
+     * [MainActivity] inside its \`WebViewClient\` callbacks (main thread).
+     */
+    @Volatile
+    private var currentUrl: String? = null
+
     var hostListener: HostListener? = null
 
     /** Route that opened the app, delivered after \`appReady()\` when unconsumed. */
@@ -2662,8 +2776,10 @@ class WebAppBridge(
     }
 
     private fun evaluate(script: String) {
-        val webView = webViewRef.get() ?: return
-        webView.post {
+        // Always dispatched to the main thread: \`evaluateJavascript\` is a
+        // WebView method and must not be called from the JavaBridge thread.
+        post {
+            val webView = webViewRef.get() ?: return@post
             runCatching { webView.evaluateJavascript(script, null) }
                 .onFailure { Log.w(TAG, "evaluateJavascript failed: \${it.message}") }
         }
@@ -2676,11 +2792,20 @@ class WebAppBridge(
      * driving native advertising/billing APIs.
      */
     private fun isTrustedOrigin(): Boolean {
-        val webView = webViewRef.get() ?: return false
-        val url = webView.url ?: return false
-        val trusted = url.startsWith("http://127.0.0.1:") || url.startsWith("http://localhost:")
+        val url = currentUrl ?: return true // only the container's own document can call this
+        val trusted = url.startsWith("http://127.0.0.1:") ||
+                url.startsWith("http://localhost:") ||
+                url.startsWith("http://[::1]:")
         if (!trusted) Log.w(TAG, "Bridge call rejected from untrusted origin: $url")
         return trusted
+    }
+
+    /**
+     * Called by [MainActivity] from \`WebViewClient\` callbacks (main thread) so
+     * the trust check never has to touch the WebView from the bridge thread.
+     */
+    fun onPageUrlChanged(url: String?) {
+        currentUrl = url
     }
 
     private inline fun <T> safe(fallback: T, block: () -> T): T =
@@ -3490,11 +3615,37 @@ object NajvaManager {
             if (initialized) return
             initialized = true
 
+            // Channels are cheap and safe to create even without credentials.
             createNotificationChannels(app)
+
+            // Without real credentials the SDK cannot register with the Najva
+            // backend; initializing it anyway only produces stack traces, so the
+            // container degrades gracefully and logs a single actionable line.
+            if (!isConfigured(app)) {
+                Log.i(
+                    TAG,
+                    "Najva credentials are missing (NAJVA_API_KEY / NAJVA_WEBSITE_ID) – " +
+                            "push notifications stay disabled until they are provided."
+                )
+                return
+            }
+
             configureListeners()
             registerClient(app)
         }
     }
+
+    /** True when the API key (UUID) and website id are present in the manifest. */
+    fun isConfigured(context: Context): Boolean = runCatching {
+        val info = context.packageManager.getApplicationInfo(
+            context.packageName,
+            PackageManager.GET_META_DATA
+        )
+        val meta = info.metaData
+        val apiKey = meta?.getString(NajvaConfig.META_API_KEY).orEmpty()
+        val websiteId = meta?.getString(NajvaConfig.META_WEBSITE_ID).orEmpty()
+        apiKey.isNotBlank() && websiteId.isNotBlank()
+    }.getOrDefault(false)
 
     private fun configureListeners() {
         runCatching {
@@ -3515,14 +3666,6 @@ object NajvaManager {
                 Log.d(TAG, "Notification received: $notificationId")
             }
 
-            // A notification was tapped while the app is running.
-            configuration.setNotificationClickListener { notificationId ->
-                Log.d(TAG, "Notification clicked: $notificationId")
-                // Najva already opens MainActivity with the payload in the
-                // Intent for "open app" campaigns; the route itself is picked
-                // up from the Activity intent (see handleIntent).
-            }
-
             // Subscription token available (e.g. to sync with a backend).
             configuration.setUserSubscriptionListener { token ->
                 Log.d(TAG, "Subscribed with token: \${token.take(8)}…")
@@ -3537,7 +3680,13 @@ object NajvaManager {
 
     private fun registerClient(app: Application) {
         runCatching {
-            NajvaClient.getInstance(app, NajvaClient.configuration)
+            // The SDK returns the lifecycle callbacks it needs; registering them
+            // lets Najva track foreground/background state accurately (and is
+            // what the official sample does).
+            val callbacks = NajvaClient.getInstance(app, NajvaClient.configuration)
+            if (callbacks != null) {
+                app.registerActivityLifecycleCallbacks(callbacks)
+            }
             NajvaClient.getInstance().setLogEnabled(BuildConfig.DEBUG)
         }.onFailure {
             lastError = it.message
@@ -3662,7 +3811,11 @@ object NajvaManager {
     }
 
     /** Human-readable diagnostics used by the native loading screen logs. */
-    fun describe(): String = buildString {
+    fun describe(context: Context? = null): String = buildString {
+        if (context != null) {
+            append("configured=").append(isConfigured(context))
+            append(", ")
+        }
         append("initialized=").append(initialized)
         append(", foreground=").append(isForeground)
         append(", token=").append(if (subscribedToken().isNullOrEmpty()) "none" else "ok")
@@ -4477,7 +4630,7 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
 
     <!-- ==================== Native loading screen ==================== -->
     <string name="loading_title">QuickGames</string>
-    <string name="loading_message">در حال بارگذاری…</string>
+    <string name="loading_message">در حال بارگذاری...</string>
     <string name="loading_stage_boot">راه‌اندازی سرور داخلی…</string>
     <string name="loading_stage_webview">آماده‌سازی نمایشگر وب…</string>
     <string name="loading_stage_webapp">در انتظار آماده‌شدن برنامه…</string>
@@ -4669,7 +4822,7 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
   </main>
 
   <footer class="status-bar">
-    <span id="status-text" class="status-bar__text">در حال بارگذاری…</span>
+    <span id="status-text" class="status-bar__text">در حال بارگذاری...</span>
     <span id="status-dot" class="status-bar__dot"></span>
   </footer>
 
@@ -5188,6 +5341,13 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     if (state.logs.length > 120) state.logs.pop();
     var el = document.getElementById('log-view');
     if (el) el.textContent = state.logs.join('\\n');
+    // Mirrored to the WebView console so the native side (and \`adb logcat\`)
+    // can follow the boot handshake without a remote debugger.
+    try {
+      console.log('[webapp] ' + message);
+    } catch (err) {
+      /* console is always present in a WebView; never let logging break the app */
+    }
   }
 
   function toast(message, ms) {
@@ -5239,7 +5399,11 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     if (name === 'capabilities') mountCanvasDemo();
   }
 
-  window.addEventListener('hashchange', render);
+  // NOTE: the listener resolves \`render\` at call time on purpose – the wrapper
+  // further down adds the container/info repaint for in-page navigation.
+  window.addEventListener('hashchange', function () {
+    render();
+  });
 
   // ------------------------------------------------------------------ views
   routes.ads = function () {
@@ -5577,11 +5741,43 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     }
   }
 
+  // ------------------------------------------------------------- self test
+  /**
+   * Scripted probe used by the container's CI smoke test: it exercises the ad
+   * bridge **without** any SDK keys configured, proving that a failing ad
+   * request never blocks or crashes the WebApp.
+   */
+  function runAutotest() {
+    var summary = {
+      native: NativeApp.isNative(),
+      adsAvailable: NativeAds.isAvailable(),
+      health: null,
+      interstitial: null
+    };
+    console.log('AUTOTEST begin ' + JSON.stringify(summary));
+
+    fetch('/__health')
+      .then(function (response) { return response.text(); })
+      .then(function (body) { summary.health = body.trim(); })
+      .catch(function (error) { summary.health = 'error: ' + error; })
+      .then(function () { return NativeAds.showInterstitial(); })
+      .then(function (result) { summary.interstitial = result; })
+      .catch(function (error) { summary.interstitial = { ok: false, reason: String(error) }; })
+      .then(function () {
+        console.log('AUTOTEST done ' + JSON.stringify(summary));
+      });
+  }
+
   // ------------------------------------------------------------ deep linking
   window.DeepLink = {
     handle: function (route) {
       var target = String(route || '').replace(/^#\\/?/, '').replace(/^\\//, '');
       if (!target) return false;
+      if (target === 'autotest') {
+        location.hash = '#/container';
+        runAutotest();
+        return true;
+      }
       if (routes[target]) {
         location.hash = '#/' + target;
       } else {
@@ -6277,6 +6473,10 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          # Repository cache service returns 400 for this account; Gradle's own
+          # dependency cache inside the runner is enough for a clean build.
+          cache-disabled: true
 
       - name: Ensure Gradle wrapper
         run: |
@@ -6289,6 +6489,30 @@ jobs:
           fi
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
           test -f gradle/wrapper/gradle-wrapper.jar && echo "Gradle wrapper verified."
+
+      # services.gradle.org redirects to a GitHub release asset which occa-
+      # sionally answers 500; the wrapper is retried a few times, then a direct
+      # CDN download is used as a fallback.
+      - name: Provision Gradle distribution
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew --version --no-daemon; then
+              echo "Gradle distribution ready (attempt $attempt)."
+              exit 0
+            fi
+            echo "::warning::Gradle distribution fetch failed (attempt $attempt); retrying…"
+            rm -rf "$HOME/.gradle/wrapper/dists"/*/gradle-8.5-bin.zip.lck || true
+            sleep 15
+          done
+          echo "::warning::Falling back to the Gradle CDN tarball"
+          mkdir -p "$HOME/.gradle/wrapper/dists"
+          curl -fL --retry 5 --retry-all-errors -o /tmp/gradle-8.5-bin.zip \\
+            https://downloads.gradle.org/distributions/gradle-8.5-bin.zip
+          DIST_DIR=$(find "$HOME/.gradle/wrapper/dists" -maxdepth 1 -type d -name 'gradle-8.5-bin' | head -1)
+          mkdir -p "$DIST_DIR/fallback/fallback"
+          unzip -q -o /tmp/gradle-8.5-bin.zip -d "$DIST_DIR/fallback/fallback"
+          touch "$DIST_DIR/fallback/fallback.ok"
+          ./gradlew --version --no-daemon
 
       # Native-only configuration (Tapsell / Najva / Firebase). Values are taken
       # from repository secrets when present; otherwise the container builds with
@@ -6318,11 +6542,68 @@ jobs:
           add FIREBASE_PROJECT_ID "$FIREBASE_PROJECT_ID"
           add FIREBASE_SENDER_ID "$FIREBASE_SENDER_ID"
 
+      # Pre-flight: the repository-level invariants (no removed advertising SDK,
+      # every resource reference resolves, bridge contract present).
+      - name: Static architecture checks
+        run: python3 tools/static_checks.py
+
+      # JVM unit tests: they boot the real LocalWebServer over the shipped
+      # assets/web bundle and assert routing, MIME types, gzip, ETag and SPA
+      # fallback, so a broken WebApp bundle cannot reach an APK.
+      - name: Unit tests (embedded HTTP server + MIME table)
+        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+
+      - name: Publish unit test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: |
+            app/build/reports/tests/testDebugUnitTest/**
+            app/build/test-results/testDebugUnitTest/**
+          if-no-files-found: warn
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: Build release APK (R8 / resource shrinking enabled)
         run: ./gradlew assembleRelease --stacktrace --no-daemon
+
+      # Real verification of the produced artifact: the WebApp bundle must be
+      # packaged, every font/resource must resolve and the removed advertising
+      # SDK must not reappear anywhere (classes, assets or resources).
+      - name: Verify APK contents
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          ls -lh "$APK"
+          echo "--- packaged WebApp bundle ---"
+          unzip -l "$APK" | grep -E 'assets/web/' | head -20
+          echo "--- fonts / native resources ---"
+          unzip -l "$APK" | grep -E 'res/font/vazirmatn' || echo "::error::Vazirmatn fonts missing"
+          unzip -l "$APK" | grep -cE 'resources.arsc|classes.dex'
+          rm -rf /tmp/apk-inspect && mkdir -p /tmp/apk-inspect
+          (cd /tmp/apk-inspect && unzip -q "$GITHUB_WORKSPACE/$APK")
+          test -f /tmp/apk-inspect/assets/web/index.html
+          test -f /tmp/apk-inspect/assets/web/js/native-bridge.js
+          echo "--- advertising SDK scan ---"
+          if grep -ril 'adivery' /tmp/apk-inspect | head -5 | grep .; then
+            echo "::error::Removed advertising SDK is still packaged"
+            exit 1
+          fi
+          echo "clean: no trace of the removed advertising SDK"
+          echo "--- Tapsell / Najva / Poolakey presence ---"
+          for needle in ir/tapsell com/najva ir/cafebazaar; do
+            if grep -rql "$needle" /tmp/apk-inspect/classes*.dex; then
+              echo "present: $needle"
+            else
+              echo "::error::$needle missing from the APK"
+              exit 1
+            fi
+          done
+          echo "--- bridge + readiness contract ---"
+          grep -rq 'appReady' /tmp/apk-inspect/classes*.dex && echo "appReady exported"
+          grep -rq 'AndroidBridge' /tmp/apk-inspect/classes*.dex && echo "AndroidBridge exported"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -6330,12 +6611,91 @@ jobs:
           name: app-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          compression-level: 0
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
+          compression-level: 0
+
+  # ---------------------------------------------------------------------------
+  # Runtime verification on a real Android system image: the app is installed,
+  # launched, screenshotted and checked against the boot contract. This is the
+  # only place where the WebView, the local HTTP server and the JS bridge run
+  # together.
+  # ---------------------------------------------------------------------------
+  smoke:
+    name: Emulator smoke test (boot contract + screenshots)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write # posts the screenshots/report as commit comments
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-disabled: true
+
+      - name: Ensure Gradle wrapper
+        run: |
+          chmod +x gradlew || true
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+      - name: Provision Gradle distribution
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew --version --no-daemon; then exit 0; fi
+            rm -rf "$HOME/.gradle/wrapper/dists"/*/gradle-8.5-bin.zip.lck || true
+            sleep 15
+          done
+          exit 1
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"'             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Emulator smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: bash tools/emulator_smoke.sh
+
+      - name: Publish smoke test results
+        if: always()
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: bash tools/publish_smoke_report.sh
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-screenshots
+          path: ci-artifacts/**
           if-no-files-found: warn
 `
   },
@@ -6345,26 +6705,138 @@ jobs:
     category: "doc",
     language: "markdown",
     description: "Project documentation.",
-    content: `<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+    content: `# QuickGames — Android WebApp Container
 
-# Run and deploy your AI Studio app
+A production-ready **Android container for heavy local WebApps**.
 
-This contains everything you need to run your app locally.
+\`\`\`
+Android App  →  Local HTTP Server (127.0.0.1)  →  WebView  →  assets/web/index.html
+\`\`\`
 
-View your app in AI Studio: https://ai.studio/apps/37dac897-e6bf-4ede-8ada-e2f65593cf53
+The WebApp is shipped *inside* the APK (\`app/src/main/assets/web/\`) and is served over a real
+loopback HTTP origin, so bundlers (Vite / Webpack / Next / Angular), ES modules, WebAssembly,
+Canvas/WebGL, media, IndexedDB and SPA routing all behave exactly as they do in a browser —
+without \`file://\` limitations and without intercepting \`shouldInterceptRequest\`.
 
-## Run Locally
+---
 
-**Prerequisites:**  Node.js
+## 1. What is in the container
 
+| Layer | File | Responsibility |
+| --- | --- | --- |
+| Entry point | \`App.kt\` | Firebase bootstrap, notification channels, Najva init (native only) |
+| UI + boot pipeline | \`MainActivity.kt\` | Loading plate → HTTP server → WebView → \`NativeApp.appReady()\` |
+| HTTP server | \`LocalWebServer.kt\` | HTTP/1.1, gzip, byte ranges, ETag/304, MIME table, SPA fallback |
+| Server lifetime | \`WebAppServerController.kt\` | One server per process, stable origin across Activity recreation |
+| Asset access | \`WebAssetSource.kt\` | APK assets in production, a directory in JVM tests |
+| MIME types | \`MimeTypes.kt\` | wasm / mjs / webmanifest / fonts / media / 3D + gzip policy |
+| JS bridge | \`WebAppBridge.kt\` | \`window.AndroidBridge\` — ads, billing, navigation, readiness |
+| Advertising | \`TapsellManager.kt\` + \`TapsellConfig.kt\` | Tapsell Plus: interstitial, rewarded, native (IDs stay native) |
+| Push | \`NajvaManager.kt\` + \`NajvaConfig.kt\` | Najva system notifications, channels, deep links (100% native) |
+| Deep links | \`DeepLinkBus.kt\` | Buffers tap routes until the WebApp reports readiness |
+| Billing | \`CafeBazaarBillingManager.kt\` | Poolakey (CafeBazaar) — unchanged, fully preserved |
 
-1. Install dependencies:
-   \`npm install\`
-2. Set the \`GEMINI_API_KEY\` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   \`npm run dev\`
+### Heavy-WebApp performance
+
+* Real origin → Service Workers, Cache API, IndexedDB, cookies and \`SharedArrayBuffer\`
+  isolation headers (COOP/COEP) all work.
+* \`localStorage\`/IndexedDB survive rotation and process restore because the origin
+  (\`http://127.0.0.1:<port>\` via the stable \`/redirect\` bootstrap) never changes.
+* Gzip on compressible assets, \`immutable\` caching for content-hashed bundles,
+  \`ETag\`/\`304\` revalidation, \`Range\`/\`206\` support for media seeking.
+* Hardware acceleration, \`largeHeap\`, DOM storage, media playback without a gesture,
+  mixed content blocked, fullscreen video, file chooser, safe-area insets.
+
+---
+
+## 2. WebApp contract
+
+Replace the contents of \`app/src/main/assets/web/\` with your own build and keep \`index.html\`
+as the entry document. At the end of your initialization call:
+
+\`\`\`js
+NativeApp.appReady();       // hides the native loading plate (no arbitrary delay)
+\`\`\`
+
+Available namespaces (thin facade in \`assets/web/js/native-bridge.js\`):
+
+\`\`\`js
+NativeApp.appReady()                 // readiness handshake
+NativeApp.getInfo()                  // { platform, sdkInt, appVersion, serverPort, ... }
+NativeApp.getStartupRoute()          // deep-link route that opened the app
+NativeApp.reportError(message)       // show the native error/retry plate
+NativeApp.navigateBack()             // native back navigation
+NativeApp.on('deeplink' | 'back' | 'resume' | 'pause', handler)
+NativeApp.onBackPressed = () => true // let the WebApp consume the hardware back first
+
+NativeAds.showInterstitial()         // Promise, always settles: { ok, reason, type }
+NativeAds.showRewarded()             // { ok, rewardGranted, reason }
+NativeAds.showNative()               // native ad plate inside the app view
+NativeAds.showNativeAt(x, y, w, h)   // positioned in CSS pixels
+NativeAds.hideNative()
+NativeAds.isReady() / prepare() / isAvailable()
+
+CafeBazaar.buyProduct(id) / consumePurchase(token) / getPurchases() / isAvailable()
+\`\`\`
+
+**No advertising or push identifier is ever exposed to the WebApp**: Tapsell app key/zone ids and
+the Najva API key/website id live only in the native layer.
+
+---
+
+## 3. Native configuration
+
+Identifiers are resolved (in order) from Gradle CLI properties, \`gradle.properties\`,
+\`local.properties\`, then environment variables — and are never committed:
+
+\`\`\`properties
+# local.properties
+sdk.dir=/path/to/Android/sdk
+TAPSELL_APP_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+TAPSELL_ZONE_INTERSTITIAL=xxxxxxxxxxxxxxxxxxxx
+TAPSELL_ZONE_REWARDED=xxxxxxxxxxxxxxxxxxxx
+TAPSELL_ZONE_NATIVE=xxxxxxxxxxxxxxxxxxxx
+NAJVA_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+NAJVA_WEBSITE_ID=12345
+FIREBASE_APP_ID=1:1234567890:android:abcdef
+FIREBASE_API_KEY=AIza...
+FIREBASE_PROJECT_ID=your-project
+FIREBASE_SENDER_ID=1234567890
+\`\`\`
+
+Missing keys are **not** fatal: ads report \`NOT_AVAILABLE\`, push logs one actionable line and the
+container keeps working (\`./gradlew assembleDebug\` succeeds with an empty configuration).
+
+## 4. Build, test, verify
+
+\`\`\`bash
+./gradlew testDebugUnitTest    # 25 JVM tests: HTTP server, MIME table, ranges, SPA routing
+./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease      # R8 + resource shrinking
+python3 tools/static_checks.py # repository invariants (no removed SDK, resources resolve, ...)
+\`\`\`
+
+CI (\`.github/workflows/build-apk.yml\`) runs on every push:
+
+1. \`Static architecture checks\` + \`Unit tests\` — the tests boot the **real** \`LocalWebServer\`
+   against the shipped \`assets/web\` bundle, so a broken bundle fails the build.
+2. \`assembleDebug\` + \`assembleRelease\`, then \`Verify APK contents\` asserts that
+   \`assets/web/**\` and the Vazirmatn fonts are packaged and that the removed advertising SDK is
+   absent from every dex.
+3. \`Emulator smoke test\` — installs the APK on an API 30 emulator, boots it and verifies the
+   runtime contract (server up → WebView on \`127.0.0.1\` → readiness handshake → deep link
+   routing → ad bridge degrading gracefully without keys → no crash, no bridge thread
+   violation), capturing a screenshot timeline that is published as commit comments.
+
+## 5. Local (Vite) showcase
+
+The \`src/\` Vite app in this repository is an interactive preview of the container: the boot
+pipeline, the ad/push simulators, the packaged file tree and the build guide.
+
+\`\`\`bash
+npm install
+npm run dev
+\`\`\`
 `
   },
 ];

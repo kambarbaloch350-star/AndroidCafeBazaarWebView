@@ -473,6 +473,14 @@
         runAutotest();
         return true;
       }
+      if (target === 'rating') {
+        // Exercises the CafeBazaar rating intent path (native bridge).
+        var opened = CafeBazaar.openRatingPage();
+        log('CafeBazaar.openRatingPage() -> ' + opened);
+        console.log('RATING test ' + JSON.stringify({ opened: opened }));
+        toast(opened ? 'صفحه امتیازدهی باز شد' : 'کافه‌بازار در دسترس نیست');
+        return true;
+      }
       if (routes[target]) {
         location.hash = '#/' + target;
       } else {

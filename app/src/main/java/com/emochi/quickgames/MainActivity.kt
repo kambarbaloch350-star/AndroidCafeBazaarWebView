@@ -72,6 +72,15 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         private const val APP_READY_TIMEOUT_MS = 45_000L
 
         /** Delay before asking for the notification permission (after first paint). */
+        /** Official CafeBazaar package: Bazaar intents are delivered to it only. */
+        private const val BAZAAR_PACKAGE = "com.farsitel.bazaar"
+
+        /** Grace period before the empty native-ad plate closes itself. */
+        private const val NATIVE_AD_WATCHDOG_MS = 10_000L
+
+        /** Shorter grace period when the request was refused outright. */
+        private const val NATIVE_AD_GIVE_UP_MS = 2_500L
+
         private const val NOTIFICATION_PERMISSION_DELAY_MS = 900L
     }
 
@@ -709,12 +718,52 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         if (visible) showNativeAd(x, y, width, height) else hideNativeAd()
     }
 
+    override fun onBridgeRequestRating(): Boolean = openBazaar(rating = true)
+
+    override fun onBridgeRequestStorePage(): Boolean = openBazaar(rating = false)
+
+    /**
+     * Opens the CafeBazaar page of this app.
+     *
+     * `bazaar://details?id=<package>` is the official Bazaar intent; with
+     * `ACTION_EDIT` Bazaar opens the rating dialog directly. When Bazaar is not
+     * installed (emulator, sideloaded build) the intent cannot be resolved and
+     * the user is notified instead of crashing.
+     */
+    private fun openBazaar(rating: Boolean): Boolean {
+        val uri = Uri.parse("bazaar://details?id=$packageName")
+        val intent = Intent(if (rating) Intent.ACTION_EDIT else Intent.ACTION_VIEW, uri).apply {
+            setPackage(BAZAAR_PACKAGE)
+            addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY or Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+        }
+
+        val resolved = runCatching { intent.resolveActivity(packageManager) != null }
+            .getOrDefault(false)
+        if (!resolved) {
+            Log.w(TAG, "CafeBazaar is not installed – cannot open $uri")
+            Toast.makeText(this, getString(R.string.bazaar_not_installed), Toast.LENGTH_SHORT).show()
+            return false
+        }
+
+        return runCatching {
+            startActivity(intent)
+            Log.i(TAG, "Opened CafeBazaar (${if (rating) "rating" else "details"}) for $packageName")
+            true
+        }.getOrElse {
+            Log.e(TAG, "Failed to open CafeBazaar: ${it.message}")
+            false
+        }
+    }
+
     // =====================================================================
     // Native ad plate (Tapsell)
     // =====================================================================
 
     private fun showNativeAd(x: Int, y: Int, width: Int, height: Int) {
         val manager = tapsellManager ?: return
+        // A plate that never receives an ad must never linger on top of the
+        // WebApp: the watchdog hides it again when the SDK attached nothing.
+        cancelNativeAdWatchdog()
         val density = resources.displayMetrics.density
 
         val margin = (12 * density).toInt()
@@ -739,15 +788,39 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         nativeAdPlate.visibility = View.VISIBLE
 
         manager.attachNativeContainer(nativeAdContainer)
-        if (!manager.showNative()) {
+        val accepted = manager.showNative()
+        if (!accepted) {
             nativeAdStatus.text = getString(R.string.native_ad_unavailable)
         }
+        handler.postDelayed(
+            nativeAdWatchdog,
+            if (accepted) NATIVE_AD_WATCHDOG_MS else NATIVE_AD_GIVE_UP_MS
+        )
     }
 
     private fun hideNativeAd() {
+        cancelNativeAdWatchdog()
         tapsellManager?.destroyNative()
         nativeAdContainer.removeAllViews()
         nativeAdPlate.visibility = View.GONE
+    }
+
+    private fun cancelNativeAdWatchdog() {
+        handler.removeCallbacks(nativeAdWatchdog)
+    }
+
+    /**
+     * Safety net for the native ad plate: if the SDK never rendered a view into
+     * the container the plate is closed again, so a failed ad request can never
+     * cover the WebApp.
+     */
+    private val nativeAdWatchdog = Runnable {
+        if (nativeAdPlate.visibility != View.VISIBLE) return@Runnable
+        val rendered = nativeAdContainer.childCount > 0
+        if (!rendered) {
+            Log.w(TAG, "Native ad plate never received a view – hiding it again")
+            hideNativeAd()
+        }
     }
 
     // =====================================================================
