@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.AttributeSet
 import android.view.ActionMode
 import android.view.HapticFeedbackConstants
-import android.view.View
 import android.webkit.WebView
 
 /**
@@ -51,10 +50,4 @@ class ContainerWebView @JvmOverloads constructor(
 
     /** Refuses the classic (text selection / copy) action mode. */
     override fun startActionMode(callback: ActionMode.Callback?): ActionMode? = null
-
-    /**
-     * Belt and braces: some OEM WebViews still raise the selection toolbar from
-     * inside the long-click handling, which never reaches [startActionMode].
-     */
-    override fun onLongClick(view: View?): Boolean = true
 }
