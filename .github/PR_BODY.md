@@ -18,11 +18,14 @@ bridge; Adivery is gone, Tapsell and Najva are 100% native.
 | Title | **لبزبند** |
 | Tagline | **بلوچی مئے وتی شہد ایں زبان ایں** |
 | Loading line | **لیب لوڈ بوھگ ءَ ایں۔** |
-| Credit (bottom) | **A Game By Jawad Kalmati** |
+| Credit (bottom) | **A Game By BalochAfzar** |
 
-* Animation: logo pop-in with overshoot, breathing halo, floating logo, rotating
-  gradient ring (`LoadingRingView`, a plain `View` + one `ValueAnimator`),
-  staggered copy reveal, and a cross-fade out.
+* Animation: logo pop-in with overshoot, slow float + breathing scale, a
+  **shimmer sweep across the title** (`ShimmerTextView`), a sliding gradient
+  progress line (`LoadingBarView`), staggered copy reveal, and a lifted
+  cross-fade out. **No circles and no spinning ring anywhere.**
+* System bars are white in both themes with **dark icons** (light icons on a
+  white bar were invisible – fixed).
 * `MIN_LOADING_VISIBLE_MS = 3000` is a **floor**, not an extra delay: the overlay
   is dismissed when the WebApp is ready *and* the floor elapsed. Verified on the
   emulator: `Loading screen visible for 1496 ms … keeps the stage 1504 ms longer`.
@@ -33,8 +36,8 @@ bridge; Adivery is gone, Tapsell and Najva are 100% native.
 
 ### 2. Back button → previous page (not exit)
 
-`MainActivity` no longer finishes on back at the app root. It asks the WebApp
-first:
+Back **never** leaves the app on its own – not even while the WebApp is still
+booting. It asks the page first:
 
 1. `window.NativeApp.onBackPressed()` (registered through
    `NativeApp.setBackHandler(fn)`) → returning `true` stops the chain;

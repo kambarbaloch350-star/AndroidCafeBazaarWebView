@@ -113,11 +113,9 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private lateinit var webViewContainer: FrameLayout
     private lateinit var loadingOverlay: View
     private lateinit var loadingContent: View
-    private lateinit var loadingEmblem: View
-    private lateinit var loadingRing: LoadingRingView
-    private lateinit var loadingHalo: View
     private lateinit var loadingLogo: View
-    private lateinit var loadingTitle: TextView
+    private lateinit var loadingTitle: ShimmerTextView
+    private lateinit var loadingBar: LoadingBarView
     private lateinit var loadingSubtitle: TextView
     private lateinit var loadingMessage: TextView
     private lateinit var loadingCredit: TextView
@@ -943,69 +941,71 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         stopLoadingAnimations()
 
         val density = resources.displayMetrics.density
-        val rise = 16f * density
+        val rise = 18f * density
 
-        // 1. Everything starts hidden and slightly low.
+        // 1. Copy starts hidden and slightly low; the logo is scaled down.
         listOf(loadingTitle, loadingSubtitle, loadingMessage, loadingCredit).forEach {
             it.alpha = 0f
             it.translationY = rise
         }
-        loadingEmblem.alpha = 0f
-        loadingEmblem.scaleX = 0.7f
-        loadingEmblem.scaleY = 0.7f
-        loadingHalo.alpha = 0f
-        loadingHalo.scaleX = 0.8f
-        loadingHalo.scaleY = 0.8f
+        loadingLogo.alpha = 0f
+        loadingLogo.scaleX = 0.62f
+        loadingLogo.scaleY = 0.62f
+        loadingBar.alpha = 0f
+        loadingBar.scaleX = 0.6f
 
-        // 2. The emblem lands first, with a soft overshoot.
-        loadingEmblem.animate()
+        // 2. The logo lands first with a soft overshoot …
+        loadingLogo.animate()
             .alpha(1f)
             .scaleX(1f)
             .scaleY(1f)
-            .setDuration(520)
-            .setInterpolator(OvershootInterpolator(1.1f))
+            .setDuration(620)
+            .setInterpolator(OvershootInterpolator(1.05f))
             .start()
-        loadingHalo.animate()
-            .alpha(0.55f)
+
+        // 3. … then the copy arrives line by line, the title shimmering.
+        slideIn(loadingTitle, 260)
+        slideIn(loadingSubtitle, 400)
+        slideIn(loadingMessage, 540)
+        slideIn(loadingBar, 640)
+        slideIn(loadingCredit, 820)
+
+        // 4. And it stays alive: the logo breathes and floats, the title sweeps,
+        //    the progress line slides.
+        loadingTitle.start()
+        loadingBar.animate().cancel()
+        loadingBar.animate()
+            .alpha(1f)
             .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(600)
-            .setStartDelay(80)
+            .setStartDelay(640)
+            .setDuration(420)
+            .setInterpolator(AccelerateDecelerateInterpolator())
             .start()
+        loadingBar.start()
 
-        // 3. Copy, line by line.
-        slideIn(loadingTitle, 240)
-        slideIn(loadingSubtitle, 380)
-        slideIn(loadingMessage, 520)
-        slideIn(loadingCredit, 760)
-
-        // 4. Then it keeps breathing: halo pulse, logo float, ring rotation.
-        loadingRing.start()
-
-        val haloPulse = ObjectAnimator.ofPropertyValuesHolder(
-            loadingHalo,
-            PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.16f),
-            PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.16f),
-            PropertyValuesHolder.ofFloat(View.ALPHA, 0.55f, 0.14f)
-        ).apply {
-            duration = 1500L
-            startDelay = 700L
-            repeatMode = ValueAnimator.REVERSE
-            repeatCount = ValueAnimator.INFINITE
-            interpolator = AccelerateDecelerateInterpolator()
-        }
         val logoFloat = ObjectAnimator.ofPropertyValuesHolder(
             loadingLogo,
-            PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, 0f, -5f * density)
+            PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, 0f, -6f * density)
         ).apply {
-            duration = 1700L
+            duration = 1900L
             startDelay = 700L
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
             interpolator = AccelerateDecelerateInterpolator()
         }
-        loadingAnimators += haloPulse.also { it.start() }
+        val logoBreath = ObjectAnimator.ofPropertyValuesHolder(
+            loadingLogo,
+            PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.045f),
+            PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.045f)
+        ).apply {
+            duration = 1900L
+            startDelay = 700L
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+        }
         loadingAnimators += logoFloat.also { it.start() }
+        loadingAnimators += logoBreath.also { it.start() }
     }
 
     /** Fade + rise for one line of the loading copy. */
@@ -1022,7 +1022,8 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private fun stopLoadingAnimations() {
         loadingAnimators.forEach { it.cancel() }
         loadingAnimators.clear()
-        loadingRing.stop()
+        loadingTitle.stop()
+        loadingBar.stop()
     }
 
     /** Milliseconds the loading screen still has to stay, honouring the floor. */
@@ -1035,12 +1036,25 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private fun dismissLoadingOverlay() {
         if (loadingOverlay.visibility != View.VISIBLE) return
         stopLoadingAnimations()
+        // The content lifts slightly while the whole canvas fades, so the WebApp
+        // is revealed rather than cut to.
+        loadingContent.animate()
+            .alpha(0f)
+            .translationY(-12f * resources.displayMetrics.density)
+            .setDuration(LOADING_FADE_OUT_MS)
+            .start()
+        loadingCredit.animate()
+            .alpha(0f)
+            .setDuration(LOADING_FADE_OUT_MS / 2)
+            .start()
         loadingOverlay.animate()
             .alpha(0f)
             .setDuration(LOADING_FADE_OUT_MS)
             .withEndAction {
                 loadingOverlay.visibility = View.GONE
                 loadingOverlay.alpha = 1f
+                loadingContent.alpha = 1f
+                loadingContent.translationY = 0f
             }
             .start()
     }
@@ -1138,13 +1152,15 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
                     exitDialog?.dismiss()
                     return
                 }
-                // 5. Still booting: there is no page to go back to yet.
-                if (!isWebAppReady) {
-                    if (isBootFailed) askBeforeLeaving() else leaveApp()
+                // 5. Ask the page first – even while booting, a loaded document
+                //    may already have its own screen stack.
+                if (webView == null) {
+                    askBeforeLeaving()
                     return
                 }
                 // 6. Ask the WebApp to navigate one page back; whatever it does
-                //    not handle falls through to the exit confirmation.
+                //    not handle falls through to the exit confirmation. The app
+                //    is never left without that confirmation.
                 requestWebAppBack { handled ->
                     if (!handled) askBeforeLeaving()
                 }
@@ -1169,7 +1185,8 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
      */
     private fun requestWebAppBack(onResult: (Boolean) -> Unit) {
         val view = webView
-        if (view == null || !isWebAppReady) {
+        if (view == null) {
+            Log.i(TAG, "Back: no WebView yet -> exit confirmation")
             onResult(false)
             return
         }
@@ -1198,13 +1215,18 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
             })();
         """.trimIndent()
         view.evaluateJavascript(script) { result ->
-            if (result?.trim()?.trim('"') == "true") return@evaluateJavascript
+            if (result?.trim()?.trim('"') == "true") {
+                Log.i(TAG, "Back: handled inside the WebApp (previous page)")
+                return@evaluateJavascript
+            }
             // Last chance: real WebView history (in-page anchors, extra hops).
             val current = webView
             if (current != null && current.canGoBack()) {
+                Log.i(TAG, "Back: WebView history step")
                 current.goBack()
                 return@evaluateJavascript
             }
+            Log.i(TAG, "Back: nothing left to go back to in the WebApp")
             onResult(false)
         }
     }
@@ -1305,10 +1327,8 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         webViewContainer = findViewById(R.id.webViewContainer)
         loadingOverlay = findViewById(R.id.loadingOverlay)
         loadingContent = findViewById(R.id.loadingContent)
-        loadingEmblem = findViewById(R.id.loadingEmblem)
-        loadingRing = findViewById(R.id.loadingRing)
-        loadingHalo = findViewById(R.id.loadingHalo)
         loadingLogo = findViewById(R.id.loadingLogo)
+        loadingBar = findViewById(R.id.loadingBar)
         loadingTitle = findViewById(R.id.loadingTitle)
         loadingSubtitle = findViewById(R.id.loadingSubtitle)
         loadingMessage = findViewById(R.id.loadingMessage)
@@ -1330,11 +1350,12 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         window.statusBarColor = getColor(R.color.system_bar)
         window.navigationBarColor = getColor(R.color.system_bar)
 
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                Configuration.UI_MODE_NIGHT_YES
+        // The bars are white in **both** themes (see values-night/colors.xml), so
+        // their icons must always be the dark variant: light icons on a white
+        // bar are invisible, which is exactly the bug this replaces.
         val controller = WindowCompat.getInsetsController(window, window.decorView)
-        controller.isAppearanceLightStatusBars = !night
-        controller.isAppearanceLightNavigationBars = !night
+        controller.isAppearanceLightStatusBars = true
+        controller.isAppearanceLightNavigationBars = true
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.attributes.layoutInDisplayCutoutMode =

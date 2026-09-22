@@ -29,7 +29,7 @@
     <string name="native_ad_unavailable">تبلیغی برای نمایش موجود نیست</string>
     <string name="native_ad_close">بستن تبلیغ</string>
     <string name="bazaar_not_installed">برای ثبت امتیاز، برنامه کافه‌بازار باید روی دستگاه نصب باشد.</string>
-    <string name="loading_credit">A Game By Jawad Kalmati</string>
+    <string name="loading_credit">A Game By BalochAfzar</string>
 
     <!-- Exit confirmation dialog -->
     <string name="exit_dialog_title">می‌خواهید از بازی خارج شوید؟</string>

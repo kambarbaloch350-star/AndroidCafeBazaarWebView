@@ -222,6 +222,19 @@ def check_splash_and_touch_surface() -> None:
     if "user-select" not in activity:
         errors.append("MainActivity.kt: the injected page CSS must disable text selection")
 
+    # Leaving the app is only ever allowed through the exit dialog.
+    if "leaveApp()" not in activity:
+        errors.append("MainActivity.kt: no explicit leaveApp() path")
+    if "askBeforeLeaving()" not in activity:
+        errors.append("MainActivity.kt: the exit dialog must guard leaving the app")
+    for forbidden in ("LoadingRingView", "loadingHalo"):
+        if forbidden in layout or forbidden in activity:
+            errors.append(f"the loading screen must not use {forbidden} (no circles)")
+
+    # The system bars are white in both themes: their icons must stay dark.
+    if "isAppearanceLightStatusBars = true" not in activity:
+        errors.append("MainActivity.kt: status bar icons must be dark on the white bar")
+
 
 check_splash_and_touch_surface()
 

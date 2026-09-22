@@ -37,7 +37,7 @@
                 android:id="@+id/exitBadgeHalo"
                 android:layout_width="84dp"
                 android:layout_height="84dp"
-                android:background="@drawable/bg_loading_halo" />
+                android:background="@drawable/bg_badge_glow" />
 
             <ImageView
                 android:id="@+id/exitBadge"

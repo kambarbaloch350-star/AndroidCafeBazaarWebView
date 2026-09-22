@@ -102,42 +102,23 @@
             android:paddingEnd="32dp">
 
             <!-- ================= Animated loading artwork =================
-                 White canvas, green artwork: a pulsing halo, the app logo and
-                 a rotating gradient ring, then the copy and the credit. -->
-            <FrameLayout
-                android:id="@+id/loadingEmblem"
-                android:layout_width="128dp"
-                android:layout_height="128dp">
+                 White canvas, green artwork: the logo lands with a soft
+                 overshoot, the title shimmers, and a slim progress line slides
+                 under the copy. No circles, no spinning ring. -->
+            <ImageView
+                android:id="@+id/loadingLogo"
+                android:layout_width="112dp"
+                android:layout_height="112dp"
+                android:contentDescription="@string/app_name"
+                android:elevation="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/logo_labzband" />
 
-                <!-- Soft green halo that breathes behind the logo -->
-                <View
-                    android:id="@+id/loadingHalo"
-                    android:layout_width="118dp"
-                    android:layout_height="118dp"
-                    android:layout_gravity="center"
-                    android:background="@drawable/bg_loading_halo" />
-
-                <com.emochi.quickgames.LoadingRingView
-                    android:id="@+id/loadingRing"
-                    android:layout_width="132dp"
-                    android:layout_height="132dp"
-                    android:layout_gravity="center" />
-
-                <ImageView
-                    android:id="@+id/loadingLogo"
-                    android:layout_width="86dp"
-                    android:layout_height="86dp"
-                    android:layout_gravity="center"
-                    android:contentDescription="@string/app_name"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/logo_labzband" />
-            </FrameLayout>
-
-            <TextView
+            <com.emochi.quickgames.ShimmerTextView
                 android:id="@+id/loadingTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="24dp"
+                android:layout_marginTop="26dp"
                 android:fontFamily="@font/vazirmatn_bold"
                 android:text="@string/loading_title"
                 android:textAppearance="@style/TextAppearance.LoadingTitle" />
@@ -157,11 +138,17 @@
                 android:id="@+id/loadingMessage"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
+                android:layout_marginTop="24dp"
                 android:fontFamily="@font/vazirmatn_regular"
                 android:gravity="center"
                 android:text="@string/loading_message"
                 android:textAppearance="@style/TextAppearance.LoadingMessage" />
+
+            <com.emochi.quickgames.LoadingBarView
+                android:id="@+id/loadingBar"
+                android:layout_width="148dp"
+                android:layout_height="4dp"
+                android:layout_marginTop="20dp" />
 
         </LinearLayout>
 

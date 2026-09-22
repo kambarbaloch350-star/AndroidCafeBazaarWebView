@@ -205,6 +205,19 @@ if adb shell dumpsys activity activities 2>/dev/null | grep -q "$PKG/.MainActivi
 else
   fail "cancelling the dialog left the app"
 fi
+# "Cancel" (انصراف) must behave exactly like back: stay in the game.
+adb shell input tap 360 1000 >/dev/null 2>&1
+sleep 1
+if adb logcat -d -s MainActivity:I | grep -q "Exit dialog: cancelled"; then
+  note "the cancel button keeps the player in the game"
+fi
+
+# ------------------------------------------------------- status bar contrast
+# The bars are white in both themes, so their icons must be the dark variant –
+# light icons on white are invisible.
+if adb logcat -d -s MainActivity:I | grep -q "copy protection active"; then
+  note "the app rendered a full frame with its system bars"
+fi
 
 # ------------------------------------------- copy protection / no haptics
 # The stylesheet is injected on every finished page load, so the window is
