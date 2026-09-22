@@ -84,11 +84,17 @@ def collect_resources() -> dict[str, set[str]]:
             else:
                 res[kind].add(base)
 
-    # mipmap density folders also expose @mipmap/<name>
+    # Density/qualifier qualified folders (drawable-nodpi, mipmap-xxhdpi, ...)
+    # expose the same resource kind without the qualifier.
     for name in os.listdir(RES):
-        if name.startswith("mipmap-"):
-            for file in os.listdir(os.path.join(RES, name)):
-                res["mipmap"].add(file.split(".")[0])
+        if "-" not in name or not name.split("-")[0] in ("mipmap", "drawable", "layout", "anim"):
+            continue
+        kind = name.split("-")[0]
+        path = os.path.join(RES, name)
+        if not os.path.isdir(path):
+            continue
+        for file in os.listdir(path):
+            res[kind].add(file.split(".")[0])
     return res
 
 

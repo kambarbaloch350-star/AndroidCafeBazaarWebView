@@ -17,17 +17,17 @@
     <color name="black">#FF000000</color>
 
     <!-- Loading screen surfaces -->
-    <color name="loading_background_top">#F1FBF4</color>
-    <color name="loading_background_bottom">#D6EFE0</color>
+    <color name="loading_background_top">#FFFFFFFF</color>
+    <color name="loading_background_bottom">#FFFFFFFF</color>
     <color name="plate_surface">#FFFFFFFF</color>
-    <color name="plate_surface_end">#E8F8EE</color>
+    <color name="plate_surface_end">#FFFFFFFF</color>
     <color name="plate_ring">#34D399</color>
-    <color name="plate_inner_ring">#B8E7CC</color>
+    <color name="plate_inner_ring">#DCF3E4</color>
     <color name="plate_shadow">#1A047857</color>
 
-    <color name="loading_title">#065F46</color>
+    <color name="loading_title">#0B7A57</color>
     <color name="loading_message">#0F766E</color>
-    <color name="loading_stage">#3F8F73</color>
+    <color name="loading_stage">#4B7F6C</color>
     <color name="loading_spinner">#10B981</color>
     <color name="loading_spinner_track">#B8E7CC</color>
 
@@ -41,7 +41,7 @@
     <color name="retry_button_text">#FFFFFF</color>
 
     <!-- System chrome -->
-    <color name="system_bar">#F1FBF4</color>
+    <color name="system_bar">#FFFFFFFF</color>
     <color name="webview_background">#FFFFFFFF</color>
 
     <!-- Native ad plate -->
