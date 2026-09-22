@@ -1,19 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- ==================== Dark (night) variants ==================== -->
-    <color name="loading_background_top">#06231A</color>
-    <color name="loading_background_bottom">#02120C</color>
-    <color name="plate_surface">#0B3A2A</color>
-    <color name="plate_surface_end">#082E20</color>
+    <!--
+      The loading screen is deliberately identical in day and night mode: a pure
+      white canvas with green artwork. Dark variants here would repaint the
+      splash dark green on devices in dark mode, which is not what this app
+      wants – the artwork is white by design.
+    -->
+    <color name="loading_background_top">#FFFFFFFF</color>
+    <color name="loading_background_bottom">#FFFFFFFF</color>
+    <color name="plate_surface">#FFFFFFFF</color>
+    <color name="plate_surface_end">#FFFFFFFF</color>
     <color name="plate_ring">#34D399</color>
-    <color name="plate_inner_ring">#115E48</color>
-    <color name="plate_shadow">#33000000</color>
+    <color name="plate_inner_ring">#DCF3E4</color>
+    <color name="plate_shadow">#1A047857</color>
 
-    <color name="loading_title">#A7F3D0</color>
-    <color name="loading_message">#7FE3B0</color>
-    <color name="loading_stage">#4FAF88</color>
-    <color name="loading_spinner">#34D399</color>
-    <color name="loading_spinner_track">#115E48</color>
+    <color name="loading_title">#0B7A57</color>
+    <color name="loading_message">#0F766E</color>
+    <color name="loading_stage">#4B7F6C</color>
+    <color name="loading_spinner">#10B981</color>
+    <color name="loading_spinner_track">#B8E7CC</color>
 
     <color name="error_ring">#FBBF24</color>
     <color name="error_icon">#FCD34D</color>
@@ -23,7 +29,7 @@
     <color name="retry_button_bg_pressed">#059669</color>
     <color name="retry_button_text">#04170F</color>
 
-    <color name="system_bar">#06231A</color>
+    <color name="system_bar">#FFFFFFFF</color>
     <color name="webview_background">#04170F</color>
 
     <color name="native_ad_surface">#0B3A2A</color>

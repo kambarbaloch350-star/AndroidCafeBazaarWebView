@@ -32,7 +32,7 @@ fi
 
 # Only the most informative frames are published: one comment set per picture,
 # and the whole timeline stays in the `emulator-screenshots` artifact.
-WANTED="03-boot 05-boot 07-running 08-webapp 09-deeplink 10-autotest 11-landscape 12-backdialog"
+WANTED="03-boot 05-boot 07-running 08-webapp 09-deeplink 10-autotest 11-landscape 12-backdialog 13-longpress"
 pictures=()
 for name in $WANTED; do
   [ -f "$OUT/$name.png" ] && pictures+=("$OUT/$name.png")

@@ -20,6 +20,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.OvershootInterpolator
+import org.json.JSONObject
 import android.view.WindowManager
 import android.webkit.ConsoleMessage
 import android.webkit.PermissionRequest
@@ -112,7 +113,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private lateinit var webViewContainer: FrameLayout
     private lateinit var loadingOverlay: View
     private lateinit var loadingContent: View
-    private lateinit var loadingStage: TextView
     private lateinit var loadingEmblem: View
     private lateinit var loadingRing: LoadingRingView
     private lateinit var loadingHalo: View
@@ -210,7 +210,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         configureSystemBars()
 
         // 1. Native loading screen first – before any I/O or SDK call.
-        showLoadingStage(getString(R.string.loading_stage_boot))
         playLoadingIntro()
 
         // Advertising + billing are native services: they warm up in parallel
@@ -323,7 +322,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         isBootFailed = false
         isWebAppReady = false
         serverReady = false
-        showLoadingStage(getString(R.string.loading_stage_boot))
 
         // 2. The server must exist before the WebView can navigate.
         bootExecutor.execute {
@@ -384,7 +382,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
             setupBackNavigation()
         }
 
-        showLoadingStage(getString(R.string.loading_stage_webview))
 
         val entry = WebAppServerController.entryUrl()
         if (entry == null) {
@@ -407,7 +404,8 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(): WebView {
-        val view = WebView(this)
+        // ContainerWebView: no text selection / copy, no long-press vibration.
+        val view = ContainerWebView(this)
         view.setBackgroundColor(getColor(R.color.webview_background))
         view.isVerticalScrollBarEnabled = true
         view.isHorizontalScrollBarEnabled = false
@@ -417,6 +415,57 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         view.webChromeClient = containerChromeClient
         return view
     }
+
+    /**
+     * Makes the page behave like an app surface: text cannot be selected, the
+     * iOS-style callout is disabled and images cannot be dragged out.
+     *
+     * The stylesheet is injected into the page itself (and re-applied on every
+     * finished load), so it also covers WebApps that ship their own CSS. The
+     * native side refuses the selection action mode as well – see
+     * [ContainerWebView].
+     */
+    private fun applyCopyProtection(view: WebView?) {
+        if (view == null) return
+        val css = """
+            *:not(input):not(textarea) {
+              -webkit-user-select: none;
+              -moz-user-select: none;
+              -ms-user-select: none;
+              user-select: none;
+              -webkit-touch-callout: none;
+              -webkit-tap-highlight-color: transparent;
+            }
+            img, a { -webkit-user-drag: none; user-drag: none; }
+        """.trimIndent()
+        val script = """
+            (function () {
+              try {
+                var id = 'container-copy-protection';
+                var existing = document.getElementById(id);
+                if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+                var style = document.createElement('style');
+                style.id = id;
+                style.type = 'text/css';
+                style.appendChild(document.createTextNode(${jsStringLiteral(css)}));
+                (document.head || document.documentElement).appendChild(style);
+                document.addEventListener('copy', function (e) { e.preventDefault(); }, true);
+                document.addEventListener('cut', function (e) { e.preventDefault(); }, true);
+                document.addEventListener('contextmenu', function (e) { e.preventDefault(); }, true);
+                return true;
+              } catch (e) { return false; }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script) { result ->
+            if (result?.trim()?.trim('"') == "true") {
+                Log.i(TAG, "Page copy protection active (selection, copy and context menu disabled)")
+            }
+        }
+    }
+
+    /** JSON-encodes a string so it can be embedded safely in injected JS. */
+    private fun jsStringLiteral(value: String): String =
+        JSONObject.quote(value)
 
     /**
      * WebView tuning for demanding WebApps: large JS bundles, Canvas, WebGL,
@@ -527,6 +576,7 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
             super.onPageFinished(view, url)
             bridge?.onPageUrlChanged(url)
             if (BuildConfig.DEBUG) Log.d(TAG, "onPageFinished: $url")
+            applyCopyProtection(view)
             onDocumentLoaded(bootToken)
             bridge?.notifyContainerReady(pendingDeepLinkRoute)
         }
@@ -610,7 +660,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         override fun onProgressChanged(view: WebView?, newProgress: Int) {
             super.onProgressChanged(view, newProgress)
             if (newProgress in 1..99 && !isWebAppReady && !isBootFailed) {
-                showLoadingStage(getString(R.string.loading_stage_webapp))
             }
         }
 
@@ -715,7 +764,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         isBootFailed = false
         Log.i(TAG, "Web app ready – hiding the native loading plate")
         handler.removeCallbacksAndMessages(null)
-        showLoadingStage(getString(R.string.loading_stage_finishing))
 
         // The WebApp is already running behind the overlay, so this only waits
         // for the animated splash to be seen for its minimum duration – a floor,
@@ -902,7 +950,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
             it.alpha = 0f
             it.translationY = rise
         }
-        loadingStage.alpha = 0f
         loadingEmblem.alpha = 0f
         loadingEmblem.scaleX = 0.7f
         loadingEmblem.scaleY = 0.7f
@@ -930,7 +977,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         slideIn(loadingTitle, 240)
         slideIn(loadingSubtitle, 380)
         slideIn(loadingMessage, 520)
-        slideIn(loadingStage, 620)
         slideIn(loadingCredit, 760)
 
         // 4. Then it keeps breathing: halo pulse, logo float, ring rotation.
@@ -999,12 +1045,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
             .start()
     }
 
-    private fun showLoadingStage(stage: String) {
-        if (isBootFailed) return
-        loadingContent.visibility = View.VISIBLE
-        errorContent.visibility = View.GONE
-        loadingStage.text = stage
-    }
 
     private fun showErrorState(message: String) {
         if (isBootFailed) return
@@ -1030,7 +1070,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         loadingOverlay.alpha = 1f
         errorContent.visibility = View.GONE
         loadingContent.visibility = View.VISIBLE
-        showLoadingStage(getString(R.string.loading_stage_boot))
         playLoadingIntro()
 
         val view = webView
@@ -1059,7 +1098,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
     private fun onDocumentLoaded(token: Int) {
         if (isWebAppReady || isBootFailed) return
-        showLoadingStage(getString(R.string.loading_stage_webapp))
         handler.postDelayed({ onAppReadyTimeout(token) }, APP_READY_TIMEOUT_MS)
     }
 
@@ -1267,7 +1305,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         webViewContainer = findViewById(R.id.webViewContainer)
         loadingOverlay = findViewById(R.id.loadingOverlay)
         loadingContent = findViewById(R.id.loadingContent)
-        loadingStage = findViewById(R.id.loadingStage)
         loadingEmblem = findViewById(R.id.loadingEmblem)
         loadingRing = findViewById(R.id.loadingRing)
         loadingHalo = findViewById(R.id.loadingHalo)

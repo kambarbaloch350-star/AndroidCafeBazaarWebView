@@ -6,10 +6,6 @@
     <string name="loading_title">لبزبند</string>
     <string name="loading_message">لیب لوڈ بوھگ ءَ ایں۔</string>
     <string name="loading_subtitle">بلوچی مئے وتی شہد ایں زبان ایں</string>
-    <string name="loading_stage_boot">راه‌اندازی سرور محلی…</string>
-    <string name="loading_stage_webview">آماده‌سازی نمایشگر وب…</string>
-    <string name="loading_stage_webapp">در انتظار آماده‌شدن برنامه…</string>
-    <string name="loading_stage_finishing">آماده‌سازی نهایی…</string>
 
     <!-- ==================== Error / retry state ==================== -->
     <string name="error_title">بارگذاری ناموفق بود</string>

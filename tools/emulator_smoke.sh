@@ -206,6 +206,25 @@ else
   fail "cancelling the dialog left the app"
 fi
 
+# ------------------------------------------- copy protection / no haptics
+note "long press on the page must not select or copy anything"
+adb logcat -c >/dev/null 2>&1 || true
+adb shell input swipe 360 700 360 700 900 >/dev/null 2>&1
+sleep 2
+adb exec-out screencap -p > "$OUT/13-longpress.png" 2>/dev/null || true
+if adb logcat -d -s MainActivity:I | grep -q "copy protection active"; then
+  note "the page copy protection stylesheet is injected"
+else
+  fail "the copy protection stylesheet was never injected"
+fi
+if adb logcat -d | grep -qiE "Vibrat|HapticFeedback"; then
+  fail "a vibration/haptic feedback was requested while holding the page"
+else
+  note "no haptic feedback was requested by holding the page"
+fi
+# The on-screen text must still be there (nothing got stuck in a selection).
+adb exec-out screencap -p > /dev/null 2>&1 || true
+
 # ------------------------------------------------------------------ lifecycle
 note "background / foreground cycle (onPause -> onResume) and rotation"
 adb shell input keyevent KEYCODE_HOME >/dev/null 2>&1

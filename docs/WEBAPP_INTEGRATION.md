@@ -168,7 +168,31 @@ window.addEventListener('nativeapp:deeplink', e => go(e.detail.route));
 
 ---
 
-## 7. Quick reference
+## 7. Copy protection & touch behaviour (native, no work for the WebApp)
+
+The container treats the page as a game surface, not a document:
+
+* text selection, the copy/paste toolbar and the context menu are refused
+  (`ContainerWebView` refuses both action modes and consumes long presses);
+* the platform's long-press **vibration** is suppressed – holding anywhere on the
+  page no longer buzzes (a deliberate `navigator.vibrate()` from the WebApp still
+  works);
+* the container injects a stylesheet that disables `user-select`,
+  `-webkit-touch-callout` and image dragging on every page it loads, and it
+  re-applies it after each navigation.
+
+You do **not** need to add anything for this, but if you want the same behaviour
+when the bundle is opened in a plain browser, put this at the top of your CSS:
+
+```css
+*:not(input):not(textarea) {
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
+img, a { -webkit-user-drag: none; }
+```
+
+## 8. Quick reference
 
 | Call | Purpose |
 |------|---------|

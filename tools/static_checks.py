@@ -177,6 +177,54 @@ def check_kotlin_references() -> None:
                 errors.append(f"{rel(path)}: missing R.id.{target}")
 
 
+# --------------------------------------------------- splash & touch surface
+def check_splash_and_touch_surface() -> None:
+    """The loading screen must be white in *every* theme, and the WebView must
+    refuse text selection / copy and the platform's long-press vibration."""
+    colors = {}
+    for folder in ("values", "values-night"):
+        path = os.path.join(RES, folder, "colors.xml")
+        if not os.path.isfile(path):
+            continue
+        for name, value in re.findall(
+                r'<color name="([^"]+)">([^<]+)</color>', open(path, encoding="utf-8").read()):
+            colors.setdefault(name, []).append((folder, value.upper()))
+
+    for name in ("loading_background_top", "loading_background_bottom",
+                 "plate_surface", "plate_surface_end"):
+        entries = colors.get(name)
+        if not entries:
+            errors.append(f"missing colour {name} (loading screen surface)")
+            continue
+        for folder, value in entries:
+            if value not in ("#FFFFFFFF", "#FFF", "#FFFFFF"):
+                errors.append(f"{folder}/colors.xml: {name} is {value}, the loading screen must stay white")
+
+    layout = open(os.path.join(RES, "layout", "activity_main.xml"), encoding="utf-8").read()
+    if "@color/white" not in layout:
+        errors.append("activity_main.xml: the loading overlay must use a plain white background")
+
+    web_view = os.path.join(JAVA, "ContainerWebView.kt")
+    if not os.path.isfile(web_view):
+        errors.append("ContainerWebView.kt is missing (copy protection / no long-press haptics)")
+    else:
+        source = open(web_view, encoding="utf-8").read()
+        for needle, why in (
+                ("performHapticFeedback", "long-press vibration suppression"),
+                ("startActionMode", "text selection / copy refusal"),
+                ("setOnLongClickListener { true }", "long press consumption")):
+            if needle not in source:
+                errors.append(f"ContainerWebView.kt: missing {why} ({needle})")
+
+    activity = open(os.path.join(JAVA, "MainActivity.kt"), encoding="utf-8").read()
+    if "ContainerWebView(this)" not in activity:
+        errors.append("MainActivity.kt: the WebView must be a ContainerWebView")
+    if "user-select" not in activity:
+        errors.append("MainActivity.kt: the injected page CSS must disable text selection")
+
+
+check_splash_and_touch_surface()
+
 # ------------------------------------------------------------------- assets
 REQUIRED_ASSETS = [
     "web/index.html",

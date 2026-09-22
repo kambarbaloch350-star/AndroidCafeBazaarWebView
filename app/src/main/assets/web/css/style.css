@@ -1,3 +1,15 @@
+/* Game surface: nothing on screen is selectable or draggable. The native
+   container enforces this too (see ContainerWebView), this is the CSS half. */
+*:not(input):not(textarea) {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+img, a { -webkit-user-drag: none; }
+
 /* =====================================================================
    Container WebApp skeleton — light-green "plate" theme, RTL, Vazirmatn.
    Replace this file (and js/app.js) with your own bundle; the container

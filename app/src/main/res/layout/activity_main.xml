@@ -85,7 +85,7 @@
         android:id="@+id/loadingOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@drawable/bg_loading_gradient"
+        android:background="@color/white"
         android:clickable="true"
         android:focusable="true"
         android:visibility="visible">
@@ -162,16 +162,6 @@
                 android:gravity="center"
                 android:text="@string/loading_message"
                 android:textAppearance="@style/TextAppearance.LoadingMessage" />
-
-            <TextView
-                android:id="@+id/loadingStage"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:fontFamily="@font/vazirmatn_regular"
-                android:gravity="center"
-                android:text="@string/loading_stage_boot"
-                android:textAppearance="@style/TextAppearance.LoadingStage" />
 
         </LinearLayout>
 
