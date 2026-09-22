@@ -58,6 +58,13 @@ class WebAppBridge(
 
         /** Opens the CafeBazaar page of this app (updates / comments). */
         fun onBridgeRequestStorePage(): Boolean
+
+        /**
+         * Permanent unlocks changed (`remove_ads` bought / restored). The
+         * container uses this to keep its own ad policy in sync; the WebApp is
+         * informed separately through `CafeBazaarBridge`.
+         */
+        fun onBridgeOwnedProductsChanged(owned: Set<String>)
     }
 
     private val activityRef = WeakReference(activity)
@@ -116,6 +123,8 @@ class WebAppBridge(
             put("pushEnabled", context != null && NajvaManager.hasNotificationPermission(context))
             put("pushToken", NajvaManager.subscribedToken() != null)
             put("adsReady", tapsellManager.isInitialized)
+            put("removeAdsOwned", billingManager.isRemoveAdsOwned())
+            put("ownedProducts", JSONObject.wrap(billingManager.ownedNonConsumables()))
         }.toString()
     }
 
@@ -280,6 +289,14 @@ class WebAppBridge(
     @JavascriptInterface
     fun isAvailable(): Boolean = safe(false) { billingManager.isBillingAvailable() }
 
+    /**
+     * True when the permanent `remove_ads` unlock is owned. Interstitials are
+     * suppressed natively in that case, so the WebApp only needs this to hide
+     * the "remove ads" offer.
+     */
+    @JavascriptInterface
+    fun isRemoveAdsOwned(): Boolean = safe(false) { billingManager.isRemoveAdsOwned() }
+
     @JavascriptInterface
     fun isBillingAvailable(): Boolean = isAvailable()
 
@@ -319,6 +336,17 @@ class WebAppBridge(
 
     override fun onConnectionStatusChanged(result: ConnectionResult) {
         dispatch("CafeBazaarBridge", "onConnectionResult", result.toJson().toString())
+    }
+
+    override fun onOwnedProductsChanged(owned: Set<String>) {
+        // Keep the native ad policy in sync with what the user actually owns.
+        tapsellManager.interstitialsSuppressed = owned.contains(CafeBazaarConfig.SKU_REMOVE_ADS)
+        post { hostListener?.onBridgeOwnedProductsChanged(owned) }
+        val payload = JSONObject().apply {
+            put("removeAdsOwned", owned.contains(CafeBazaarConfig.SKU_REMOVE_ADS))
+            put("owned", JSONObject.wrap(owned))
+        }.toString()
+        dispatch("CafeBazaarBridge", "onOwnedProductsChanged", payload, "nativeapp:ownedproducts")
     }
 
     override fun onPurchaseResult(result: PurchaseResult) {

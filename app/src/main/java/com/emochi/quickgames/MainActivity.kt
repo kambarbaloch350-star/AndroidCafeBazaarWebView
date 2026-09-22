@@ -183,7 +183,11 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         tapsellManager = TapsellManager(this).also { manager ->
             manager.initialize()
         }
-        billingManager = CafeBazaarBillingManager(this)
+        billingManager = CafeBazaarBillingManager(this).also { manager ->
+            // Apply the persisted unlock immediately so a restored purchase
+            // suppresses interstitials even before CafeBazaar answers.
+            tapsellManager?.interstitialsSuppressed = manager.isRemoveAdsOwned()
+        }
 
         // A notification tap (or external intent) may have opened this Activity.
         pendingDeepLinkRoute = DeepLinkBus.routeFromIntent(intent)
@@ -719,6 +723,11 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         height: Int
     ) {
         if (visible) showNativeAd(x, y, width, height) else hideNativeAd()
+    }
+
+    override fun onBridgeOwnedProductsChanged(owned: Set<String>) {
+        // Permanent unlock bought or restored – stop showing interstitials.
+        tapsellManager?.interstitialsSuppressed = owned.contains(CafeBazaarConfig.SKU_REMOVE_ADS)
     }
 
     override fun onBridgeRequestRating(): Boolean = openBazaar(rating = true)

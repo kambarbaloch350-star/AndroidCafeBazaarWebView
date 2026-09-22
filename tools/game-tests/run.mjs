@@ -301,6 +301,13 @@ async function runScenario(window, scenario) {
 
   for (const step of scenario.steps) {
     try {
+      if (step.setRewardGranted !== undefined) {
+        window.__harness.rewardGranted = step.setRewardGranted;
+      }
+      if (step.setOwnedPurchases) {
+        window.__harness.purchases = step.setOwnedPurchases.slice();
+        window.__harness.removeAdsOwned = step.setOwnedPurchases.includes('remove_ads');
+      }
       if (step.clearStorage) {
         window.localStorage.clear();
         await settle(100);

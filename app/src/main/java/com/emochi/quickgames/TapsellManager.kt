@@ -96,6 +96,15 @@ class TapsellManager(private val activity: Activity) {
     /** Views registered as native ad slots, keyed by slot name. */
     private val nativeSlots = HashMap<String, ViewGroup>()
 
+    /**
+     * Set by the host when the user owns the permanent `remove_ads` unlock.
+     * Interstitial requests are acknowledged but silently skipped, so the
+     * WebApp never has to know *why* no ad appeared (and can never re-enable
+     * them by accident). Rewarded videos stay available – they are opt-in.
+     */
+    @Volatile
+    var interstitialsSuppressed: Boolean = false
+
     // ------------------------------------------------------------------
     // Setup
     // ------------------------------------------------------------------
@@ -243,6 +252,13 @@ class TapsellManager(private val activity: Activity) {
      */
     @MainThread
     fun showInterstitial(): Boolean {
+        if (interstitialsSuppressed) {
+            dispatch(
+                "interstitial_skipped",
+                payload(adType = "interstitial").apply { put("reason", "REMOVE_ADS_OWNED") }
+            )
+            return true
+        }
         val activityInstance = activityRef.get() ?: return false
         val zone = TapsellConfig.ZONE_INTERSTITIAL
         if (zone.isBlank()) {

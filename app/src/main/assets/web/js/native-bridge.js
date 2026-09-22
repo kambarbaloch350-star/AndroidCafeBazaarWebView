@@ -394,6 +394,12 @@
       return true;
     },
     getPurchases: function () { return !!call('getPurchases', false); },
+    /**
+     * True when the permanent `remove_ads` unlock is owned. Interstitials are
+     * already suppressed natively in that case, so this is only needed to hide
+     * the offer.
+     */
+    isRemoveAdsOwned: function () { return !!call('isRemoveAdsOwned', false); },
 
     // ---- CafeBazaar store intents (rating / app page) ----
     /** Opens the CafeBazaar rating dialog for this app. */
@@ -431,6 +437,12 @@
 
     onPurchasesQueryResult: function (result) {
       window.dispatchEvent(new CustomEvent('cafebazaar:purchases', { detail: parse(result, {}) }));
+    },
+
+    /** Fired when the set of permanent unlocks changes (bought / restored). */
+    onOwnedProductsChanged: function (result) {
+      var data = parse(result, {});
+      window.dispatchEvent(new CustomEvent('cafebazaar:ownedproducts', { detail: data }));
     }
   };
 
@@ -451,6 +463,9 @@
   });
   window.addEventListener('nativeapp:ready', function (e) {
     if (e && e.detail) appEmitter.emit('container:ready', e.detail);
+  });
+  window.addEventListener('nativeapp:ownedproducts', function (e) {
+    if (e && e.detail) appEmitter.emit('ownedproducts', e.detail);
   });
 
   if (document.readyState === 'loading') {

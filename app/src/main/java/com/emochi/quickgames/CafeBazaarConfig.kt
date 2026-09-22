@@ -54,6 +54,15 @@ object CafeBazaarConfig {
     fun isNonConsumable(sku: String): Boolean = sku == SKU_REMOVE_ADS
 
     /**
+     * The permanent unlocks inside a raw purchase list.
+     *
+     * The container stores exactly this set, and a non-empty intersection with
+     * [SKU_REMOVE_ADS] is what suppresses interstitial ads.
+     */
+    fun permanentUnlocks(productIds: Iterable<String>): Set<String> =
+        productIds.filter { isNonConsumable(it) }.toSet()
+
+    /**
      * Coin amounts awarded for each SKU.
      */
     fun getCoinsForSku(sku: String): Int {
