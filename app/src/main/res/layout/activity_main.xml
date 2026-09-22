@@ -101,56 +101,58 @@
             android:paddingStart="32dp"
             android:paddingEnd="32dp">
 
-            <!-- App logo: small, centred on the white loading screen, with a slim
-                 progress ring around it. -->
-            <FrameLayout
-                android:layout_width="104dp"
-                android:layout_height="104dp">
-
-                <ProgressBar
-                    android:id="@+id/loadingSpinner"
-                    style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="104dp"
-                    android:layout_height="104dp"
-                    android:layout_gravity="center"
-                    android:indeterminate="true"
-                    android:indeterminateTint="@color/loading_spinner"
-                    android:progressTint="@color/loading_spinner"
-                    android:progressBackgroundTint="@color/loading_spinner_track" />
-
-                <ImageView
-                    android:layout_width="80dp"
-                    android:layout_height="80dp"
-                    android:layout_gravity="center"
-                    android:contentDescription="@string/app_name"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/logo_labzband" />
-            </FrameLayout>
+            <!-- App logo: small and centred on the white loading screen. -->
+            <ImageView
+                android:layout_width="88dp"
+                android:layout_height="88dp"
+                android:contentDescription="@string/app_name"
+                android:scaleType="fitCenter"
+                android:src="@drawable/logo_labzband" />
 
             <TextView
                 android:id="@+id/loadingTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
+                android:layout_marginTop="20dp"
                 android:fontFamily="@font/vazirmatn_bold"
                 android:text="@string/loading_title"
                 android:textAppearance="@style/TextAppearance.LoadingTitle" />
+
+            <!-- Tagline – always visible, it is not a boot status. -->
+            <TextView
+                android:id="@+id/loadingSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="@font/vazirmatn_medium"
+                android:gravity="center"
+                android:text="@string/loading_subtitle"
+                android:textAppearance="@style/TextAppearance.LoadingSubtitle" />
 
             <TextView
                 android:id="@+id/loadingMessage"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="18dp"
                 android:fontFamily="@font/vazirmatn_regular"
                 android:gravity="center"
                 android:text="@string/loading_message"
                 android:textAppearance="@style/TextAppearance.LoadingMessage" />
 
+            <ProgressBar
+                android:id="@+id/loadingSpinner"
+                style="?android:attr/progressBarStyle"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginTop="16dp"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/loading_spinner" />
+
             <TextView
                 android:id="@+id/loadingStage"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="10dp"
                 android:fontFamily="@font/vazirmatn_medium"
                 android:gravity="center"
                 android:text="@string/loading_stage_boot"

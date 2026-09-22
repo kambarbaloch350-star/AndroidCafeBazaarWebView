@@ -30,6 +30,11 @@
         <item name="android:textStyle">bold</item>
     </style>
 
+    <style name="TextAppearance.LoadingSubtitle" parent="TextAppearance.MaterialComponents.Body1">
+        <item name="android:textColor">@color/loading_stage</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
     <style name="TextAppearance.LoadingMessage" parent="TextAppearance.MaterialComponents.Subtitle1">
         <item name="android:textColor">@color/loading_message</item>
         <item name="android:textSize">17sp</item>

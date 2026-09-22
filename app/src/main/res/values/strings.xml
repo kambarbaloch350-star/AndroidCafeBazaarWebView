@@ -5,7 +5,8 @@
     <!-- ==================== Native loading screen ==================== -->
     <string name="loading_title">لبزبند</string>
     <string name="loading_message">لیب لوڈ بوھگ ءَ ایں۔</string>
-    <string name="loading_stage_boot">اولی بلوچی لیب پہ بکوچ راج ءَ</string>
+    <string name="loading_subtitle">اولی بلوچی لیب پہ بکوچ راج ءَ</string>
+    <string name="loading_stage_boot">راه‌اندازی سرور محلی…</string>
     <string name="loading_stage_webview">آماده‌سازی نمایشگر وب…</string>
     <string name="loading_stage_webapp">در انتظار آماده‌شدن برنامه…</string>
     <string name="loading_stage_finishing">آماده‌سازی نهایی…</string>
