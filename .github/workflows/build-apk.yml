@@ -102,7 +102,16 @@ jobs:
       # assets/web bundle and assert routing, MIME types, gzip, ETag and SPA
       # fallback, so a broken WebApp bundle cannot reach an APK.
       - name: Unit tests (embedded HTTP server + MIME table)
-        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace --no-daemon 2>&1 | tee build.log
+
+      # Compiler/test diagnostics are re-printed as GitHub annotations. They are
+      # readable through the checks API even when the raw job log cannot be
+      # downloaded, which is what makes a red build self-explanatory.
+      - name: Surface test failures as annotations
+        if: failure()
+        run: python3 tools/ci_annotate.py build.log
 
       - name: Publish unit test report
         if: always()
@@ -115,10 +124,18 @@ jobs:
           if-no-files-found: warn
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee -a build.log
 
       - name: Build release APK (R8 / resource shrinking enabled)
-        run: ./gradlew assembleRelease --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee -a build.log
+
+      - name: Surface build failures as annotations
+        if: failure()
+        run: python3 tools/ci_annotate.py build.log
 
       # Real verification of the produced artifact: the WebApp bundle must be
       # packaged, every font/resource must resolve and the removed advertising

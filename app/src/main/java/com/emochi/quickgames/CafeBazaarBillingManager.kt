@@ -114,10 +114,11 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     fun isBillingAvailable(): Boolean = isConnected
 
     /** True when the user bought the permanent "remove ads" unlock. */
-    fun isRemoveAdsOwned(): Boolean = safe { ownedProducts.contains(CafeBazaarConfig.SKU_REMOVE_ADS) }
+    fun isRemoveAdsOwned(): Boolean =
+        safe(false) { ownedProducts.contains(CafeBazaarConfig.SKU_REMOVE_ADS) }
 
     /** Snapshot of every owned non-consumable product. */
-    fun ownedNonConsumables(): Set<String> = safe { HashSet(ownedProducts) }
+    fun ownedNonConsumables(): Set<String> = safe(emptySet<String>()) { HashSet(ownedProducts) }
 
     private fun markOwned(productId: String) {
         if (!CafeBazaarConfig.isNonConsumable(productId)) return
