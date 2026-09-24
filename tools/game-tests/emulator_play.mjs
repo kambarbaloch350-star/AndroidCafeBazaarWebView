@@ -31,9 +31,9 @@
  * Exit code 1 when a check fails; every check is printed as PASS/FAIL.
  */
 import {
-  adbQuiet, argValue, bodyText, clickText, connectPage, createReporter, js, logMarker, logcatSince,
+  adbQuiet, argValue, bodyText, connectPage, createReporter, js, logMarker, logcatSince,
   MENU_LABELS, pageErrors, readSave, reloadPage, screenshot as shot, seedChistan, sleep,
-  waitForMenu, waitForText, waitFor as waitForSel, waitForCondition
+  tapText, waitForMenu, waitForText, waitFor as waitForSel, waitForCondition
 } from './emulator_lib.mjs';
 
 const PKG = argValue('--pkg', 'com.chistan.quickgames');
@@ -44,7 +44,10 @@ const reporter = createReporter('play');
 const { note, pass, fail, check } = reporter;
 const screenshot = name => shot(OUT, name);
 const waitFor = (cdp, selector, timeoutMs, label) => waitForSel(cdp, selector, timeoutMs, label, reporter);
-const tap = (cdp, text, timeoutMs = 25000) => clickText(text).then(expr => cdp.evaluate(expr));
+// `clickText()` is the serialized page-side snippet (a string, not a promise),
+// so it always goes through `cdp.evaluate()` – `tapText()` does exactly that and
+// reports the failure with the page text when the label is not there.
+const tap = (cdp, text, timeoutMs = 25000) => tapText(cdp, text, timeoutMs, reporter);
 
 const SHIM = js`(function () {
   if (window.__playShim) return window.__playShim.mode;

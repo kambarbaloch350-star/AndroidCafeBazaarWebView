@@ -889,6 +889,42 @@ def check_bridge_contract() -> None:
                           "container answers 'Method not found'")
 
 
+def check_emulator_scripts() -> None:
+    """The emulator self tests must use the shared helpers correctly.
+
+    `tools/game-tests/emulator_lib.mjs` mixes two kinds of helpers:
+    page-side snippets (`clickText`, `hasText`) that are *strings* and have to be
+    handed to `cdp.evaluate()`, and real promises (`waitForText`, `tapText`,
+    `readSave`). Calling `.then()` on a snippet – or importing a name the library
+    does not export – only shows up in CI, on the emulator, as an aborted
+    scenario (`TypeError: clickText(...).then is not a function`, which silently
+    cost the play-through its four levels and the persistence run its progress).
+    """
+    tests = os.path.join(ROOT, "tools", "game-tests")
+    library = os.path.join(tests, "emulator_lib.mjs")
+    if not os.path.isfile(library):
+        errors.append("tools/game-tests/emulator_lib.mjs is missing")
+        return
+    source = open(library, encoding="utf-8", errors="ignore").read()
+    exported = set(re.findall(r"export\s+(?:async\s+)?(?:function|const|let)\s+([A-Za-z_$][\w$]*)", source))
+    for name in sorted(glob.glob(os.path.join(tests, "emulator_*.mjs"))):
+        text = open(name, encoding="utf-8", errors="ignore").read()
+        imports = re.search(r"import\s*\{([^}]*)\}\s*from\s*'\./emulator_lib\.mjs'", text)
+        if imports:
+            for entry in imports.group(1).split(","):
+                # `screenshot as shot` imports `screenshot`
+                identifier = re.split(r"\s+as\s+", entry.strip())[0]
+                if not identifier:
+                    continue
+                if identifier not in exported:
+                    errors.append(f"{rel(name)}: imports {identifier} which emulator_lib.mjs "
+                                  "does not export")
+        for helper in ("clickText", "hasText"):
+            if re.search(rf"\b{helper}\s*\([^;]*?\)\s*\.", text):
+                errors.append(f"{rel(name)}: {helper}() returns a page-side snippet (a string), "
+                              "not a promise – hand it to cdp.evaluate() instead of chaining on it")
+
+
 def check_game_patches_and_contact() -> None:
     """Product changes that live in the packaged game and the container.
 
@@ -1062,6 +1098,7 @@ def main() -> int:
     check_webview_baseline()
     check_loading_plate()
     check_bridge_contract()
+    check_emulator_scripts()
 
     for warning in warnings:
         print(f"WARN  {warning}")
