@@ -32,8 +32,8 @@
  */
 import {
   adbQuiet, argValue, bodyText, clickText, connectPage, createReporter, js, logMarker, logcatSince,
-  pageErrors, readSave, reloadPage, SAVE_KEY, screenshot as shot, seedChistan, sleep,
-  waitForText, waitFor as waitForSel, waitForCondition
+  MENU_LABELS, pageErrors, readSave, reloadPage, screenshot as shot, seedChistan, sleep,
+  waitForMenu, waitForText, waitFor as waitForSel, waitForCondition
 } from './emulator_lib.mjs';
 
 const PKG = argValue('--pkg', 'com.chistan.quickgames');
@@ -104,16 +104,18 @@ const WIN_DIALOG = 'چیستان گشوده شد';
  * level was completed.
  */
 async function playLevel(cdp, index) {
-  const enter = ['مرحله بعدی', 'شروع بازی', 'بازی'];
   let entered = false;
-  for (const label of enter) {
-    if (await waitForText(cdp, label, index === 1 ? 30000 : 8000, `"${label}" (level ${index})`)) {
+  for (const label of ['مرحله بعدی', ...MENU_LABELS]) {
+    if (await waitForText(cdp, label, index === 1 ? 30000 : 8000)) {
       await tap(cdp, label);
       entered = true;
       break;
     }
   }
-  if (!entered) return false;
+  if (!entered) {
+    reporter.fail(`no way to enter level ${index} (menu or next-level button)`, await bodyText(cdp));
+    return false;
+  }
   if (!await waitForText(cdp, 'رد کردن', 20000, `the level ${index} board`, reporter)) return false;
   await tap(cdp, 'رد کردن');
   return await waitForText(cdp, WIN_DIALOG, 20000, `the win dialog of level ${index}`, reporter);
@@ -135,8 +137,12 @@ async function main() {
   // 1. a fresh save game + a page reload inside the running WebView
   await seedChistan(cdp, { completions: 0, coins: 500 });
   await reloadPage(cdp, 3000);
-  if (!await waitForText(cdp, 'شروع بازی', 40000, 'the main menu (after reload)', reporter)) return;
-  pass('the game reloads with the seeded save and shows the main menu');
+  const menu = await waitForMenu(cdp, 40000, 'the main menu (after reload)');
+  if (!menu) {
+    fail('the main menu (after reload) did not appear within 40000 ms', await bodyText(cdp));
+    return;
+  }
+  pass(`the game reloads with the seeded save and shows the main menu ("${menu}")`);
   await waitForCondition(cdp, 'document.documentElement.hasAttribute("data-native-tier")', 8000);
   const tier = await cdp.evaluate('document.documentElement.getAttribute("data-native-tier") || ""');
   check(tier !== '', `the container applied its rendering profile (data-native-tier="${tier}")`);

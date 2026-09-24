@@ -294,6 +294,28 @@ export async function clickUntil(cdp, selector, until, { max = 40, every = 160 }
 // ---------------------------------------------------------------------------
 // ChistanSara game helpers (text driven – the packaged UI has no stable ids)
 // ---------------------------------------------------------------------------
+/**
+ * Main-menu labels of the game. The play/resume button reads «شروع بازی» on a
+ * fresh save and «ادامه بازی» once there is progress, so both must be accepted.
+ */
+export const MENU_LABELS = ['ادامه بازی', 'شروع بازی'];
+/** The label that advances to the next level inside the win dialog. */
+export const NEXT_LEVEL_LABEL = 'مرحله بعدی';
+
+/** Waits for the main menu (either play/resume label). */
+export async function waitForMenu(cdp, timeoutMs, label = 'the main menu') {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const text of MENU_LABELS) {
+      let found = false;
+      try { found = await cdp.evaluate(hasText(text)); } catch { /* navigating */ }
+      if (found) return text;
+    }
+    await sleep(300);
+  }
+  return null;
+}
+
 /** The game's save key; the native mirror uses the same key. */
 export const SAVE_KEY = 'chistansara_game_save_v2';
 /** Legacy key of the labzband build – kept so a stale install still reads. */

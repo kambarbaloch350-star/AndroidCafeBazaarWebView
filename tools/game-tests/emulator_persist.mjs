@@ -19,8 +19,8 @@
  * Exit code 1 when a check fails; every check is printed as PASS/FAIL.
  */
 import {
-  adbQuiet, argValue, bodyText, clickText, connectPage, createReporter, js, readSave, reloadPage,
-  SAVE_KEY, screenshot as shot, sleep, waitForText
+  adbQuiet, argValue, bodyText, clickText, connectPage, createReporter, js, MENU_LABELS, readSave,
+  reloadPage, SAVE_KEY, screenshot as shot, sleep, waitForMenu, waitForText
 } from './emulator_lib.mjs';
 
 const PKG = argValue('--pkg', 'com.chistan.quickgames');
@@ -38,7 +38,7 @@ async function tapText(cdp, text, timeoutMs = 20000) {
 
 /** Plays one level (شروع بازی / مرحله بعدی → رد کردن → win dialog). */
 async function playLevel(cdp) {
-  for (const label of ['مرحله بعدی', 'شروع بازی']) {
+  for (const label of ['مرحله بعدی', ...MENU_LABELS]) {
     if (await waitForText(cdp, label, 8000)) { await tapText(cdp, label); break; }
   }
   if (!await waitForText(cdp, 'رد کردن', 20000)) return false;
@@ -46,8 +46,8 @@ async function playLevel(cdp) {
   return waitForText(cdp, 'چیستان گشوده شد', 20000);
 }
 
-async function mainMenu(cdp, timeoutMs, label) {
-  return waitForText(cdp, 'شروع بازی', timeoutMs) || waitForText(cdp, 'مرحله بعدی', 1000);
+async function mainMenu(cdp, timeoutMs = 60000) {
+  return !!(await waitForMenu(cdp, timeoutMs));
 }
 
 async function relaunch() {
@@ -57,13 +57,13 @@ async function relaunch() {
   check(alive === '', 'force-stop killed the process', `pid ${alive}`);
   adbQuiet('shell', 'am', 'start', '-n', `${PKG}/.MainActivity`);
   const cdp = await connectPage(PKG, PORT, note);
-  const booted = await mainMenu(cdp, 60000, 'the main menu after the relaunch');
+  const booted = await mainMenu(cdp, 60000);
   return { cdp, booted };
 }
 
 async function main() {
   let cdp = await connectPage(PKG, PORT, note);
-  if (!await mainMenu(cdp, 60000, 'the game')) {
+  if (!await mainMenu(cdp, 60000)) {
     fail('the game did not appear', await bodyText(cdp));
     return;
   }
@@ -109,7 +109,7 @@ async function main() {
     return true;
   })()`);
   await sleep(2000);
-  const restoredMenu = await mainMenu(cdp, 60000, 'the main menu after wiping the web copy');
+  const restoredMenu = await mainMenu(cdp, 60000);
   const restored = await readSave(cdp);
   note(`after wiping localStorage + reload: ${JSON.stringify(restored)}`);
   screenshot('32-persist-restored-from-mirror');
