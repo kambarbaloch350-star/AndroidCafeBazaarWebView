@@ -524,7 +524,9 @@ def check_gradle() -> None:
             ("TAPSELL_APP_KEY", r"^TAPSELL_APP_KEY=\S+$"),
             ("TAPSELL_ZONE_INTERSTITIAL", r"^TAPSELL_ZONE_INTERSTITIAL=[0-9a-f]{24}$"),
             ("TAPSELL_ZONE_REWARDED", r"^TAPSELL_ZONE_REWARDED=[0-9a-f]{24}$"),
-            ("TAPSELL_ZONE_NATIVE", r"^TAPSELL_ZONE_NATIVE=[0-9a-f]{24}$"),
+            # Empty is a valid answer for the native banner: the app then reports
+            # NOT_AVAILABLE instead of requesting an ad no zone can serve.
+            ("TAPSELL_ZONE_NATIVE", r"^TAPSELL_ZONE_NATIVE=([0-9a-f]{24})?$"),
             ("PUSHFA_API_PUBLIC_KEY", r"^PUSHFA_API_PUBLIC_KEY=\S+$")):
         if not re.search(pattern, props, re.M):
             errors.append(f"gradle.properties: {key} is not set to a valid value")
@@ -810,19 +812,47 @@ def check_game_patches_and_contact() -> None:
         errors.append("emulator_smoke.sh must run the force-stop persistence check (emulator_persist.mjs)")
 
 
-def check_cafebazaar_key() -> None:
-    """CAFEBAZAAR_PUBLIC_KEY must be the console's RSA public key.
+def check_native_identifiers() -> None:
+    """The production identifiers must reach BuildConfig, and the keys must be valid.
 
-    Purchases are reported to the game as `verified` only when Poolakey can
-    check the signature with this key; a typo (truncated base64, wrong key)
-    silently means "charged but never credited". The value must decode to a
-    DER SubjectPublicKeyInfo carrying rsaEncryption (1.2.840.113549.1.1.1).
+    * Tapsell: app key + interstitial/rewarded zones are the *client* identifiers
+      of the app, committed in `gradle.properties` (BuildConfig only, never the
+      WebApp). The app must not ship without them: `TapsellManager` would report
+      NOT_CONFIGURED and the game would never show an ad.
+    * CafeBazaar: the RSA public key is what makes a purchase "verified"; a typo
+      (truncated base64, key of another app) silently means "charged but never
+      credited". The committed default lives in `CafeBazaarConfig.kt`, with a
+      `CAFEBAZAAR_RSA_KEY` override wired through `app/build.gradle.kts`.
     """
+    # ---- Tapsell: the committed app key must be a real key (a Tapsell Plus app
+    # key is a 64-72 character lowercase token) and must differ from the CI test
+    # key, otherwise a release APK would request Tapsell's test inventory.
+    properties = open(os.path.join(ROOT, "gradle.properties"), encoding="utf-8").read()
+    app_key = (re.search(r"^TAPSELL_APP_KEY=(\S+)$", properties, re.M) or [None, ""])[1].strip()
+    if app_key and not re.fullmatch(r"[a-z0-9]{48,96}", app_key):
+        errors.append(f"gradle.properties: TAPSELL_APP_KEY does not look like a Tapsell Plus app key "
+                      f"({len(app_key)} chars)")
+    gradle = open(os.path.join(ROOT, "app", "build.gradle.kts"), encoding="utf-8").read()
+    if app_key and app_key in gradle:
+        errors.append("app/build.gradle.kts: the production Tapsell app key is duplicated in the "
+                      "smoke-test key map – keep them separate")
+    tapsell = open(os.path.join(JAVA, "TapsellManager.kt"), encoding="utf-8").read()
+    if 'Tapsell zones configured: ' not in tapsell:
+        errors.append("TapsellManager.kt must log which zones are configured (one line per boot) – "
+                      "otherwise a key-less build fails ad requests silently")
+    if "cfg(\"CAFEBAZAAR_RSA_KEY\")" not in gradle:
+        errors.append("app/build.gradle.kts: CAFEBAZAAR_RSA_KEY must be a buildConfigField "
+                      "(so the key can be rotated from a secret)")
+
+    # ---- CafeBazaar RSA public key
     import base64
     src = open(os.path.join(JAVA, "CafeBazaarConfig.kt"), encoding="utf-8").read()
-    m = re.search(r'CAFEBAZAAR_PUBLIC_KEY\s*=\s*"([^"]*)"', src)
+    if "BuildConfig.CAFEBAZAAR_RSA_KEY" not in src:
+        errors.append("CafeBazaarConfig.kt: CAFEBAZAAR_PUBLIC_KEY must fall back to the "
+                      "CAFEBAZAAR_RSA_KEY build config value")
+    m = re.search(r'DEFAULT_CAFEBAZAAR_PUBLIC_KEY\s*=\s*\s*"([^"]*)"', src)
     if not m:
-        errors.append("CafeBazaarConfig.kt: CAFEBAZAAR_PUBLIC_KEY not found")
+        errors.append("CafeBazaarConfig.kt: DEFAULT_CAFEBAZAAR_PUBLIC_KEY not found")
         return
     key = m.group(1)
     if not key or key.startswith("YOUR_"):
@@ -849,7 +879,7 @@ def check_cafebazaar_key() -> None:
 
 
 def main() -> int:
-    check_cafebazaar_key()
+    check_native_identifiers()
     check_xml_files()
     check_xml_references()
     check_kotlin_references()

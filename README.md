@@ -157,12 +157,19 @@ committed defaults in `gradle.properties`:
 
 ```properties
 # gradle.properties (committed defaults – public-side identifiers only)
-TAPSELL_APP_KEY=tkonjgrn…jjtddh          # Tapsell Plus app key
-TAPSELL_ZONE_INTERSTITIAL=6ab339cee237e15c69fbab2b   # «بنر آنی» (interstitial)
-TAPSELL_ZONE_REWARDED=6ab339c3da860d2c9f00cfa9       # rewarded video
-TAPSELL_ZONE_NATIVE=6ab339d96da4b558f3901bc1         # «بنر همسان» (native banner)
-PUSHFA_API_PUBLIC_KEY=0820…b328aa        # Pushfa api_public_key (never the private key)
+TAPSELL_APP_KEY=lrifjqgk…frskom          # Tapsell Plus app key (چیستان‌سرا)
+TAPSELL_ZONE_INTERSTITIAL=6ab55ea8f9c3d5797ba49cdc   # «بنر آنی» (interstitial)
+TAPSELL_ZONE_REWARDED=6ab55ec4f9c3d5797ba49cdd       # rewarded video
+TAPSELL_ZONE_NATIVE=                      # blank: no native zone in the panel
+CAFEBAZAAR_RSA_KEY=MIHNMA0G…AwEAAQ==      # CafeBazaar panel RSA *public* key
+PUSHFA_API_PUBLIC_KEY=PUZFaFHr…kQdE8R    # Pushfa api_public_key (never the private key)
 ```
+
+Every one of these is a *client* identifier: it ships inside the APK by design (the Tapsell app key
+and zones are what the SDK sends with an ad request, the CafeBazaar key only *verifies* purchase
+signatures). None of them ever reaches the WebApp. They are committed so that a plain
+`./gradlew assembleRelease` already produces an ad-serving, purchase-verifying APK; rotate any of
+them from a repository secret or `local.properties` without touching the code.
 
 Override any of them per machine or per CI run without touching the repository:
 
@@ -182,17 +189,33 @@ container keeps working (`./gradlew assembleRelease` succeeds with an empty conf
 
 ### CafeBazaar billing – release checklist
 
-* `CafeBazaarConfig.kt` → `CAFEBAZAAR_PUBLIC_KEY` must hold the RSA public key of **this**
-  app from the CafeBazaar developer console. Purchases are reported to the game with
+* `CafeBazaarConfig.kt` → `DEFAULT_CAFEBAZAAR_PUBLIC_KEY` holds the RSA public key of **this**
+  app from the CafeBazaar developer console (the live value is `CAFEBAZAAR_PUBLIC_KEY`, which a
+  `CAFEBAZAAR_RSA_KEY` property/secret can override). `tools/static_checks.py` fails the build
+  when the value is not a well-formed RSA SubjectPublicKeyInfo. Purchases are reported to the game with
   `verified: true` only when Poolakey validated the signature with that key; the game credits
   coins **only for verified purchases**, so with a wrong/empty key every paid pack would be
   charged but never credited.
-* Create the SKUs the game sells as *consumable* in-app products in the console, at the
-  prices the game displays (1 coin = 50 tomans, no bonus coins, no discounts):
-  `pack_starter` 200 coins = 10,000, `pack_popular` 1,000 = 50,000, `pack_super` 2,500 = 125,000,
-  `pack_royal` 5,000 = 250,000, `pack_vault` 10,000 = 500,000 tomans (the game consumes them
-  itself after crediting); **`remove_ads` as a non-consumable at 20,000 tomans** – the store row
-  and the level-complete "حذف تبلیغات" button sell it (`docs/GAME_PATCHES.md`).
+* Create the SKUs the game sells in the console, at exactly the prices the game displays
+  (1 coin = 50 tomans, no bonus coins, no discounts). The game's store rows and the panel must
+  match, otherwise the panel price shown by Bazaar differs from the label (`docs/GAME_PATCHES.md`
+  is the source of truth for the labels):
+
+  | SKU | coins | price (toman) | type |
+  |-----|------:|--------------:|------|
+  | `pack_starter` | 200 | 10,000 | consumable |
+  | `chistan_pack_500` | 500 | 25,000 | consumable |
+  | `pack_popular` | 1,000 | 50,000 | consumable |
+  | `chistan_pack_1500` | 1,500 | 75,000 | consumable |
+  | `pack_super` | 2,500 | 125,000 | consumable |
+  | `chistan_pack_4000` | 4,000 | 200,000 | consumable |
+  | `pack_royal` | 5,000 | 250,000 | consumable |
+  | `pack_vault` | 10,000 | 500,000 | consumable |
+  | `remove_ads` | — | 20,000 | **non-consumable** |
+
+  The consumable packs are consumed by the app after crediting (so they can be bought again);
+  `remove_ads` is never consumed – the store row and the level-complete "حذف تبلیغات" button sell
+  it, and the container remembers the entitlement.
 * Test with a Bazaar test account before release – the emulator has no Bazaar client, the
   jsdom harness covers the game side of the flow (`tools/game-tests/chistan_scenarios.json`).
 
@@ -247,6 +270,12 @@ instead of publishing an artifact. Add these repository secrets
 | `ANDROID_KEYSTORE_PASSWORD` | keystore password |
 | `ANDROID_KEY_ALIAS` | key alias inside the keystore |
 | `ANDROID_KEY_PASSWORD` | *optional* – key password when it differs from the store password |
+| `TAPSELL_APP_KEY` | *optional* – overrides the committed Tapsell app key |
+| `TAPSELL_ZONE_INTERSTITIAL` / `TAPSELL_ZONE_REWARDED` / `TAPSELL_ZONE_NATIVE` | *optional* – ad zones |
+| `CAFEBAZAAR_RSA_KEY` | *optional* – overrides the committed CafeBazaar public key |
+| `PUSHFA_API_PUBLIC_KEY` | *optional* – overrides the committed Pushfa public key |
+| `FIREBASE_APP_ID` / `FIREBASE_API_KEY` / `FIREBASE_PROJECT_ID` / `FIREBASE_SENDER_ID` | *optional* – FCM + Firestore identifiers (or commit `app/google-services.json`) |
+| `GOOGLE_SERVICES_JSON` | *optional* – full `google-services.json` content, written to `app/google-services.json` |
 
 The release APK goes to Telegram and nowhere else – **it is never uploaded as a build
 artifact**, not even when the send fails (a failed send fails the job; re-run it to rebuild and

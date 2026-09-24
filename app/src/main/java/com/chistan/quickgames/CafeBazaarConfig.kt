@@ -10,7 +10,20 @@ package com.chistan.quickgames
 object CafeBazaarConfig {
     const val APP_ID = "com.chistan.quickgames"
 
-    const val CAFEBAZAAR_PUBLIC_KEY = "MIHNMA0GCSqGSIb3DQEBAQUAA4G7ADCBtwKBrwCisMYaxsGwUIp+gtmYcbD1ihXL2RDHiBZ+cOryrNSm3P0ZWOo940sAHt4u0rpnczII9skRyNLUu0ej3I7bg4LqZxbSqQlI4jwWIa2sifCCOlmAidv6glbvXi1K6qugBog4wSyvRzbFgD56NYjobIPU+QmY7zyfAjGKM4KZvGbCVo7FcSLrYPFwQayDBngEsDTD1f6nrK3XHPovAX6cdnDp+k1UQBpm8A1IIL2+xAMCAwEAAQ=="
+    /**
+     * Default CafeBazaar RSA public key of this app's panel (چیستان / 50 toman
+     * per coin). Public by definition – it ships inside the APK and only ever
+     * *verifies* signatures. The effective value is [CAFEBAZAAR_PUBLIC_KEY]
+     * below, which a `CAFEBAZAAR_RSA_KEY` Gradle property / `local.properties`
+     * entry / environment variable can override (CI does, from a secret), so the
+     * key can be rotated without touching the code.
+     */
+    const val DEFAULT_CAFEBAZAAR_PUBLIC_KEY =
+        "MIHNMA0GCSqGSIb3DQEBAQUAA4G7ADCBtwKBrwD01GtiSUl/Cxd7paLKwJ0vdKvao0QAGNgJ83gp38R8O5bq4j3R6VPP2fFTYWg7zgl0tsqvws9ruOPk3XqRxQu5H6x+dCpGeRz+AMVIocG/qrw5+7YmJqL3yByuox7xR/ZW5XwBFytJMHF0gIG3Wrh8iVpO0pb7gJMGG/Meau0/QqMCyGalz7ujk1A+Blorqqcg5mCtZrpePx/J1lquqOmhtGg8YihxJzLqvcoCm3kCAwEAAQ=="
+
+    /** Effective key: the build-time override when set, the committed default otherwise. */
+    val CAFEBAZAAR_PUBLIC_KEY: String =
+        BuildConfig.CAFEBAZAAR_RSA_KEY.trim().ifEmpty { DEFAULT_CAFEBAZAAR_PUBLIC_KEY }
 
     // ---- Legacy labzband SKUs (kept for restore) ----
     const val SKU_COIN_PACK_250   = "coin_pack_250"

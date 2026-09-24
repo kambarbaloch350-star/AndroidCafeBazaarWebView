@@ -89,6 +89,26 @@ patching) is corrected where it used the bridge wrongly:
   `AndroidBridge` consumer, and the packaged WebApp must be parseable by the
   container's WebView baseline (`check_webview_baseline`).
 
+### Production identifiers
+
+* Tapsell (چیستان‌سرا): app key `lrifjqgk…frskom`, interstitial zone
+  `6ab55ea8f9c3d5797ba49cdc`, rewarded zone `6ab55ec4f9c3d5797ba49cdd`. The app has
+  no native banner zone, so `TAPSELL_ZONE_NATIVE` is deliberately empty: the
+  container answers `NATIVE_NOT_CONFIGURED` instead of requesting an ad from
+  another app's zone. `TapsellManager` now logs which zones a build can serve
+  (`Tapsell zones configured: interstitial, rewarded`) – the line that tells a
+  released APK apart from one built without the keys.
+* CafeBazaar RSA public key of the panel is committed as
+  `CafeBazaarConfig.DEFAULT_CAFEBAZAAR_PUBLIC_KEY` and can be rotated without a
+  code change through the `CAFEBAZAAR_RSA_KEY` property/`local.properties` entry
+  (CI wires it from the secret of the same name). `static_checks.py` verifies it
+  decodes to an RSA SubjectPublicKeyInfo instead of a truncated paste.
+* All of these are *client* identifiers (they ship inside the APK by design) and
+  none of them is ever exposed to the WebApp. The CI test keys of the ad lab stay
+  separate from the production ones (checked by `static_checks.py`), the secret
+  overrides remain available for rotation, and README §3 lists the whole
+  precedence chain plus the exact SKU table the CafeBazaar panel must match.
+
 ### WebView baseline – what the first CI run on this branch exposed
 
 The build job went green and the APK reached Telegram on the first run, but both

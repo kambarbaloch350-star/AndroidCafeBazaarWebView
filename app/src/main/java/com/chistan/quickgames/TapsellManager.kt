@@ -186,6 +186,16 @@ class TapsellManager(private val activity: Activity) {
         }
         if (!initializing.compareAndSet(false, true)) return
 
+        // One actionable line per boot: which ad formats this build can actually
+        // request. `./gradlew assembleRelease` without the production identifiers
+        // (see gradle.properties / README §3) still builds, but every ad request
+        // would end in *_NOT_CONFIGURED – this is the line that says so.
+        val configuredZones = mutableListOf<String>()
+        if (TapsellConfig.hasInterstitial) configuredZones.add("interstitial")
+        if (TapsellConfig.hasRewarded) configuredZones.add("rewarded")
+        if (TapsellConfig.hasNative) configuredZones.add("native")
+        val zoneSummary = if (configuredZones.isEmpty()) "none" else configuredZones.joinToString(", ")
+        Log.i(TAG, "Tapsell zones configured: $zoneSummary")
         runCatching {
             TapsellPlus.setDebugMode(if (TapsellConfig.isDebug) Log.DEBUG else Log.ERROR)
             TapsellPlus.initialize(activityInstance, TapsellConfig.APP_KEY,

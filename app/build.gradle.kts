@@ -140,6 +140,14 @@ android {
         buildConfigField("String", "TAPSELL_ZONE_NATIVE", quoted(sdkKey("TAPSELL_ZONE_NATIVE")))
 
         // ---- Pushfa (native push) - public key only, never the private one ----
+        // CafeBazaar public RSA key: `local.properties`/secret override first
+        // (CI rotates it without a code change), committed default otherwise.
+        buildConfigField(
+            "String",
+            "CAFEBAZAAR_RSA_KEY",
+            quoted(cfg("CAFEBAZAAR_RSA_KEY"))
+        )
+
         buildConfigField("String", "PUSHFA_API_PUBLIC_KEY", quoted(sdkKey("PUSHFA_API_PUBLIC_KEY")))
 
         // ---- Firebase (optional: allows FCM to run without google-services.json) ----
