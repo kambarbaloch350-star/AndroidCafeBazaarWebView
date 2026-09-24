@@ -728,6 +728,24 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         /** Time allowed for the initial document load. */
         private const val PAGE_LOAD_TIMEOUT_MS = 30_000L
 
+
+        /**
+         * Safety net for a WebApp that renders but never announces readiness.
+         *
+         * The plate must follow the *page*, not a single call: \`index.html\` is not
+         * always able to run (a bundle the device's WebView cannot parse, a broken
+         * script, a WebApp that only paints its own splash and never reaches
+         * \`appReady()\`). In every one of those cases the player would otherwise
+         * stare at «در حال بارگذاری بازی…» until the watchdog replaces it with an
+         * error. As soon as the page has real content, the plate is lifted – the
+         * app prefers a playable game over a perfect handshake.
+         */
+        private const val CONTENT_PROBE_DELAY_MS = 2_500L
+        private const val CONTENT_PROBE_INTERVAL_MS = 1_000L
+        private const val CONTENT_PROBE_ATTEMPTS = 12
+        /** Minimum visible text the probe accepts as "the WebApp really rendered". */
+        private const val CONTENT_PROBE_MIN_TEXT = 24
+
         /** Time the WebApp has to report readiness after the page finished. */
         private const val APP_READY_TIMEOUT_MS = 45_000L
 
@@ -1835,8 +1853,8 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
         override fun onProgressChanged(view: WebView?, newProgress: Int) {
             super.onProgressChanged(view, newProgress)
-            if (newProgress in 1..99 && !isWebAppReady && !isBootFailed) {
-            }
+            // Progress no longer drives the plate: the readiness handshake does,
+            // with the content probe below as the safety net.
         }
 
         override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
@@ -2287,6 +2305,8 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private fun showErrorState(message: String) {
         if (isBootFailed) return
         isBootFailed = true
+        // Cancels the app-ready watchdog and the content probe together: an error
+        // state must not be replaced by a late probe.
         handler.removeCallbacksAndMessages(null)
         stopLoadingAnimations()
 
@@ -2333,6 +2353,72 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private fun onDocumentLoaded(token: Int) {
         if (isWebAppReady || isBootFailed) return
         handler.postDelayed({ onAppReadyTimeout(token) }, APP_READY_TIMEOUT_MS)
+        handler.postDelayed({ probeRenderedContent(token, 1) }, CONTENT_PROBE_DELAY_MS)
+    }
+
+    /**
+     * Lifts the loading plate once the page has visibly rendered, even when the
+     * WebApp never calls \`appReady()\`.
+     *
+     * Rationale: the handshake is the WebApp's job (\`native-bridge.js\` sends it,
+     * see \`docs/WEBAPP_INTEGRATION.md\`), but a WebApp is code that can fail to
+     * execute – a syntax level the device's WebView does not understand, a broken
+     * asset, an exception before its first paint. Failing *silently behind the
+     * plate* is the one unacceptable outcome: the game must not be unreachable
+     * because a status call was missed. The probe therefore checks what the user
+     * can already see (\`#root\` has children and the body has visible text) and
+     * finishes the boot, with a warning in logcat so the miss stays diagnosable.
+     */
+    private fun probeRenderedContent(token: Int, attempt: Int) {
+        if (token != bootToken || isWebAppReady || isBootFailed) return
+        val view = webView ?: return
+        val script = """
+            (function () {
+              try {
+                var body = document.body;
+                if (!body) return '0|0|ready=' + document.readyState;
+                var roots = ['root', 'app', 'game'], mounted = 0;
+                for (var i = 0; i < roots.length; i++) {
+                  var node = document.getElementById(roots[i]);
+                  if (node) mounted += node.childElementCount;
+                }
+                var text = String(body.innerText || '').trim().length;
+                return mounted + '|' + text + '|ready=' + document.readyState;
+              } catch (e) { return '0|0|error=' + e.message; }
+            })();
+        """.trimIndent()
+        runCatching {
+            view.evaluateJavascript(script) { raw ->
+                if (webView !== view || token != bootToken || isWebAppReady || isBootFailed) {
+                    return@evaluateJavascript
+                }
+                val value = raw?.trim()?.trim('"').orEmpty()
+                val parts = value.split('|')
+                val children = parts.getOrNull(0)?.toIntOrNull() ?: 0
+                val text = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                // \`mounted\` is the gate that keeps a WebView error page (no
+                // \`#root\`/\`#app\`/\`#game\`) on the error path: only a page that is
+                // really our document can be "rendered".
+                val rendered = children > 0 && (text >= CONTENT_PROBE_MIN_TEXT || children >= 4)
+                if (rendered) {
+                    Log.w(
+                        TAG,
+                        "The WebApp never announced readiness – lifting the loading plate for " +
+                            "rendered content (mounted=$children, text=$text, attempt=$attempt)"
+                    )
+                    onWebAppReady()
+                    return@evaluateJavascript
+                }
+                if (attempt < CONTENT_PROBE_ATTEMPTS) {
+                    handler.postDelayed(
+                        { probeRenderedContent(token, attempt + 1) },
+                        CONTENT_PROBE_INTERVAL_MS
+                    )
+                } else {
+                    Log.w(TAG, "The page is still empty after $attempt probes ($value)")
+                }
+            }
+        }.onFailure { Log.w(TAG, "Content probe failed: \${it.message}") }
     }
 
     private fun onPageLoadTimeout(token: Int) {
@@ -10834,13 +10920,17 @@ CI (\`.github/workflows/build-apk.yml\`) runs on every push:
    compat layer and the syntax baseline are exercised for real: the packaged chunk must be
    parseable by it, \`tools/static_checks.py\` fails the build otherwise), boots it and verifies the
    runtime contract (server up
-   → WebView on \`127.0.0.1\` → readiness handshake → no crash, no bridge thread violation, exit
+   → WebView on \`127.0.0.1\` → readiness handshake *or* the container's
+   rendered-content probe → no crash, no bridge thread violation, exit
    dialog, copy protection, night mode, rotation, activity switch, **progress survives a
    force stop** – stable loopback origin + native state mirror), then
-   \`tools/game-tests/emulator_play.mjs\` drives the real game over the DevTools protocol:
-   levels 1–2, interstitial request, a foreign Activity covering the app like an ad,
-   \`interstitial_closed\`, level 3 — no reload, no renderer loss, no JS exception. Screenshots
-   are published as commit comments.
+   \`tools/game-tests/emulator_play.mjs\` drives the real game over the DevTools protocol by its
+   Persian labels (شروع بازی → رد کردن → مرحله بعدی): three levels with no interstitial for the
+   first two and exactly one after the third, then a foreign Activity covering the app like an ad,
+   \`interstitial_closed\`, level 4 playable — no reload, no renderer loss, no JS exception.
+   \`tools/game-tests/emulator_persist.mjs\` then force-stops the app and checks the save game
+   survives it (and that the native mirror alone restores it). Screenshots are published as
+   commit comments.
 5. \`Emulator ad lab\` — a second APK built with \`-PSMOKE_TEST_BUILD=true -PSMOKE_TEST_ADS=true\`
    (Tapsell's **official test** app key / zones, push blanked) on an API 34 emulator.
    \`tools/game-tests/ad_lab.mjs\` plays the game into a **real** Tapsell test interstitial –

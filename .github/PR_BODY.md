@@ -115,6 +115,19 @@ report showed an empty page (only the container's own `<div id="root">`), with
   facade-only path is covered by four new harness checks that boot the page
   **without the game's scripts** (readiness, native save mirror, ads/billing
   startup, no page errors).
+* The loading plate no longer depends on a single call: `MainActivity` probes the
+  DOM 2.5 s after `onPageFinished` (12 attempts, once a second) and lifts the plate
+  with a warning as soon as the page has rendered into `#root`/`#app`/`#game` – a
+  WebView error page (no mount point) keeps the Persian error plate and its retry
+  button. `static_checks.py` (`check_loading_plate`) fails if either path is
+  removed. The emulator tests were rewritten for the current game (the old ones
+  still clicked the labzband ids `#btn-game-play-giant` / `#word-connect-wheel` and
+  read `labzband_progress_v4`, so they reported failures even when the game booted
+  fine): `emulator_play.mjs` now plays three levels by their Persian labels
+  (شروع بازی → رد کردن → مرحله بعدی), asserts *no* interstitial for the first two
+  completed levels and exactly one after the third, simulates the full-screen ad,
+  and checks level 4; `emulator_persist.mjs` uses the real save key
+  (`chistansara_game_save_v2`).
 * The emulator report no longer hides the cause: the smoke script prints the page
   console the container mirrors into logcat (`WebApp` tag, including uncaught JS
   errors) and the WebView's parse/URL errors, and tells the reader what a

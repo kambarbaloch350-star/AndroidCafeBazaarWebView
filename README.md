@@ -278,13 +278,17 @@ CI (`.github/workflows/build-apk.yml`) runs on every push:
    compat layer and the syntax baseline are exercised for real: the packaged chunk must be
    parseable by it, `tools/static_checks.py` fails the build otherwise), boots it and verifies the
    runtime contract (server up
-   → WebView on `127.0.0.1` → readiness handshake → no crash, no bridge thread violation, exit
+   → WebView on `127.0.0.1` → readiness handshake *or* the container's
+   rendered-content probe → no crash, no bridge thread violation, exit
    dialog, copy protection, night mode, rotation, activity switch, **progress survives a
    force stop** – stable loopback origin + native state mirror), then
-   `tools/game-tests/emulator_play.mjs` drives the real game over the DevTools protocol:
-   levels 1–2, interstitial request, a foreign Activity covering the app like an ad,
-   `interstitial_closed`, level 3 — no reload, no renderer loss, no JS exception. Screenshots
-   are published as commit comments.
+   `tools/game-tests/emulator_play.mjs` drives the real game over the DevTools protocol by its
+   Persian labels (شروع بازی → رد کردن → مرحله بعدی): three levels with no interstitial for the
+   first two and exactly one after the third, then a foreign Activity covering the app like an ad,
+   `interstitial_closed`, level 4 playable — no reload, no renderer loss, no JS exception.
+   `tools/game-tests/emulator_persist.mjs` then force-stops the app and checks the save game
+   survives it (and that the native mirror alone restores it). Screenshots are published as
+   commit comments.
 5. `Emulator ad lab` — a second APK built with `-PSMOKE_TEST_BUILD=true -PSMOKE_TEST_ADS=true`
    (Tapsell's **official test** app key / zones, push blanked) on an API 34 emulator.
    `tools/game-tests/ad_lab.mjs` plays the game into a **real** Tapsell test interstitial –

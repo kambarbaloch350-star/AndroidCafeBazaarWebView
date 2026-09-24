@@ -653,6 +653,46 @@ BASELINE_RUNTIME_APIS = (
 )
 
 
+def check_loading_plate() -> None:
+    """The loading plate must never be able to keep the game unreachable.
+
+    Two independent paths lift it, and both are required:
+
+      * the readiness handshake (`AndroidBridge.appReady()`), sent by the facade
+        – registered at the *top* of `native-bridge.js`, before any of its
+        namespaces exist, so it is sent even when the game never runs;
+      * the container's content probe (`MainActivity.probeRenderedContent`) –
+        a page that has visibly rendered (`#root`/`#app`/`#game` has children)
+        finishes the boot with a warning instead of leaving the player on
+        «در حال بارگذاری بازی…».
+    """
+    activity = open(os.path.join(JAVA, "MainActivity.kt"), encoding="utf-8").read()
+    for needle, what in (
+            ("probeRenderedContent", "the rendered-content probe (loading plate safety net)"),
+            ("CONTENT_PROBE_MIN_TEXT", "the probe's minimum-text constant"),
+            ("CONTENT_PROBE_ATTEMPTS", "the probe's retry bound")):
+        if needle not in activity:
+            errors.append(f"MainActivity.kt must keep {what} – a WebApp that renders but never "
+                          "calls appReady() would otherwise sit on the loading plate")
+    if "onDocumentLoaded" in activity and "probeRenderedContent(token, 1)" not in activity:
+        errors.append("MainActivity.kt: onDocumentLoaded must arm the rendered-content probe")
+    if 'lifting the loading plate for ' not in activity:
+        errors.append("MainActivity.kt: the content probe must log why it lifted the plate")
+
+    facade = open(os.path.join(ROOT, "app", "src", "main", "assets", "web", "native-bridge.js"),
+                  encoding="utf-8").read()
+    if "function announceReady()" not in facade:
+        errors.append("native-bridge.js must announce readiness itself (function announceReady)")
+    if "function scheduleReady(" not in facade:
+        errors.append("native-bridge.js must schedule the readiness handshake (scheduleReady)")
+    announce = facade.find("scheduleReady(1000)")
+    namespaces = facade.find("window.NativeApp = {")
+    if announce < 0 or namespaces < 0 or announce > namespaces:
+        errors.append("native-bridge.js must register the readiness handshake before it builds its "
+                      "namespaces (the game must not be able to break it)")
+
+
+
 def check_webview_baseline() -> None:
     """The packaged WebApp must run on the container's Chromium 83 baseline."""
     web = os.path.join(ROOT, "app", "src", "main", "assets", "web")
@@ -821,6 +861,7 @@ def main() -> int:
     check_ad_resilience()
     check_game_patches_and_contact()
     check_webview_baseline()
+    check_loading_plate()
 
     for warning in warnings:
         print(f"WARN  {warning}")

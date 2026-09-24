@@ -175,6 +175,13 @@ container's `window.AndroidBridge` object; the game talks to the facade:
 * `tools/game-tests/run.mjs` boots the page **without the game's scripts** and
   asserts the facade still announces readiness, installs the save mirror and keeps
   ads/billing running – the regression test for the failure above.
+* The container does not rely on the handshake alone: `MainActivity` runs a
+  **content probe** (`probeRenderedContent`, 2.5 s after `onPageFinished`, every
+  second, up to 12 attempts) and lifts the plate with a warning as soon as the page
+  has really rendered (`#root`/`#app`/`#game` has children and the body has text).
+  A WebView error page has no mount point and stays on the error path, so the
+  Persian error plate with its retry button is still shown when nothing rendered.
+  `tools/static_checks.py` (`check_loading_plate`) fails if either path disappears.
 
 ### Tests
 

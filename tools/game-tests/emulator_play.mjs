@@ -2,34 +2,41 @@
 /**
  * Plays the packaged game inside the installed debug APK, on the emulator,
  * over the Chrome DevTools Protocol – and re-enacts the bug that was reported
- * in production ("after the first interstitial the buttons flash and the
- * screen goes white"):
+ * in production ("after the first interstitial the buttons flash and the screen
+ * goes white"), against the *current* game (چیستان‌سرا):
  *
- *   1. seed a rich save game and reload the page in the running WebView,
- *   2. finish level 1 (no interstitial may be requested yet),
- *   3. finish level 2 -> the game asks the container for an interstitial,
+ *   1. seed a fresh save game and reload the page in the running WebView,
+ *   2. play three levels (شروع بازی → رد کردن → مرحله بعدی …),
+ *   3. no interstitial may be requested for the first two completed levels; the
+ *      third must produce exactly one request (the cadence lives in
+ *      `native-bridge.js`: every 3 completed levels),
  *   4. simulate the full-screen ad: another Activity covers the app for a few
  *      seconds (the container goes through onPause/onStop/onStart/onResume,
  *      exactly like with a served Tapsell ad), then the app comes back,
  *   5. deliver `interstitial_shown` / `interstitial_closed` through the same
  *      two channels WebAppBridge.onAdEvent uses,
- *   6. the level-complete overlay must appear and level 3 must be playable,
- *      without a page reload, renderer loss or uncaught JavaScript error.
+ *   6. the level-complete overlay must still be there and level 4 must be
+ *      playable, without a page reload, renderer loss or uncaught JavaScript
+ *      error.
  *
  * The ad request itself is intercepted at the `window.AndroidBridge` boundary
  * (a Proxy in the page), so the scenario runs with the smoke-test build that
  * has no Tapsell keys and never depends on live ad inventory. The round trip
  * with a *real* (test) interstitial is `ad_lab.mjs`.
  *
+ * The game's UI carries no stable element ids, so everything is driven by the
+ * visible Persian labels (the same labels the jsdom contract uses).
+ *
  * Usage: node tools/game-tests/emulator_play.mjs [--pkg <id>] [--out <dir>] [--port <n>]
  * Exit code 1 when a check fails; every check is printed as PASS/FAIL.
  */
 import {
-  adbQuiet, argValue, clickUntil, connectPage, createReporter, js, logMarker, logcatSince,
-  pageErrors, PROGRESS_KEY, screenshot as shot, seedAndReload, sleep, waitFor as waitForSel, waitForCondition
+  adbQuiet, argValue, bodyText, clickText, connectPage, createReporter, js, logMarker, logcatSince,
+  pageErrors, readSave, reloadPage, SAVE_KEY, screenshot as shot, seedChistan, sleep,
+  waitForText, waitFor as waitForSel, waitForCondition
 } from './emulator_lib.mjs';
 
-const PKG = argValue('--pkg', 'com.labzband.balochafzar');
+const PKG = argValue('--pkg', 'com.chistan.quickgames');
 const OUT = argValue('--out', 'ci-artifacts');
 const PORT = Number(argValue('--port', '9223'));
 
@@ -37,6 +44,7 @@ const reporter = createReporter('play');
 const { note, pass, fail, check } = reporter;
 const screenshot = name => shot(OUT, name);
 const waitFor = (cdp, selector, timeoutMs, label) => waitForSel(cdp, selector, timeoutMs, label, reporter);
+const tap = (cdp, text, timeoutMs = 25000) => clickText(text).then(expr => cdp.evaluate(expr));
 
 const SHIM = js`(function () {
   if (window.__playShim) return window.__playShim.mode;
@@ -88,6 +96,33 @@ const DELIVER = js`(function () {
   return true;
 })()`;
 
+const WIN_DIALOG = 'چیستان گشوده شد';
+
+/**
+ * Plays one level: advances to the board (whatever button is offered), reveals
+ * the answer with «رد کردن» and waits for the win dialog. Returns true when the
+ * level was completed.
+ */
+async function playLevel(cdp, index) {
+  const enter = ['مرحله بعدی', 'شروع بازی', 'بازی'];
+  let entered = false;
+  for (const label of enter) {
+    if (await waitForText(cdp, label, index === 1 ? 30000 : 8000, `"${label}" (level ${index})`)) {
+      await tap(cdp, label);
+      entered = true;
+      break;
+    }
+  }
+  if (!entered) return false;
+  if (!await waitForText(cdp, 'رد کردن', 20000, `the level ${index} board`, reporter)) return false;
+  await tap(cdp, 'رد کردن');
+  return await waitForText(cdp, WIN_DIALOG, 20000, `the win dialog of level ${index}`, reporter);
+}
+
+async function requests(cdp) {
+  return Number(await cdp.evaluate('window.__playShim ? window.__playShim.requests : -1'));
+}
+
 async function main() {
   note(`looking for the WebView devtools target of ${PKG}`);
   const cdp = await connectPage(PKG, PORT, note);
@@ -97,85 +132,81 @@ async function main() {
   check(await cdp.evaluate('!!window.AndroidBridge && !!window.NativeApp && !!window.NativeAds'),
     'the page sees AndroidBridge, NativeApp and NativeAds');
 
-  // 1. rich save game + reload inside the running WebView
-  await seedAndReload(cdp);
-  if (!await waitFor(cdp, '#btn-game-play-giant', 30000, 'the main menu (after reload)')) return;
-  pass('the game reloads with the seeded progress and shows the main menu');
+  // 1. a fresh save game + a page reload inside the running WebView
+  await seedChistan(cdp, { completions: 0, coins: 500 });
+  await reloadPage(cdp, 3000);
+  if (!await waitForText(cdp, 'شروع بازی', 40000, 'the main menu (after reload)', reporter)) return;
+  pass('the game reloads with the seeded save and shows the main menu');
   await waitForCondition(cdp, 'document.documentElement.hasAttribute("data-native-tier")', 8000);
   const tier = await cdp.evaluate('document.documentElement.getAttribute("data-native-tier") || ""');
   check(tier !== '', `the container applied its rendering profile (data-native-tier="${tier}")`);
   const compat = await cdp.evaluate('document.documentElement.getAttribute("data-native-compat") || ""');
   check(compat !== '', `the container's compat layer ran before the bundle (data-native-compat="${compat}")`);
-  const bg = await cdp.evaluate('getComputedStyle(document.body).backgroundColor');
-  note(`page background: ${bg}`);
+  const lang = await cdp.evaluate('document.documentElement.getAttribute("lang") || ""');
+  const dir = await cdp.evaluate('document.documentElement.getAttribute("dir") || ""');
+  check(lang === 'fa' && dir === 'rtl', `the WebApp is Persian right-to-left (lang=${lang} dir=${dir})`);
 
-  // 2. intercept interstitial requests
+  // 2. intercept interstitial requests at the bridge boundary
   const mode = await cdp.evaluate(SHIM);
   check(mode === 'bridge-proxy' || mode === 'facade', `interstitial requests are intercepted (${mode})`);
   await cdp.evaluate('window.__playMarker = "alive"; true');
 
-  // 3. level 1
-  await cdp.evaluate('document.querySelector("#btn-game-play-giant").click(); true');
-  if (!await waitFor(cdp, '#word-connect-wheel', 15000, 'the level 1 board')) return;
-  let r = await clickUntil(cdp, '#btn-wheel-hint', '#level-complete-overlay');
-  check(r.reached, `level 1 completes with hints (${r.clicks} taps)`, JSON.stringify(r) + ' ' + pageErrors(cdp));
-  check(!r.adRequested && await cdp.evaluate('window.__playShim.requests') === 0,
-    'no interstitial is requested after the first level');
-  screenshot('20-play-level1-complete');
-  if (!r.reached) {
-    fail('cannot continue without a completed level 1', await cdp.evaluate('document.body.innerText.slice(0, 300)'));
-    return;
+  // 3. three levels: no ad for the first two, exactly one after the third
+  for (let level = 1; level <= 3; level++) {
+    const done = await playLevel(cdp, level);
+    check(done, `level ${level} completes (رد کردن → win dialog)`, await bodyText(cdp));
+    if (!done) {
+      screenshot(`20-play-level${level}-stuck`);
+      fail('cannot continue without a completed level', await bodyText(cdp));
+      return;
+    }
+    const seen = await requests(cdp);
+    if (level < 3) {
+      check(seen === 0, `no interstitial is requested after ${level} completed level(s)`, `requests=${seen}`);
+    } else {
+      if (!await waitForCondition(cdp, 'window.__playShim.requests === 1', 8000)) {
+        check(false, 'the game asks for an interstitial after the third level',
+          `requests=${await requests(cdp)} ${pageErrors(cdp)}`);
+        return;
+      }
+      pass('the game asks for exactly one interstitial after the third level');
+    }
+    screenshot(`2${level}-play-level${level}-complete`);
   }
+  check(await requests(cdp) === 1, `exactly one interstitial was requested (${await requests(cdp)})`);
 
-  // 4. level 2 -> interstitial request
-  await cdp.evaluate('document.querySelector("#btn-next-level").click(); true');
-  if (!await waitFor(cdp, '#word-connect-wheel', 15000, 'the level 2 board')) return;
-  r = await clickUntil(cdp, '#btn-wheel-hint', '#level-complete-overlay');
-  const requested = r.adRequested || await waitForCondition(cdp, 'window.__playShim.pending === true', 5000);
-  check(requested, `the game asks for an interstitial after the second level (${r.clicks} taps)`, JSON.stringify(r) + ' ' + pageErrors(cdp));
-  check(!await cdp.evaluate('!!document.querySelector("#level-complete-overlay")'),
-    'the level-complete overlay waits for the ad to close');
-  screenshot('21-play-ad-requested');
-
-  // 5. simulate the full-screen ad activity
+  // 4. simulate the full-screen ad: another Activity covers the app
   logMarker('SmokePlay', 'play-ad-begin');
   note('simulating the ad: another Activity covers the app for 6 s');
   adbQuiet('shell', 'am', 'start', '-a', 'android.settings.SETTINGS');
   await sleep(6000);
-  screenshot('22-play-ad-foreign-activity');
+  screenshot('24-play-ad-foreign-activity');
   adbQuiet('shell', 'am', 'start', '-n', `${PKG}/.MainActivity`);
   await sleep(2500);
-  screenshot('23-play-back-from-ad');
+  screenshot('25-play-back-from-ad');
 
   const alive = await cdp.evaluate('window.__playMarker === "alive"');
   check(alive, 'the page survived the activity switch without a reload');
   const foreground = adbQuiet('shell', 'dumpsys', 'activity', 'activities').includes(`${PKG}/.MainActivity`);
   check(foreground, 'the app is back in the foreground');
 
-  // 6. the container reports the ad as closed
+  // 5. the container reports the ad as closed
   const t0 = Date.now();
   await cdp.evaluate(DELIVER);
-  const overlay = await waitFor(cdp, '#level-complete-overlay', 10000, 'the level-complete overlay (after the ad)');
+  const overlay = await waitForText(cdp, WIN_DIALOG, 12000, `the win dialog after the ad`, reporter);
   if (overlay) pass(`the game resumed ${Date.now() - t0} ms after interstitial_closed`);
-  screenshot('24-play-after-ad-overlay');
-  const requests = await cdp.evaluate('window.__playShim.requests');
-  check(requests === 1, `exactly one interstitial was requested (${requests})`);
+  screenshot('26-play-after-ad');
 
-  // 7. keep playing
-  if (overlay) {
-    await cdp.evaluate('document.querySelector("#btn-next-level").click(); true');
-    if (await waitFor(cdp, '#word-connect-wheel', 15000, 'the level 3 board')) {
-      r = await clickUntil(cdp, '#btn-wheel-hint', '#level-complete-overlay');
-      check(r.reached, `level 3 is playable after the ad (${r.clicks} taps)`, JSON.stringify(r) + ' ' + pageErrors(cdp));
-      screenshot('25-play-level3-complete');
-      const completions = await cdp.evaluate(js`(function () {
-        try { return JSON.parse(localStorage.getItem(${JSON.stringify(PROGRESS_KEY)})).completions; } catch (e) { return -1; }
-      })()`);
-      check(completions === 3, `progress was saved (completions=${completions})`);
-    }
-  }
+  // 6. keep playing: level 4 must be playable and the progress must be saved
+  const level4 = await playLevel(cdp, 4);
+  check(level4, 'level 4 is playable after the ad', await bodyText(cdp));
+  screenshot('27-play-level4-complete');
+  const save = await readSave(cdp);
+  note(`save after the play-through: ${JSON.stringify(save)}`);
+  check(save.completions === 4, `progress was saved (completions=${save.completions})`);
+  check(await requests(cdp) === 1, `still exactly one interstitial was requested (${await requests(cdp)})`);
 
-  // 8. health of the run
+  // 7. health of the run
   const log = logcatSince('play-ad-begin');
   check(!/Render process gone|rebuilding the WebView|renderer crash/i.test(log),
     'the renderer stayed alive through the ad');

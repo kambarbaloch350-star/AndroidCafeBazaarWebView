@@ -32,7 +32,11 @@ window.AndroidBridge.appReady();   // or: window.NativeApp.appReady()
 ```
 
 If it never arrives the container shows its error/retry state instead of
-revealing a half-drawn game. The call is idempotent and the bundled
+revealing a half-drawn game – *unless* the page has visibly rendered: 2.5 s after
+the document finished, the container probes the DOM and lifts the plate (with a
+warning in logcat) as soon as `#root`, `#app` or `#game` has children and the body
+has text. Mount your app into one of those ids so the safety net can recognise it.
+The call is idempotent and the bundled
 `native-bridge.js` **already announces readiness on its own** – about a second
 after the document is ready, again on `DOMContentLoaded`/`load`, with bounded
 retries while the bridge is unreachable – because the container's plate and its

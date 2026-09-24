@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
  * Re-enacts the reported bug "I reached level 4, force-stopped the app and it
- * started again from level 1" on the emulator, against the installed APK:
+ * started again from level 1" on the emulator, against the installed APK
+ * (چیستان‌سرا):
  *
- *   1. read the game's saved progress from the running WebView (the
- *      play-through left it at completions=3; when the app is fresh, one
- *      level is played first),
- *   2. `am force-stop` – the hard kill the user performs from Settings – then
- *      a cold relaunch,
+ *   1. read the game's saved progress from the running WebView (when the app is
+ *      fresh, one level is played first so there is something to lose),
+ *   2. `am force-stop` – the hard kill the user performs from Settings – then a
+ *      cold relaunch,
  *   3. the game must come back on the SAME origin (stable loopback port) with
  *      the SAME progress,
  *   4. the native state mirror alone must be able to restore the progress:
@@ -19,36 +19,35 @@
  * Exit code 1 when a check fails; every check is printed as PASS/FAIL.
  */
 import {
-  adbQuiet, argValue, clickUntil, connectPage, createReporter, js, PROGRESS_KEY, screenshot as shot,
-  sleep, waitFor as waitForSel
+  adbQuiet, argValue, bodyText, clickText, connectPage, createReporter, js, readSave, reloadPage,
+  SAVE_KEY, screenshot as shot, sleep, waitForText
 } from './emulator_lib.mjs';
 
-const PKG = argValue('--pkg', 'com.labzband.balochafzar');
+const PKG = argValue('--pkg', 'com.chistan.quickgames');
 const OUT = argValue('--out', 'ci-artifacts');
 const PORT = Number(argValue('--port', '9224'));
 
 const reporter = createReporter('persist');
 const { note, pass, fail, check } = reporter;
 const screenshot = name => shot(OUT, name);
-const waitFor = (cdp, selector, timeoutMs, label) => waitForSel(cdp, selector, timeoutMs, label, reporter);
 
-const READ_PROGRESS = js`(function () {
-  var out = { port: location.port, origin: location.origin, completions: -1, unlocked: [], current: -1, savedAt: null, mirror: null, info: null };
-  try {
-    var raw = localStorage.getItem(${JSON.stringify(PROGRESS_KEY)});
-    if (raw) { var p = JSON.parse(raw); out.completions = p.completions; out.unlocked = p.unlockedLevels; out.current = p.currentLevelNumber; }
-    out.savedAt = localStorage.getItem(${JSON.stringify(PROGRESS_KEY + ':savedAt')});
-  } catch (e) { out.error = String(e); }
-  try {
-    var m = window.NativeApp && window.NativeApp.loadState ? window.NativeApp.loadState(${JSON.stringify(PROGRESS_KEY)}) : null;
-    if (m && m.value) { var q = JSON.parse(m.value); out.mirror = { completions: q.completions, savedAt: m.savedAt }; }
-  } catch (e) { out.mirrorError = String(e); }
-  try { var i = window.NativeApp.getInfo(); out.info = { serverPort: i.serverPort, stableOrigin: i.stableOrigin, stateMirror: i.stateMirror }; } catch (e) {}
-  return out;
-})()`;
+async function tapText(cdp, text, timeoutMs = 20000) {
+  if (!await waitForText(cdp, text, timeoutMs)) return false;
+  return !!(await cdp.evaluate(clickText(text)));
+}
 
-async function readProgress(cdp) {
-  return cdp.evaluate(READ_PROGRESS);
+/** Plays one level (شروع بازی / مرحله بعدی → رد کردن → win dialog). */
+async function playLevel(cdp) {
+  for (const label of ['مرحله بعدی', 'شروع بازی']) {
+    if (await waitForText(cdp, label, 8000)) { await tapText(cdp, label); break; }
+  }
+  if (!await waitForText(cdp, 'رد کردن', 20000)) return false;
+  await tapText(cdp, 'رد کردن');
+  return waitForText(cdp, 'چیستان گشوده شد', 20000);
+}
+
+async function mainMenu(cdp, timeoutMs, label) {
+  return waitForText(cdp, 'شروع بازی', timeoutMs) || waitForText(cdp, 'مرحله بعدی', 1000);
 }
 
 async function relaunch() {
@@ -58,28 +57,25 @@ async function relaunch() {
   check(alive === '', 'force-stop killed the process', `pid ${alive}`);
   adbQuiet('shell', 'am', 'start', '-n', `${PKG}/.MainActivity`);
   const cdp = await connectPage(PKG, PORT, note);
-  const booted = await waitFor(cdp, '#btn-game-play-giant', 60000, 'the main menu after the relaunch');
+  const booted = await mainMenu(cdp, 60000, 'the main menu after the relaunch');
   return { cdp, booted };
 }
 
 async function main() {
   let cdp = await connectPage(PKG, PORT, note);
-  await waitFor(cdp, '#btn-game-play-giant, #btn-wheel-hint, #level-complete-overlay', 60000, 'the game');
+  if (!await mainMenu(cdp, 60000, 'the game')) {
+    fail('the game did not appear', await bodyText(cdp));
+    return;
+  }
 
   // 1. a save game with real progress
-  let before = await readProgress(cdp);
+  let before = await readSave(cdp);
   note(`before: ${JSON.stringify(before)}`);
   if (before.completions < 1) {
     note('no progress yet – playing one level first');
-    if (await cdp.evaluate('!!document.querySelector("#btn-game-play-giant")')) {
-      await cdp.evaluate('document.querySelector("#btn-game-play-giant").click(); true');
-    }
-    if (await waitFor(cdp, '#btn-wheel-hint', 15000, 'the level board')) {
-      const r = await clickUntil(cdp, '#btn-wheel-hint', '#level-complete-overlay');
-      check(r.reached, `level completed with hints (${r.clicks} taps)`, JSON.stringify(r));
-    }
+    check(await playLevel(cdp), 'a level was completed so there is progress to lose', await bodyText(cdp));
     await sleep(800);
-    before = await readProgress(cdp);
+    before = await readSave(cdp);
     note(`before (after playing): ${JSON.stringify(before)}`);
   }
   check(before.completions >= 1, `progress exists before the force stop (completions=${before.completions})`);
@@ -93,29 +89,31 @@ async function main() {
   // 2./3. force stop -> cold start -> same origin, same progress
   const first = await relaunch();
   cdp = first.cdp;
-  const after = await readProgress(cdp);
+  const after = await readSave(cdp);
   note(`after force stop: ${JSON.stringify(after)}`);
   screenshot('31-persist-after-force-stop');
-  check(first.booted, 'the game boots after the force stop');
+  check(first.booted, 'the game boots after the force stop', await bodyText(cdp));
   check(after.port === before.port, `the origin port is unchanged (${before.port} -> ${after.port})`);
   check(after.completions === before.completions,
     `progress survived the force stop (completions ${before.completions} -> ${after.completions})`, JSON.stringify(after));
-  check(Array.isArray(after.unlocked) && after.unlocked.includes(before.completions + 1),
-    `the next level is still unlocked (${JSON.stringify(after.unlocked)})`);
+  if (before.current >= 0) {
+    check(after.current === before.current,
+      `the player is still on the same level (${before.current} -> ${after.current})`);
+  }
 
   // 4. the mirror alone restores the progress (simulates a lost/changed origin)
   await cdp.evaluate(js`(function () {
-    localStorage.removeItem(${JSON.stringify(PROGRESS_KEY)});
-    localStorage.removeItem(${JSON.stringify(PROGRESS_KEY + ':savedAt')});
+    localStorage.removeItem(${JSON.stringify(SAVE_KEY)});
+    localStorage.removeItem(${JSON.stringify(SAVE_KEY + ':savedAt')});
     setTimeout(function () { location.reload(); }, 50);
     return true;
   })()`);
-  await sleep(1500);
-  const restoredMenu = await waitFor(cdp, '#btn-game-play-giant', 60000, 'the main menu after wiping the web copy');
-  const restored = await readProgress(cdp);
+  await sleep(2000);
+  const restoredMenu = await mainMenu(cdp, 60000, 'the main menu after wiping the web copy');
+  const restored = await readSave(cdp);
   note(`after wiping localStorage + reload: ${JSON.stringify(restored)}`);
   screenshot('32-persist-restored-from-mirror');
-  check(restoredMenu, 'the game boots after its web copy was wiped');
+  check(restoredMenu, 'the game boots after its web copy was wiped', await bodyText(cdp));
   check(restored.completions === before.completions,
     `the native mirror restored the progress (completions=${restored.completions})`, JSON.stringify(restored));
   check(restored.savedAt !== null, 'the restored save game was written back to localStorage with its stamp');
