@@ -1,235 +1,466 @@
 #!/usr/bin/env python3
 """
-Patches for چیستان‌سرا (ChistanSara) built bundle.
-- Fair economy: 30 coins per level (was 20), hint costs 60/100/150 (was 100/150/250)
-- Real store prices: 1 coin = 50 toman, no fake free, show toman prices
-- Interstitial every 3 levels (was no ads or every 2)
-- Integrate CafeBazaar billing
-- Add remove_ads product
+Patches for the packaged چیستان‌سرا (ChistanSara) bundle.
+
+The game ships as a *built* Vite/React bundle (`app/src/main/assets/web/assets/
+index-*.js`), its source lives outside this repository. Product changes and
+bridge-usage fixes are therefore applied here, as exact anchored string edits,
+and covered by the jsdom contract tests (`tools/game-tests/chistan_scenarios.json`).
+
+Fair economy / store / billing (as before):
+  * level reward 20 → 30 coins (+10 streak bonus),
+  * hint costs 100/150/250/250 → 60/100/150/150,
+  * the four fake free packs → nine priced SKUs (1 coin = 50 tomans, toman
+    display, `sku` mapped to CafeBazaar, `remove_ads` at 20,000 tomans),
+  * store purchases go through `CafeBazaar.purchase(sku)` and credit only
+    `success && verified` results; a stray `CafeBazaar.consume()` of the
+    permanent, non-consumable `remove_ads` unlock is removed (it erased the
+    entitlement), while coin packs keep consuming their token so they can be
+    bought again.
+
+Bridge usage fixes (this round):
+  * the interstitial cadence lives in `native-bridge.js` alone: the facade fires
+    on the save mirror, checks that `remove_ads` is not owned and de-dupes the
+    completed-level count. The level-complete handler used to ask for an ad
+    itself *and* through `ChistanBridge.showInterstitialIfNeeded()`, i.e. two
+    requests (plus a third once the save was mirrored) for a single level,
+  * the ×3 coin bonus is credited into the game's own state (`chistan:coins`
+    listener) instead of a raw `localStorage` write that the game's save effect
+    overwrote on the next state change,
+  * the rewarded video in the coin store actually credits its promised 150 coins
+    (`onAddCoins`) after `rewardGranted === true`.
+
+Every patch is described by the text it must produce plus the variants it may
+replace, so the script is idempotent on the shipped bundle and fails loudly when
+a new game build changes the code it targets. `--check` is a CI guard: it exits
+non-zero when a patch is neither applied nor applicable, or when one of the
+invariants below does not hold.
+
+Syntax floor (new): the WebView baseline is Chromium 83 – the CI emulator runs it
+on purpose and `assets/native/compat.js` polyfills that generation's *runtime*
+APIs. Syntax cannot be polyfilled, so the ES2021 logical assignments emitted by
+Vite/React 19 (`a ??= b`, `a ||= b`, `a &&= b`, Chrome 85) are rewritten to their
+ES2019 equivalents; on the baseline the untouched bundle does not even parse,
+which leaves the page empty and the readiness handshake unanswered.
+
+Because `index-*.js` is content-hashed and served with `Cache-Control: immutable`,
+a patched chunk is renamed to a fresh hash and `index.html` is rewritten, so a
+WebView that cached the previous build loads the change on the next start.
+
+Usage: python3 tools/game-patches/apply_chistan_patches.py [--check]
 """
-import os, glob, re, sys
+import base64
+import glob
+import hashlib
+import os
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WEB = os.path.join(ROOT, "app", "src", "main", "assets", "web")
 ASSETS = os.path.join(WEB, "assets")
+HTML = os.path.join(WEB, "index.html")
 
-def single(pattern):
+# ---------------------------------------------------------------------------
+# Anchors
+# ---------------------------------------------------------------------------
+STORE_PACKS_OLD = (
+    "rt=[{id:`pack_1`,name:`کیسه کوچک سکه`,coins:500,price:`رایگان`,popular:!1},"
+    "{id:`pack_2`,name:`صندوقچه زرین`,coins:1500,price:`رایگان ویژه`,popular:!0},"
+    "{id:`pack_3`,name:`گنجینه فرزانگان`,coins:4e3,price:`پک طلایی`,popular:!1},"
+    "{id:`pack_4`,name:`خزانه سلطنتی`,coins:1e4,price:`پک نامحدود`,popular:!1}]"
+)
+STORE_PACKS_NEW = (
+    "rt=["
+    "{id:`pack_starter`,name:`کیسه کوچک سکه`,coins:200,price:`۱۰,۰۰۰ تومان`,toman:10000,sku:`pack_starter`,popular:!1},"
+    "{id:`chistan_pack_500`,name:`کیسه سکه`,coins:500,price:`۲۵,۰۰۰ تومان`,toman:25000,sku:`chistan_pack_500`,popular:!1},"
+    "{id:`pack_popular`,name:`صندوقچه زرین`,coins:1000,price:`۵۰,۰۰۰ تومان`,toman:50000,sku:`pack_popular`,popular:!0},"
+    "{id:`chistan_pack_1500`,name:`صندوق گنج`,coins:1500,price:`۷۵,۰۰۰ تومان`,toman:75000,sku:`chistan_pack_1500`,popular:!1},"
+    "{id:`pack_super`,name:`گنجینه فرزانگان`,coins:2500,price:`۱۲۵,۰۰۰ تومان`,toman:125000,sku:`pack_super`,popular:!1},"
+    "{id:`chistan_pack_4000`,name:`خزانه پادشاه`,coins:4000,price:`۲۰۰,۰۰۰ تومان`,toman:200000,sku:`chistan_pack_4000`,popular:!1},"
+    "{id:`pack_royal`,name:`گنجینه سلطنتی`,coins:5000,price:`۲۵۰,۰۰۰ تومان`,toman:250000,sku:`pack_royal`,popular:!1},"
+    "{id:`pack_vault`,name:`خزانه سلطنتی`,coins:10000,price:`۵۰۰,۰۰۰ تومان`,toman:500000,sku:`pack_vault`,popular:!1},"
+    "{id:`remove_ads`,name:`حذف تبلیغات`,coins:0,price:`۲۰,۰۰۰ تومان`,toman:20000,sku:`remove_ads`,popular:!1,isRemoveAds:!0}"
+    "]"
+)
+
+# The store buy handler. The shipped bundle already bills through
+# `CafeBazaar.purchase(sku)` and credits only `success && verified` results, but
+# its `remove_ads` branch consumes the purchase token: `remove_ads` is a
+# permanent (non-consumable) unlock in CafeBazaar, so consuming it erases the
+# entitlement and lets the same user be charged for it again. Coin packs keep
+# consuming their token – they must be consumable to be bought repeatedly.
+STORE_BUY_CONSUMES_REMOVE_ADS = (
+    "if(res&&res.success&&res.verified){"
+    "try{res.purchaseToken&&window.CafeBazaar.consume&&window.CafeBazaar.consume(res.purchaseToken)}catch(_){}"
+    "D.playFanfare();D.playCoin();try{Je({particleCount:75,spread:70,origin:{y:.6}})}catch{}"
+    "l('تبلیغات حذف شد!');"
+)
+STORE_BUY_REMOVE_ADS_UNCONSUMED = (
+    "if(res&&res.success&&res.verified){"
+    "D.playFanfare();D.playCoin();try{Je({particleCount:75,spread:70,origin:{y:.6}})}catch{}"
+    "l('تبلیغات حذف شد!');"
+)
+
+# Duplicate interstitial trigger: both the game and the facade helper asked for
+# an ad on the same level count.
+INTERSTITIAL_DOUBLE = (
+    "try{let cnt=Object.keys(next.completedLevels).length;if(isNew&&cnt%3===0&&cnt>0){"
+    "try{window.NativeAds&&window.NativeAds.showInterstitial&&window.NativeAds.showInterstitial()}catch(e){}"
+    "try{window.ChistanBridge&&window.ChistanBridge.showInterstitialIfNeeded&&window.ChistanBridge.showInterstitialIfNeeded()}catch(e){}"
+    "}}catch(e){}"
+)
+# The level-complete handler asked for an interstitial itself (every 3rd level)
+# *and* through `ChistanBridge.showInterstitialIfNeeded()`; the facade already
+# owns that cadence from the save mirror, so the in-game trigger is dropped
+# entirely instead of leaving two or three requests for one level.
+INTERSTITIAL_SINGLE = (
+    "try{let cnt=Object.keys(next.completedLevels).length;if(isNew&&cnt%3===0&&cnt>0){"
+    "try{window.NativeAds&&window.NativeAds.showInterstitial&&window.NativeAds.showInterstitial()}catch(e){}"
+    "}}catch(e){}"
+)
+
+# ×3 bonus: the coins were written straight into `localStorage`, which the
+# game's own save effect overwrote on the next state change – the bonus was lost
+# and the HUD never showed it. The surrounding text is part of the anchor so the
+# target cannot be mistaken for a prefix of it.
+TRIPLE_TAIL = "window.dispatchEvent(ev);}catch(e){}"
+TRIPLE_WRITE = (
+    TRIPLE_TAIL +
+    "setTripleClaimed(!0);"
+    "try{let cur=JSON.parse(localStorage.getItem('chistansara_game_save_v2')||'{}');"
+    "cur.coins=(cur.coins||0)+tripleCoins;"
+    "localStorage.setItem('chistansara_game_save_v2',JSON.stringify(cur));}catch(e){}"
+    "}}catch(e){}"
+)
+TRIPLE_STATE = TRIPLE_TAIL + "setTripleClaimed(!0);}}catch(e){}"
+
+# The game dispatches `chistan:coins` but nothing listened for it; the listener
+# credits the coins through the game's own coin updater (`p`), so the save effect
+# persists them and the HUD updates.
+APP_EFFECTS = (
+    "(0,_.useEffect)(()=>{D.enabled=e.soundEnabled,D.musicEnabled=e.musicEnabled;"
+    "try{window.NativeApp&&window.NativeApp.appReady&&window.NativeApp.appReady()}catch(e){}},"
+    "[e.soundEnabled,e.musicEnabled])"
+)
+COIN_LISTENER = APP_EFFECTS + (
+    ",(0,_.useEffect)(()=>{"
+    "let h=e=>{try{let c=e&&e.detail&&e.detail.coins;c>0&&p(c)}catch(err){}};"
+    "try{window.addEventListener('chistan:coins',h)}catch(err){}"
+    "return()=>{try{window.removeEventListener('chistan:coins',h)}catch(err){}}"
+    "},[])"
+)
+
+# Rewarded video in the coin store promised "+۱۵۰ سکه رایگان" but never credited
+# them, even after the container reported `rewarded_completed`.
+FREE_COINS_DONE = (
+    "clearInterval(e),a(!1),D.playFanfare(),D.playCoin();"
+    "try{Je({particleCount:60,spread:60,origin:{y:.6}})}catch{}return 100"
+)
+FREE_COINS_DONE_PAID = (
+    "clearInterval(e),a(!1),D.playFanfare(),D.playCoin();"
+    "try{Je({particleCount:60,spread:60,origin:{y:.6}})}catch{}"
+    "try{n(150)}catch(e){}return 100"
+)
+
+# ---------------------------------------------------------------------------
+# ES2019 syntax floor – Chromium 83 WebView baseline
+# ---------------------------------------------------------------------------
+# A WebView that cannot *parse* the bundle never runs it: the page stays empty,
+# the game never boots and the readiness handshake never reaches the container
+# (exactly what the emulator jobs report). `??=` / `||=` / `&&=` ship in Chrome
+# 85, the container's baseline is Chromium 83, so every occurrence in the shipped
+# chunk is rewritten to the equivalent ES2019 expression:
+#
+#     a ??= b   ->   a ?? (a = b)
+#     a ||= b   ->   a || (a = b)
+#     a &&= b   ->   a && (a = b)
+#
+# The two forms differ only in how often the *reference* on the left is
+# evaluated; every site below is a plain identifier or member access on an
+# ordinary object (`e`, `t`, `oe`, `e.title`, `this.musicTimer`, …), so the
+# rewrite is transparent. `TRANSFORMS` applies all sites as one unit and the
+# bundle must contain no logical-assignment operator afterwards.
+LOGICAL_ASSIGNMENT_SITES = [
+    # React's forwardRef displayName fallback.
+    ("e||=(e=t.displayName||t.name||``,e===``?`ForwardRef`:`ForwardRef(`+e+`)`)",
+     "e||(e=(e=t.displayName||t.name||``,e===``?`ForwardRef`:`ForwardRef(`+e+`)`))"),
+    # React resource cache (`hoistableStyles` / `hoistableScripts`).
+    ("return t||=e[It]={hoistableStyles:new Map,hoistableScripts:new Map},t}",
+     "return t||(t=e[It]={hoistableStyles:new Map,hoistableScripts:new Map}),t}"),
+    # React DOM property hydration (defaultChecked/defaultValue).
+    ("r??=i,r=typeof r!=`function`",
+     "r??(r=i),r=typeof r!=`function`"),
+    ("}n??=``,t=n}",
+     "}n??(n=``),t=n}"),
+    # React's activeElement helper (`Zr`).
+    ("if(e||=typeof document<`u`?document:void 0,e===void 0)",
+     "if(e||(e=typeof document<`u`?document:void 0),e===void 0)"),
+    # React's `memoCache`.
+    ("if(t??={data:[],index:0},n===null",
+     "if(t??(t={data:[],index:0}),n===null"),
+    # React's event-priority helpers.
+    ("r||=(ka(e,t,n,!1),(n&t.childLanes)!==0),i){",
+     "r||(r=(ka(e,t,n,!1),(n&t.childLanes)!==0)),i){"),
+    ("}else r=null}r||={start:0,end:0}}else r=null;",
+     "}else r=null}r||(r={start:0,end:0})}else r=null;"),
+    ("for(i&&=!!(t.subtreeFlags&10256)||!1,t=t.child;",
+     "for(i&&(i=!!(t.subtreeFlags&10256)||!1),t=t.child;"),
+    ("if(_&&=_(e,r)){Mr(s,_,n,i);break a}",
+     "if(_&&(_=_(e,r))){Mr(s,_,n,i);break a}"),
+    ("e.reactFragments??=new Set,e.reactFragments.add(t)}",
+     "e.reactFragments??(e.reactFragments=new Set),e.reactFragments.add(t)}"),
+    ("t||=`default`;var o=i.get(a);",
+     "t||(t=`default`);var o=i.get(a);"),
+    # React's <link rel="modulepreload"> preload keys.
+    ("function Hm(e,t){e.crossOrigin??=t.crossOrigin,e.referrerPolicy??=t.referrerPolicy,e.title??=t.title}",
+     "function Hm(e,t){e.crossOrigin??(e.crossOrigin=t.crossOrigin),e.referrerPolicy??(e.referrerPolicy=t.referrerPolicy),e.title??(e.title=t.title)}"),
+    ("function Um(e,t){e.crossOrigin??=t.crossOrigin,e.referrerPolicy??=t.referrerPolicy,e.integrity??=t.integrity}",
+     "function Um(e,t){e.crossOrigin??(e.crossOrigin=t.crossOrigin),e.referrerPolicy??(e.referrerPolicy=t.referrerPolicy),e.integrity??(e.integrity=t.integrity)}"),
+    # The game's own audio manager timer.
+    ("this.musicTimer&&=(clearTimeout(this.musicTimer),null)",
+     "this.musicTimer&&(this.musicTimer=(clearTimeout(this.musicTimer),null))"),
+    # canvas-confetti's lazily created worker.
+    ("return oe||=ae(null,{useWorker:!0,resize:!0}),oe}",
+     "return oe||(oe=ae(null,{useWorker:!0,resize:!0})),oe}"),
+]
+
+# ---------------------------------------------------------------------------
+# Transforms: (id, [(text that must be replaced, replacement), …])
+# ---------------------------------------------------------------------------
+TRANSFORMS = [
+    ("es2019-syntax-floor", LOGICAL_ASSIGNMENT_SITES),
+]
+
+# Every operator must be gone once the transforms ran.
+LOGICAL_ASSIGNMENT_OPS = ("??=", "||=", "&&=")
+
+# ---------------------------------------------------------------------------
+# Patches: (id, target, [source variants the target may replace])
+# ---------------------------------------------------------------------------
+PATCHES = [
+    ("level-reward-fair",
+     "a=30+(e.currentStreak>1?10:0)",
+     ["a=20+(e.currentStreak>1?5:0)"]),
+
+    ("hint-cost-letter-60",
+     "we=()=>{if(y)return;if(D.playClick(),t<60){ce(!0);return}",
+     ["we=()=>{if(y)return;if(D.playClick(),t<100){ce(!0);return}"]),
+
+    ("hint-cost-eliminate-100",
+     "Te=()=>{if(y)return;if(D.playClick(),t<100){ce(!0);return}",
+     ["Te=()=>{if(y)return;if(D.playClick(),t<150){ce(!0);return}"]),
+
+    ("hint-cost-clue-150",
+     "E=()=>{if(!C){if(D.playClick(),t<150){ce(!0);return}a(150)",
+     ["E=()=>{if(!C){if(D.playClick(),t<250){ce(!0);return}a(250)"]),
+
+    ("hint-spend-clue-150",
+     "a(150)&&(D.playHint(),ne(!0),ae(!0))}},Ee",
+     ["a(250)&&(D.playHint(),ne(!0),ae(!0))}},Ee"]),
+
+    ("hint-cost-answer-150",
+     "Ee=()=>{if(!y){if(D.playClick(),t<150){ce(!0);return}if(!a(150))return;",
+     ["Ee=()=>{if(!y){if(D.playClick(),t<250){ce(!0);return}a(250)&&(D.playCorrect(),i(!0,!0),S(!0))}}",
+      "Ee=()=>{if(!y){if(D.playClick(),t<150){ce(!0);return}a(150)&&(D.playCorrect(),i(!0,!0),S(!0))}}",
+      "Ee=()=>{if(!y){if(D.playClick(),t<250){ce(!0);return}if(!a(250))return;"]),
+
+    ("store-packs-fair", STORE_PACKS_NEW, [STORE_PACKS_OLD]),
+
+    ("store-remove-ads-not-consumed", STORE_BUY_REMOVE_ADS_UNCONSUMED, [STORE_BUY_CONSUMES_REMOVE_ADS]),
+
+    # Bridge usage: no interstitial request from the WebApp at all – the facade
+    # decides (500 ms after the save write, `remove_ads` aware, de-duped by
+    # completed-level count). A `None` target means "delete the anchor".
+    ("interstitial-cadence-in-facade", None, [INTERSTITIAL_DOUBLE, INTERSTITIAL_SINGLE]),
+
+    # … the ×3 bonus credited into the game's own state …
+    ("triple-coins-state", TRIPLE_STATE, [TRIPLE_WRITE]),
+    ("coin-event-listener", COIN_LISTENER, [APP_EFFECTS]),
+
+    # … and the promised 150 coins for the rewarded video.
+    ("free-coins-credit", FREE_COINS_DONE_PAID, [FREE_COINS_DONE]),
+]
+
+# ---------------------------------------------------------------------------
+# Invariants: (description, needle, must_be_present)
+# ---------------------------------------------------------------------------
+INVARIANTS = [
+    ("level reward is 30 coins (+10 streak)", "a=30+(e.currentStreak>1?10:0)", True),
+    ("letter hint costs 60", "t<60){ce(!0);return}", True),
+    ("eliminate hint costs 100", "Te=()=>{if(y)return;if(D.playClick(),t<100)", True),
+    ("clue hint costs 150", "a(150)&&(D.playHint(),ne(!0),ae(!0))", True),
+    ("answer hint costs 150", "if(!a(150))return;", True),
+    ("store sells pack_starter", "sku:`pack_starter`", True),
+    ("store sells remove_ads at 20,000", "sku:`remove_ads`,popular:!1,isRemoveAds:!0}", True),
+    ("no free coin pack anywhere", "دریافت رایگان", False),
+    ("purchases go through CafeBazaar", "await window.CafeBazaar.purchase(e.sku)", True),
+    ("purchases are only credited when verified", "res&&res.success&&res.verified", True),
+    ("remove_ads purchase is never consumed",
+     "try{res.purchaseToken&&window.CafeBazaar.consume&&window.CafeBazaar.consume(res.purchaseToken)}"
+     "catch(_){}D.playFanfare();D.playCoin();try{Je({particleCount:75,spread:70,origin:{y:.6}})}catch{}"
+     "l('تبلیغات حذف شد!')", False),
+    ("the WebApp does not request interstitials itself",
+     "window.NativeAds.showInterstitial()", False),
+    ("the WebApp does not drive the facade cadence by hand",
+     "window.ChistanBridge.showInterstitialIfNeeded()", False),
+    ("×3 bonus is not written straight into localStorage",
+     "cur.coins=(cur.coins||0)+tripleCoins", False),
+    ("×3 bonus reaches the game state via chistan:coins",
+     "window.addEventListener('chistan:coins',h)", True),
+    ("×3 bonus calls the bridge helper", "window.ChistanBridge.addCoins(tripleCoins)", True),
+    ("rewarded free coins credit 150", "try{n(150)}catch(e){}", True),
+    ("readiness handshake present", "window.NativeApp.appReady()", True),
+    ("bundle runs on the Chromium 83 baseline",
+     "function Hm(e,t){e.crossOrigin??(e.crossOrigin=t.crossOrigin)", True),
+]
+
+# ---------------------------------------------------------------------------
+# Rewriting with fresh content hashes (immutable caching)
+# ---------------------------------------------------------------------------
+def vite_hash(data: bytes) -> str:
+    digest = hashlib.sha256(data).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")[:8]
+
+
+def rename_chunk(path: str, text: str) -> str:
+    """Writes `text` under a fresh content hash and rewrites index.html."""
+    old = os.path.basename(path)
+    new = "index-" + vite_hash(text.encode("utf-8")) + ".js"
+    if new == old:
+        return old
+
+    with open(os.path.join(ASSETS, new), "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.remove(path)
+
+    html = open(HTML, encoding="utf-8").read()
+    if old not in html:
+        raise SystemExit(f"index.html does not reference {old}")
+    with open(HTML, "w", encoding="utf-8") as fh:
+        fh.write(html.replace(old, new))
+
+    for candidate in glob.glob(os.path.join(WEB, "**", "*"), recursive=True):
+        if os.path.isfile(candidate) and candidate.endswith((".js", ".html", ".css", ".webmanifest", ".json")):
+            if os.path.basename(candidate) == new:
+                continue
+            if old in open(candidate, encoding="utf-8", errors="ignore").read():
+                raise SystemExit(f"{candidate} still references {old}")
+    return new
+
+
+def single(pattern: str) -> str:
     matches = glob.glob(pattern)
     if len(matches) != 1:
         raise SystemExit(f"expected exactly one {pattern}, found {matches}")
     return matches[0]
 
-def main():
+
+def apply_transforms(text: str, check_only: bool):
+    """All-or-nothing rewrites (the syntax floor). """
+    applied, skipped, failed = [], [], []
+    for tid, pairs in TRANSFORMS:
+        pending = [(old, new) for old, new in pairs if old in text]
+        if not pending:
+            skipped.append(tid)
+            continue
+        if len(pending) != len(pairs):
+            failed.append((tid, f"partially applied ({len(pending)}/{len(pairs)} sites)"))
+            continue
+        ambiguous = [old for old, _ in pending if text.count(old) != 1]
+        if ambiguous:
+            failed.append((tid, f"ambiguous anchor: {ambiguous[0][:60]}"))
+            continue
+        if not check_only:
+            for old, new in pending:
+                text = text.replace(old, new)
+        applied.append((tid, False))
+    return text, applied, skipped, failed
+
+
+def apply_patches(text: str, check_only: bool):
+    applied, skipped, failed = [], [], []
+    for pid, target, sources in PATCHES:
+        if target is None:
+            # Removal patch: applied once none of the anchors is present any more.
+            if not any(src in text for src in sources):
+                skipped.append(pid)
+                continue
+        elif target in text:
+            skipped.append(pid)
+            continue
+
+        matches = [src for src in sources if text.count(src) == 1]
+        if len(matches) == 1:
+            if not check_only:
+                text = text.replace(matches[0], target or "")
+            applied.append((pid, matches[0] != sources[0]))
+        elif not matches:
+            failed.append((pid, {src[:40] + '…': text.count(src) for src in sources}))
+        else:
+            failed.append((pid, "ambiguous: several source variants present"))
+    text, t_applied, t_skipped, t_failed = apply_transforms(text, check_only)
+    return text, applied + t_applied, skipped + t_skipped, failed + t_failed
+
+
+def verify(text: str):
+    problems = []
+    # Syntax floor: no ES2021 logical assignment may survive – a single one makes
+    # the whole module unparseable on the container's Chromium 83 baseline.
+    for op in LOGICAL_ASSIGNMENT_OPS:
+        if op in text:
+            first = text.index(op)
+            problems.append(
+                f"still present: {op} cannot be parsed by the Chromium 83 baseline "
+                f"({text[max(0, first - 40):first + 40]!r})"
+            )
+    for description, needle, must_be_present in INVARIANTS:
+        present = needle in text
+        if present != must_be_present:
+            problems.append(
+                f"{'missing' if must_be_present else 'still present'}: {description} "
+                f"({needle[:60]}{'…' if len(needle) > 60 else ''})"
+            )
+    return problems
+
+
+def main() -> int:
     check_only = "--check" in sys.argv
     js_path = single(os.path.join(ASSETS, "index-*.js"))
-    print(f"Patching {js_path}")
-    text = open(js_path, encoding='utf-8').read()
-    original = text
+    original = open(js_path, encoding="utf-8").read()
 
-    patches = []
+    # Always simulate every patch: `--check` asserts that the bundle *would be*
+    # consistent, it just does not write anything.
+    text, applied, skipped, failed = apply_patches(original, check_only=False)
+    for pid, migrated in applied:
+        print(f"{'would apply' if check_only else 'applied'}: {pid}" + (" (upgraded an older variant)" if migrated else ""))
+    for pid in skipped:
+        print(f"already applied: {pid}")
+    for pid, detail in failed:
+        print(f"FAILED: {pid} – {detail}", file=sys.stderr)
 
-    # 1. Fair economy: level reward 20 -> 30, streak bonus 5 -> 10
-    patches.append((
-        "level-reward-fair",
-        "a=20+(e.currentStreak>1?5:0)",
-        "a=30+(e.currentStreak>1?10:0)"
-    ))
+    problems = sorted(verify(text))
+    for problem in problems:
+        print(f"INVARIANT {problem}", file=sys.stderr)
 
-    # 2. Hint costs: 100 -> 60, 150 -> 100, 250 -> 150 (two places)
-    # we have 4 occurrences: we(), Te(), E(), Ee()
-    # we() is reveal letter: t<100
-    patches.append((
-        "hint-cost-letter-60",
-        "we=()=>{if(y)return;if(D.playClick(),t<100){ce(!0);return}",
-        "we=()=>{if(y)return;if(D.playClick(),t<60){ce(!0);return}"
-    ))
-    # Te() eliminate: t<150 -> 100
-    patches.append((
-        "hint-cost-eliminate-100",
-        "Te=()=>{if(y)return;if(D.playClick(),t<150){ce(!0);return}",
-        "Te=()=>{if(y)return;if(D.playClick(),t<100){ce(!0);return}"
-    ))
-    # E() clue: t<250 -> 150 (first)
-    # There are two t<250 checks close together, we need to replace both
-    # Use more specific anchors
-    # First occurrence: E=()=>{if(!C){if(D.playClick(),t<250)
-    patches.append((
-        "hint-cost-clue-150",
-        "E=()=>{if(!C){if(D.playClick(),t<250){ce(!0);return}a(250)",
-        "E=()=>{if(!C){if(D.playClick(),t<150){ce(!0);return}a(150)"
-    ))
-    # Ee() reveal answer: t<250 -> 150
-    patches.append((
-        "hint-cost-answer-150",
-        "Ee=()=>{if(!y){if(D.playClick(),t<250){ce(!0);return}a(250)",
-        "Ee=()=>{if(!y){if(D.playClick(),t<150){ce(!0);return}a(150)"
-    ))
-    # Also need to replace the second a(250) inside E and Ee that deducts coins
-    # For E, after check, a(250) is the spend - we already replaced first, but there is second a(250) in Ee's second part
-    # Let's handle remaining a(250) -> a(150) for those functions, but careful not to replace other a(250) that might be elsewhere
-    # We'll do a targeted replace for the reveal functions: they have pattern a(250)&&(D.playHint...
-    # Actually after first patch, E still has a(250) inside? We replaced only first part, second remains. Let's patch all a(250) that are in hint context to 150 if near hint
-    # For simplicity, replace all remaining a(250) that are for hints to 150, but keep other logic? There are exactly 2 more a(250) for E and Ee
-    # We'll replace globally the pattern for hint spend: a(250)&&(D.playHint -> a(150)&&(D.playHint and a(250)&&(D.playCorrect
-    # Let's do two more specific
-    patches.append((
-        "hint-spend-clue-150b",
-        "a(250)&&(D.playHint(),ne(!0),ae(!0))}},Ee",
-        "a(150)&&(D.playHint(),ne(!0),ae(!0))}},Ee"
-    ))
-    # For Ee answer reveal, the spend is a(250)&&(D.playCorrect
-    # Need to find it
-    # The original after E is: Ee=()=>{if(!y){if(D.playClick(),t<150){ce(!0);return}a(150)&&(D.playCorrect(),i(!0,!0),S(!0))}}
-    # So second patch already covers it, but we need to ensure both spends are 150
-    # Let's check if there is still a(250) left in those functions by searching
-    # We'll do a final sweep: replace a(250) with a(150) only when inside the Qe component context near hint
-    # Instead, let's replace all a(250) that are followed by D.playHint or D.playCorrect in hint functions
-    # This will be done via regex later if needed
-
-    # 3. Store packs: replace rt array with fair priced packs including SKU and toman
-    old_packs = "rt=[{id:`pack_1`,name:`کیسه کوچک سکه`,coins:500,price:`رایگان`,popular:!1},{id:`pack_2`,name:`صندوقچه زرین`,coins:1500,price:`رایگان ویژه`,popular:!0},{id:`pack_3`,name:`گنجینه فرزانگان`,coins:4e3,price:`پک طلایی`,popular:!1},{id:`pack_4`,name:`خزانه سلطنتی`,coins:1e4,price:`پک نامحدود`,popular:!1}]"
-    # New packs with fair economy: 50 toman per coin, Persian price display, SKU mapping to CafeBazaar
-    # We keep 6 packs for better monetization ladder
-    new_packs = (
-        "rt=["
-        "{id:`pack_starter`,name:`کیسه کوچک سکه`,coins:200,price:`۱۰,۰۰۰ تومان`,toman:10000,sku:`pack_starter`,popular:!1},"
-        "{id:`chistan_pack_500`,name:`کیسه سکه`,coins:500,price:`۲۵,۰۰۰ تومان`,toman:25000,sku:`chistan_pack_500`,popular:!1},"
-        "{id:`pack_popular`,name:`صندوقچه زرین`,coins:1000,price:`۵۰,۰۰۰ تومان`,toman:50000,sku:`pack_popular`,popular:!0},"
-        "{id:`chistan_pack_1500`,name:`صندوق گنج`,coins:1500,price:`۷۵,۰۰۰ تومان`,toman:75000,sku:`chistan_pack_1500`,popular:!1},"
-        "{id:`pack_super`,name:`گنجینه فرزانگان`,coins:2500,price:`۱۲۵,۰۰۰ تومان`,toman:125000,sku:`pack_super`,popular:!1},"
-        "{id:`chistan_pack_4000`,name:`خزانه پادشاه`,coins:4000,price:`۲۰۰,۰۰۰ تومان`,toman:200000,sku:`chistan_pack_4000`,popular:!1},"
-        "{id:`pack_royal`,name:`گنجینه سلطنتی`,coins:5000,price:`۲۵۰,۰۰۰ تومان`,toman:250000,sku:`pack_royal`,popular:!1},"
-        "{id:`pack_vault`,name:`خزانه سلطنتی`,coins:10000,price:`۵۰۰,۰۰۰ تومان`,toman:500000,sku:`pack_vault`,popular:!1},"
-        "{id:`remove_ads`,name:`حذف تبلیغات`,coins:0,price:`۲۰,۰۰۰ تومان`,toman:20000,sku:`remove_ads`,popular:!1,isRemoveAds:!0}"
-        "]"
-    )
-    patches.append(("store-packs-fair", old_packs, new_packs))
-
-    # 4. Interstitial every 3 levels: patch the level complete handler h to trigger ad
-    # Original: h=(n,r)=>{if(n){let n=e.currentStreak+1,i=Math.max(e.bestStreak,n),a=30+(e.currentStreak>1?10:0),o=r?2:3;t(t=>{let s=t.completedLevels[e.currentLevel],c=s?Math.max(s.stars,o):o;return{...t,coins:t.coins+a,currentStreak:n,bestStreak:i,completedLevels:{...t.completedLevels,[e.currentLevel]:{stars:c,solvedAt:Date.now(),usedHint:r}}}})}else t(e=>({...e,currentStreak:0}))}
-    # We want to add ad check after completing level
-    old_h = "h=(n,r)=>{if(n){let n=e.currentStreak+1,i=Math.max(e.bestStreak,n),a=30+(e.currentStreak>1?10:0),o=r?2:3;t(t=>{let s=t.completedLevels[e.currentLevel],c=s?Math.max(s.stars,o):o;return{...t,coins:t.coins+a,currentStreak:n,bestStreak:i,completedLevels:{...t.completedLevels,[e.currentLevel]:{stars:c,solvedAt:Date.now(),usedHint:r}}}})}else t(e=>({...e,currentStreak:0}))}"
-    new_h = (
-        "h=(n,r)=>{if(n){let n=e.currentStreak+1,i=Math.max(e.bestStreak,n),a=30+(e.currentStreak>1?10:0),o=r?2:3;"
-        "t(t=>{let s=t.completedLevels[e.currentLevel],c=s?Math.max(s.stars,o):o;"
-        "let next={...t,coins:t.coins+a,currentStreak:n,bestStreak:i,completedLevels:{...t.completedLevels,[e.currentLevel]:{stars:c,solvedAt:Date.now(),usedHint:r}}};"
-        "try{let cnt=Object.keys(next.completedLevels).length;if(cnt%3===0&&cnt>0){"
-        "try{window.NativeAds&&window.NativeAds.showInterstitial&&window.NativeAds.showInterstitial()}catch(e){}"
-        "try{window.ChistanBridge&&window.ChistanBridge.showInterstitialIfNeeded&&window.ChistanBridge.showInterstitialIfNeeded()}catch(e){}"
-        "}}catch(e){}return next})}else t(e=>({...e,currentStreak:0}))}"
-    )
-    patches.append(("interstitial-every-3", old_h, new_h))
-
-    # Apply patches
-    applied = []
-    failed = []
-    for pid, old, new in patches:
-        if new in text and (old not in text or old in new):
-            print(f"already applied: {pid}")
-            continue
-        count = text.count(old)
-        if count == 1:
-            text = text.replace(old, new)
-            applied.append(pid)
-            print(f"applied: {pid}")
-        else:
-            failed.append((pid, count))
-            print(f"FAILED: {pid} - anchor found {count} times", file=sys.stderr)
-
-    # Additional global fixes: ensure remaining a(250) for hints are 150
-    # Look for pattern a(250)&&(D.playHint in the file after patches - replace any remaining
-    if "a(250)&&(D.playHint" in text:
-        text = text.replace("a(250)&&(D.playHint", "a(150)&&(D.playHint")
-        print("applied: hint-spend-global-fix")
-    if "a(250)&&(D.playCorrect" in text:
-        # This is for reveal answer, should be 150
-        # But be careful: there might be other legitimate 250 costs, but for chistan we want 150
-        # We'll replace only if near Ee
-        text = text.replace("a(250)&&(D.playCorrect(),i(!0,!0)", "a(150)&&(D.playCorrect(),i(!0,!0)")
-        print("applied: answer-spend-fix")
-
-    # Patch store component to use CafeBazaar billing
-    # Original d function: d=e=>{D.playFanfare(),D.playCoin();try{Je({particleCount:75,spread:70,origin:{y:.6}})}catch{}l(e.name),n(e.coins),setTimeout(()=>l(null),2500)}
-    old_store_buy = "d=e=>{D.playFanfare(),D.playCoin();try{Je({particleCount:75,spread:70,origin:{y:.6}})}catch{}l(e.name),n(e.coins),setTimeout(()=>l(null),2500)}"
-    # SECURE: No free fallback - only grant on verified purchase, handles CANCELLED + USER_CANCELED
-    new_store_buy = (
-        "d=async e=>{"
-        "try{"
-        "if(e.isRemoveAds){"
-        "let res=null;try{res=await window.CafeBazaar.purchase(e.sku);}catch(_){res=null}"
-        "if(res&&res.success&&res.verified){"
-        "try{res.purchaseToken&&window.CafeBazaar.consume&&window.CafeBazaar.consume(res.purchaseToken)}catch(_){}"
-        "D.playFanfare();D.playCoin();try{Je({particleCount:75,spread:70,origin:{y:.6}})}catch{}"
-        "l('تبلیغات حذف شد!');"
-        "try{localStorage.setItem('chistan_remove_ads','1')}catch(_){}"
-        "setTimeout(()=>l(null),2500);"
-        "}else{"
-        "if(res&&(res.errorCode==='USER_CANCELED'||res.errorCode==='CANCELLED')){l('خرید لغو شد');}else{l('خرید ناموفق بود');}"
-        "setTimeout(()=>l(null),2500);"
-        "try{D.playIncorrect();}catch(_){}"
-        "}"
-        "return;"
-        "}"
-        "let res=null;try{res=await window.CafeBazaar.purchase(e.sku);}catch(_){res=null}"
-        "if(res&&res.success&&res.verified){"
-        "try{res.purchaseToken&&window.CafeBazaar.consume&&window.CafeBazaar.consume(res.purchaseToken)}catch(_){}"
-        "D.playFanfare();D.playCoin();try{Je({particleCount:75,spread:70,origin:{y:.6}})}catch{}"
-        "l((e.name||'')+' با موفقیت افزوده شد');n(e.coins);setTimeout(()=>l(null),2500);"
-        "}else{"
-        "if(res&&(res.errorCode==='USER_CANCELED'||res.errorCode==='CANCELLED')){l('خرید لغو شد');}else{l('خرید ناموفق - سکه‌ای افزوده نشد');}"
-        "setTimeout(()=>l(null),2500);"
-        "try{D.playIncorrect();}catch(_){}"
-        "}"
-        "}catch(err){"
-        "l('خطا در خرید');setTimeout(()=>l(null),2500);"
-        "try{D.playIncorrect();}catch(_){}"
-        "}"
-        "finally{a(!1)}"
-        "}"
-    )
-    if old_store_buy in text:
-        if text.count(old_store_buy) == 1:
-            text = text.replace(old_store_buy, new_store_buy)
-            applied.append("store-billing-integration")
-            print("applied: store-billing-integration")
-        else:
-            failed.append(("store-billing-integration", text.count(old_store_buy)))
-    else:
-        print("store buy anchor not found, trying alternative")
-        # Try alternative anchor with different spacing
-        # Search for pattern
-        import re
-        m = re.search(r"d=e=>\{D\.playFanfare\(\),D\.playCoin\(\);try\{Je\(\{particleCount:75,spread:70,origin:\{y:\.6\}\}\)\}catch\{\}l\(e\.name\),n\(e\.coins\),setTimeout\(\(\)=>l\(null\),2500\)\}", text)
-        if m:
-            text = text[:m.start()] + new_store_buy + text[m.end():]
-            applied.append("store-billing-integration-regex")
-            print("applied: store-billing-integration via regex")
-
-    # Ensure appReady is called
-    if "window.NativeApp.appReady" not in text:
-        # Inject appReady call into main boot function ft
-        # Find where localStorage.setItem is done and add appReady
-        old_boot = "document.getElementById('splash')?.classList.add('is-gone')"
-        new_boot = "try{window.NativeApp&&window.NativeApp.appReady&&window.NativeApp.appReady()}catch(e){};document.getElementById('splash')?.classList.add('is-gone')"
-        if old_boot in text:
-            text = text.replace(old_boot, new_boot)
-            applied.append("appready-injection")
-            print("applied: appready-injection")
-
-    if failed:
-        for pid, cnt in failed:
-            print(f"FAILED {pid}: {cnt}", file=sys.stderr)
+    if failed or problems:
         return 1
-
     if check_only:
-        return 0 if not applied else 1
-
-    if text != original:
-        open(js_path, 'w', encoding='utf-8').write(text)
-        print(f"Wrote patched {js_path}, {len(applied)} patches applied")
-    else:
+        if applied:
+            print(f"{len(applied)} patch(es) pending – run the script without --check", file=sys.stderr)
+            return 1
+        sites = sum(len(pairs) for _, pairs in TRANSFORMS)
+        print(f"bundle is up to date ({len(PATCHES)} patches, {len(TRANSFORMS)} syntax floor "
+              f"({sites} sites), {len(INVARIANTS)} invariants)")
+        return 0
+    if text == original:
         print("nothing to do")
+        return 0
+
+    new_name = rename_chunk(js_path, text)
+    print(f"wrote {os.path.join('app/src/main/assets/web/assets', new_name)} "
+          f"(was {os.path.basename(js_path)})")
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

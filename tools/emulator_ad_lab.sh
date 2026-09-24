@@ -54,6 +54,11 @@ adb exec-out screencap -p > "$OUT/30-adlab-boot.png" 2>/dev/null || true
 if [ "$READY" != "1" ]; then
   echo "::error::the WebApp never reported readiness – the ad lab cannot start"
   adb logcat -d > "$OUT/logcat-full.txt" 2>/dev/null || true
+  # The container mirrors the page's console (and uncaught errors) to logcat with
+  # the tag `WebApp`: that is where an unparseable bundle or a thrown bridge call
+  # shows up, so print it instead of leaving a bare timeout.
+  note "page console / uncaught errors:"
+  adb logcat -d -s WebApp:V 2>/dev/null | tail -15 | tr -d '\r' || true
   exit 1
 fi
 note "WebApp ready; Tapsell init: $(adb logcat -d -s TapsellManager:I TapsellManager:W TapsellManager:E | grep -m3 -iE 'initiali|not configured' | tr -d '\r' | tr '\n' ' ')"

@@ -1,8 +1,8 @@
 # چیستان‌سرا (ChistanSara) — Android WebApp Container
 
-`com.labzband.balochafzar` · app name **چیستان‌سرا** · ۱۳۴۷ چیستان فارسی · previously **لبزبند**
+`com.chistan.quickgames` · app name **چیستان‌سرا** · ۱۳۴۷ چیستان فارسی
 
-> This branch packages **ChistanSara** (چیستان‌سرا) – 1347 Persian riddles, fair economy (1 coin = 50 tomans), interstitial every 3 levels, Persian loading screen, no "A Game By" credit. The container still uses package `com.labzband.balochafzar` for store continuity.
+> This branch packages **ChistanSara** (چیستان‌سرا) – 1347 Persian riddles, fair economy (1 coin = 50 tomans), interstitial every 3 levels, Persian loading screen, no "A Game By" credit. The container is published as package `com.chistan.quickgames`.
 
 A production-ready **Android container for heavy local WebApps**.
 
@@ -104,28 +104,47 @@ as the entry document. At the end of your initialization call:
 NativeApp.appReady();       // hides the native loading plate (no arbitrary delay)
 ```
 
-Available namespaces (thin facade in `assets/web/js/native-bridge.js`):
+`app/src/main/assets/web/native-bridge.js` is the **only** consumer of the container's
+`window.AndroidBridge` object; everything else talks to the facade, which turns the callback /
+event protocol into promises. Call every method with exactly the arguments listed below – the
+interface resolves a method by name **and** argument count, and answers `Method not found` when
+the two disagree (`tools/static_checks.py` and the game harness both enforce that):
 
 ```js
-NativeApp.appReady()                 // readiness handshake
-NativeApp.getInfo()                  // { platform, sdkInt, appVersion, serverPort, device, ... }
-NativeApp.getDeviceProfile()         // { tier, suggestedPixelRatio, totalRamMb, cpuCores, refreshRate, ... }
-NativeApp.getRenderPixelRatio()      // DPR a heavy Canvas/WebGL game should render at
-NativeApp.getStartupRoute()          // deep-link route that opened the app
-NativeApp.reportError(message)       // show the native error/retry plate
-NativeApp.navigateBack()             // native back navigation
-NativeApp.on('deeplink' | 'pause' | 'resume' | 'memorywarning' | 'resize', handler)
-NativeApp.onBackPressed = () => true // let the WebApp consume the hardware back first
+NativeApp.appReady()                  // readiness handshake (hides the native loading plate)
+NativeApp.isNative() / isProduction() / getPackageName()
+NativeApp.getInfo()                   // { platform, sdkInt, appVersion, serverPort, device, ... }
+NativeApp.getDeviceProfile()          // { tier, suggestedPixelRatio, totalRamMb, cpuCores, refreshRate, ... }
+NativeApp.getRenderPixelRatio()       // DPR a heavy Canvas/WebGL game should render at
+NativeApp.getStartupRoute()           // deep-link route that opened the app (consumed once)
+NativeApp.reportError(message)        // native error/retry plate
+NativeApp.navigateBack() / setBackHandler(fn) / onBackPressed()
+NativeApp.openEmail(address, subject) / composeEmail() / openRatingPage() / openStorePage()
+NativeApp.saveState(key, value, savedAt) / loadState(key) / clearState(key)   // three arguments, all required
+NativeApp.on('ready' | 'deeplink' | 'pause' | 'resume' | 'memorywarning' | 'resize' | 'event' | 'ownedproducts', handler)
 
-NativeAds.showInterstitial()         // Promise, always settles: { ok, reason, type }
-NativeAds.showRewarded()             // { ok, rewardGranted, reason }
-NativeAds.showNative()               // native ad plate inside the app view
-NativeAds.showNativeAt(x, y, w, h)   // positioned in CSS pixels
-NativeAds.hideNative()
-NativeAds.isReady() / prepare() / isAvailable()
+NativeAds.showInterstitial()          // Promise, always settles: { ok, type, reason, success }
+NativeAds.showRewarded()              // { ok, rewardGranted, reason } – credit only when rewardGranted === true
+NativeAds.showNative() / showNativeAt(x, y, w, h) / hideNative()
+NativeAds.isReady(type) / isAvailable() / prepare()
 
-CafeBazaar.buyProduct(id) / consumePurchase(token) / getPurchases() / isAvailable()
+CafeBazaar.connect() / connectAsync() / isAvailable() / isRemoveAdsOwned()
+CafeBazaar.purchase(sku)              // Promise -> { success, verified, productId, purchaseToken, ... }
+CafeBazaar.consume(token)             // consumable packs only – never the permanent remove_ads unlock
+CafeBazaar.getPurchases()
+CafeBazaarBridge.onPurchaseResult(v) / onConsumeResult(v) / onConnectionResult(v)
+CafeBazaarBridge.onPurchasesQueryResult(v) / onOwnedProductsChanged(v)
+
+ChistanBridge.getEconomy()            // the fair economy (reward 30/level, hints 60/100/150/150)
+ChistanBridge.purchaseCoins(sku, coins) / purchaseRemoveAds()
+ChistanBridge.showInterstitialIfNeeded() / addCoins(coins)
 ```
+
+**The container never mints coins**: a purchase is credited only when
+`success === true && verified === true` (Poolakey validated the signature), and only
+`remove_ads` is a permanent unlock. The interstitial cadence (every 3 completed levels, skipped
+for `remove_ads` owners, one request per level count) lives in the facade and is driven by the
+save mirror – the WebApp must not request ads itself.
 
 **No advertising or push identifier is ever exposed to the WebApp**: Tapsell app key/zone ids and
 the Pushfa public key live only in the native layer.
@@ -135,17 +154,24 @@ the Pushfa public key live only in the native layer.
 ## 3. Native configuration
 
 Identifiers are resolved (in order) from Gradle CLI properties (`-P`), `local.properties`,
-environment variables, then `gradle.properties`. The production identifiers of لبزبند are the
+environment variables, then `gradle.properties`. The production identifiers of چیستان‌سرا are the
 committed defaults in `gradle.properties`:
 
 ```properties
 # gradle.properties (committed defaults – public-side identifiers only)
-TAPSELL_APP_KEY=tkonjgrn…jjtddh          # Tapsell Plus app key
-TAPSELL_ZONE_INTERSTITIAL=6ab339cee237e15c69fbab2b   # «بنر آنی» (interstitial)
-TAPSELL_ZONE_REWARDED=6ab339c3da860d2c9f00cfa9       # rewarded video
-TAPSELL_ZONE_NATIVE=6ab339d96da4b558f3901bc1         # «بنر همسان» (native banner)
-PUSHFA_API_PUBLIC_KEY=0820…b328aa        # Pushfa api_public_key (never the private key)
+TAPSELL_APP_KEY=lrifjqgk…frskom          # Tapsell Plus app key (چیستان‌سرا)
+TAPSELL_ZONE_INTERSTITIAL=6ab55ea8f9c3d5797ba49cdc   # «بنر آنی» (interstitial)
+TAPSELL_ZONE_REWARDED=6ab55ec4f9c3d5797ba49cdd       # rewarded video
+TAPSELL_ZONE_NATIVE=                      # blank: no native zone in the panel
+CAFEBAZAAR_RSA_KEY=MIHNMA0G…AwEAAQ==      # CafeBazaar panel RSA *public* key
+PUSHFA_API_PUBLIC_KEY=PUZFaFHr…kQdE8R    # Pushfa api_public_key (never the private key)
 ```
+
+Every one of these is a *client* identifier: it ships inside the APK by design (the Tapsell app key
+and zones are what the SDK sends with an ad request, the CafeBazaar key only *verifies* purchase
+signatures). None of them ever reaches the WebApp. They are committed so that a plain
+`./gradlew assembleRelease` already produces an ad-serving, purchase-verifying APK; rotate any of
+them from a repository secret or `local.properties` without touching the code.
 
 Override any of them per machine or per CI run without touching the repository:
 
@@ -161,23 +187,49 @@ FIREBASE_SENDER_ID=1234567890
 ```
 
 Missing keys are **not** fatal: ads report `NOT_AVAILABLE`, push logs one actionable line and the
-container keeps working (`./gradlew assembleDebug` succeeds with an empty configuration).
+container keeps working (`./gradlew assembleRelease` succeeds with an empty configuration).
 
 ### CafeBazaar billing – release checklist
 
-* `CafeBazaarConfig.kt` → `CAFEBAZAAR_PUBLIC_KEY` must hold the RSA public key of **this**
-  app from the CafeBazaar developer console. Purchases are reported to the game with
+* `CafeBazaarConfig.kt` → `DEFAULT_CAFEBAZAAR_PUBLIC_KEY` holds the RSA public key of **this**
+  app from the CafeBazaar developer console (the live value is `CAFEBAZAAR_PUBLIC_KEY`, which a
+  `CAFEBAZAAR_RSA_KEY` property/secret can override). `tools/static_checks.py` fails the build
+  when the value is not a well-formed RSA SubjectPublicKeyInfo. Purchases are reported to the game with
   `verified: true` only when Poolakey validated the signature with that key; the game credits
   coins **only for verified purchases**, so with a wrong/empty key every paid pack would be
   charged but never credited.
-* Create the SKUs the game sells as *consumable* in-app products in the console, at the
-  prices the game displays (1 coin = 50 tomans, no bonus coins, no discounts):
-  `pack_starter` 200 coins = 10,000, `pack_popular` 1,000 = 50,000, `pack_super` 2,500 = 125,000,
-  `pack_royal` 5,000 = 250,000, `pack_vault` 10,000 = 500,000 tomans (the game consumes them
-  itself after crediting); **`remove_ads` as a non-consumable at 20,000 tomans** – the store row
-  and the level-complete "حذف تبلیغات" button sell it (`docs/GAME_PATCHES.md`).
+* Create the SKUs the game sells in the console, at exactly the prices the game displays
+  (1 coin = 50 tomans, no bonus coins, no discounts). The game's store rows and the panel must
+  match, otherwise the panel price shown by Bazaar differs from the label (`docs/GAME_PATCHES.md`
+  is the source of truth for the labels):
+
+  | SKU | coins | price (toman) | type |
+  |-----|------:|--------------:|------|
+  | `pack_starter` | 200 | 10,000 | consumable |
+  | `chistan_pack_500` | 500 | 25,000 | consumable |
+  | `pack_popular` | 1,000 | 50,000 | consumable |
+  | `chistan_pack_1500` | 1,500 | 75,000 | consumable |
+  | `pack_super` | 2,500 | 125,000 | consumable |
+  | `chistan_pack_4000` | 4,000 | 200,000 | consumable |
+  | `pack_royal` | 5,000 | 250,000 | consumable |
+  | `pack_vault` | 10,000 | 500,000 | consumable |
+  | `remove_ads` | — | 20,000 | **non-consumable** |
+
+  The consumable packs are consumed by the app after crediting (so they can be bought again);
+  `remove_ads` is never consumed – the store row and the level-complete "حذف تبلیغات" button sell
+  it, and the container remembers the entitlement.
+
+  Those nine are the **only** SKUs the shipped game requests (`window.CafeBazaar.purchase(sku)`)
+  and the only ones that must exist in the panel. `CafeBazaarConfig.SUPPORTED_PRODUCTS` also
+  carries older identifiers from the previous apps (`coin_pack_250/750/2000/5000/10000/25000`,
+  `pack_starter/popular/super/royal/vault` are shared, `chistan_pack_200`, `chistan_pack_10000`,
+  `coins_50/150/300/600/1200/2500`): a purchase that arrives with one of them is still consumed so
+  it can be bought again, and `getCoinsForSku`/`getPriceTomans` know its coin count and price
+  (`pack_1`…`pack_4` are mapping fallbacks only – they are *not* consumable, so they must not be
+  created). Nothing in this build sells them: **do not create them in the panel** – an unused SKU
+  in the console is one more product to keep in sync with a price the game never shows.
 * Test with a Bazaar test account before release – the emulator has no Bazaar client, the
-  jsdom harness covers the game side of the flow (`tools/game-tests/scenarios.json`).
+  jsdom harness covers the game side of the flow (`tools/game-tests/chistan_scenarios.json`).
 
 ### Push (Pushfa) – Firebase project
 
@@ -185,11 +237,11 @@ Pushfa delivers through Firebase Cloud Messaging, so the app needs the Firebase 
 **Service Account** is pasted into the Pushfa panel (Android service → Firebase).
 
 * `app/google-services.json` is committed: Firebase project **`ninemanhills`**
-  (`930784178753`), Android app `com.labzband.balochafzar`. The Google Services plugin is applied
+  (`930784178753`), Android app `com.chistan.quickgames`. The Google Services plugin is applied
   automatically because the file exists; `python3 tools/static_checks.py` verifies that the file
   still contains a client for this package.
 * To move to another Firebase project, replace the file (Firebase console → project settings →
-  Android app `com.labzband.balochafzar` → download) **and** upload that project's Service Account
+  Android app `com.chistan.quickgames` → download) **and** upload that project's Service Account
   in the Pushfa panel – both sides must be the same project or tokens cannot be delivered.
 * Without the file `App.kt` falls back to the `FIREBASE_*` values, and without those the app runs
   with push disabled (`GOOGLE_SERVICES_JSON` CI secret, when set, overrides the committed file).
@@ -203,39 +255,81 @@ Pushfa delivers through Firebase Cloud Messaging, so the app needs the Firebase 
 
 ```bash
 ./gradlew testDebugUnitTest    # JVM tests: HTTP server, compat injection, MIME table, ranges, SPA routing
-./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
-./gradlew assembleRelease      # R8 + resource shrinking
+./gradlew assembleRelease      # the only shipped variant: R8 + resource shrinking + signing
 python3 tools/static_checks.py # repository invariants (no removed SDK, resources resolve, ...)
+node tools/game-tests/run.mjs  # WebApp bridge contract (jsdom; needs jsdom + esbuild)
 ```
 
-Product changes made to the **packaged game bundle** (coin prices, remove-ads product, contact
-e-mail button, shuffled quiz answers, wording, logo, native progress mirror) are applied by `tools/game-patches/apply_patches.py` and
-the branding by `tools/branding/apply_logo.py` – re-run both after copying a new game build
-into `assets/web/` (see `docs/GAME_PATCHES.md`).
+Product changes made to the **packaged game chunk** (fair economy, toman store, CafeBazaar
+billing, the ad cadence, the coin credits) are applied by
+`tools/game-patches/apply_chistan_patches.py`, the branding by
+`tools/branding/apply_logo.py` – re-run both after copying a new game build into
+`assets/web/` (see `docs/GAME_PATCHES.md`). The patcher is idempotent; `--check` is the CI
+guard.
+
+### Telegram delivery (repository secrets)
+
+Every push builds **one** variant (release) and delivers that APK to your Telegram chat
+instead of publishing an artifact. Add these repository secrets
+(*Settings → Secrets and variables → Actions*):
+
+| Secret | Purpose |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | bot token from [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_CHAT_ID` | your chat / group id (write to the bot first, then `getUpdates`) |
+| `TELEGRAM_MESSAGE_THREAD_ID` | *optional* – topic id for a forum group |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 release.jks` – the release signing key |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore password |
+| `ANDROID_KEY_ALIAS` | key alias inside the keystore |
+| `ANDROID_KEY_PASSWORD` | *optional* – key password when it differs from the store password |
+| `TAPSELL_APP_KEY` | *optional* – overrides the committed Tapsell app key |
+| `TAPSELL_ZONE_INTERSTITIAL` / `TAPSELL_ZONE_REWARDED` / `TAPSELL_ZONE_NATIVE` | *optional* – ad zones |
+| `CAFEBAZAAR_RSA_KEY` | *optional* – overrides the committed CafeBazaar public key |
+| `PUSHFA_API_PUBLIC_KEY` | *optional* – overrides the committed Pushfa public key |
+| `FIREBASE_APP_ID` / `FIREBASE_API_KEY` / `FIREBASE_PROJECT_ID` / `FIREBASE_SENDER_ID` | *optional* – FCM + Firestore identifiers (or commit `app/google-services.json`) |
+| `GOOGLE_SERVICES_JSON` | *optional* – full `google-services.json` content, written to `app/google-services.json` |
+
+The release APK goes to Telegram and nowhere else – **it is never uploaded as a build
+artifact**, not even when the send fails (a failed send fails the job; re-run it to rebuild and
+send again). Without the Telegram secrets the send step is skipped with a `::warning::` – that
+is the case for pull requests from forks, where repository secrets are not exposed. Without the
+keystore secrets the release APK is signed with the Android debug key – installable, but not the
+key CafeBazaar accepts.
+`tools/send_apk_telegram.sh` can also be run locally:
+`TELEGRAM_BOT_TOKEN=… TELEGRAM_CHAT_ID=… bash tools/send_apk_telegram.sh app/build/outputs/apk/release/app-release.apk`.
 
 CI (`.github/workflows/build-apk.yml`) runs on every push:
 
 1. `Static architecture checks` + `Unit tests` — the tests boot the **real** `LocalWebServer`
    against the shipped `assets/web` bundle, so a broken bundle fails the build.
-2. `assembleDebug` + `assembleRelease`, then `Verify APK contents` asserts that
+2. `assembleRelease`, then `Verify APK contents` asserts that
    `assets/web/**` and the Vazirmatn fonts are packaged and that the removed advertising SDK is
-   absent from every dex.
+   absent from every dex. The APK is then sent to Telegram (see above).
 3. `WebApp bridge contract (jsdom)` — `tools/game-tests/run.mjs` bundles the packaged game
    with esbuild, boots it in jsdom against a scripted `AndroidBridge` that speaks the exact
-   TapsellManager / Poolakey event protocol and plays `tools/game-tests/scenarios.json`: menu,
+   TapsellManager / Poolakey event protocol and plays `tools/game-tests/chistan_scenarios.json`: menu,
    spin wheel (reward granted / denied / ad error), coin packs (verified, unverified,
    cancelled, restored), remove-ads (store row, level-complete button, cancelled, unverified,
    restored at boot → no interstitial), About → contact e-mail, two levels → interstitial →
-   third level, ad time-outs, duplicate event delivery, back button.
+   third level, ad time-outs, duplicate event delivery, back button. It also boots the page
+   **without the game's scripts** and asserts the facade keeps the container contract alive on
+   its own (readiness handshake, native save mirror, ads/billing) – the container must survive a
+   game that cannot boot. **101 checks.**
 4. `Emulator smoke test` — installs the APK on an API 30 emulator (Chromium 83 WebView – the
-   compat layer is exercised for real), boots it and verifies the runtime contract (server up
-   → WebView on `127.0.0.1` → readiness handshake → no crash, no bridge thread violation, exit
+   compat layer and the syntax baseline are exercised for real: the packaged chunk must be
+   parseable by it, `tools/static_checks.py` fails the build otherwise), boots it and verifies the
+   runtime contract (server up
+   → WebView on `127.0.0.1` → readiness handshake *or* the container's
+   rendered-content probe → no crash, no bridge thread violation, exit
    dialog, copy protection, night mode, rotation, activity switch, **progress survives a
    force stop** – stable loopback origin + native state mirror), then
-   `tools/game-tests/emulator_play.mjs` drives the real game over the DevTools protocol:
-   levels 1–2, interstitial request, a foreign Activity covering the app like an ad,
-   `interstitial_closed`, level 3 — no reload, no renderer loss, no JS exception. Screenshots
-   are published as commit comments.
+   `tools/game-tests/emulator_play.mjs` drives the real game over the DevTools protocol by its
+   Persian labels (شروع بازی → رد کردن → مرحله بعدی): three levels with no interstitial for the
+   first two and exactly one after the third, then a foreign Activity covering the app like an ad,
+   `interstitial_closed`, level 4 playable — no reload, no renderer loss, no JS exception.
+   `tools/game-tests/emulator_persist.mjs` then force-stops the app and checks the save game
+   survives it (and that the native mirror alone restores it). Screenshots are published as
+   commit comments.
 5. `Emulator ad lab` — a second APK built with `-PSMOKE_TEST_BUILD=true -PSMOKE_TEST_ADS=true`
    (Tapsell's **official test** app key / zones, push blanked) on an API 34 emulator.
    `tools/game-tests/ad_lab.mjs` plays the game into a **real** Tapsell test interstitial –
@@ -246,6 +340,10 @@ CI (`.github/workflows/build-apk.yml`) runs on every push:
    back broken; no fill from the CI network is reported as *inconclusive*. The `build` job
    additionally prints `tools/inspect_ad_sdk.py`: the ad SDK's Activities in the merged
    manifest and a scan of its classes for `pauseTimers` / orientation / window calls.
+
+The emulator report publishes the page console (the container mirrors it to logcat with the tag
+`WebApp`, including uncaught JS errors) plus the WebView's parse/URL errors, so a red run says
+*why* the WebView refused to run the bundle instead of only timing out.
 
 Field diagnosis on a real phone (no debug build needed):
 

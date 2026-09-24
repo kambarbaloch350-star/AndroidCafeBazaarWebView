@@ -17,17 +17,17 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 
--keep class com.labzband.balochafzar.WebAppBridge { *; }
--keep class com.labzband.balochafzar.App { *; }
--keep class com.labzband.balochafzar.MainActivity { *; }
--keep class com.labzband.balochafzar.PushfaManager { *; }
+-keep class com.chistan.quickgames.WebAppBridge { *; }
+-keep class com.chistan.quickgames.App { *; }
+-keep class com.chistan.quickgames.MainActivity { *; }
+-keep class com.chistan.quickgames.PushfaManager { *; }
 
 # Bridge payloads are serialised/deserialised by reflection-free JSON code, but
 # their public shape is part of the JS contract – keep them verbatim.
--keep class com.labzband.balochafzar.PurchaseResult { *; }
--keep class com.labzband.balochafzar.ConsumeResult { *; }
--keep class com.labzband.balochafzar.ConnectionResult { *; }
--keep class com.labzband.balochafzar.QueryPurchasesResult { *; }
+-keep class com.chistan.quickgames.PurchaseResult { *; }
+-keep class com.chistan.quickgames.ConsumeResult { *; }
+-keep class com.chistan.quickgames.ConnectionResult { *; }
+-keep class com.chistan.quickgames.QueryPurchasesResult { *; }
 
 # -----------------------------------------------------------------------------
 # CafeBazaar Poolakey (in-app billing over AIDL)

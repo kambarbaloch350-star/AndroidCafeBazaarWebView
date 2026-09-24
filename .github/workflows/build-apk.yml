@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Build Debug & Release APK
+    name: Build Release APK (sent to Telegram)
     runs-on: ubuntu-latest
     permissions:
       contents: write # commits generated branding (see "Apply branding")
@@ -79,6 +79,7 @@ jobs:
           TAPSELL_ZONE_INTERSTITIAL: ${{ secrets.TAPSELL_ZONE_INTERSTITIAL }}
           TAPSELL_ZONE_REWARDED: ${{ secrets.TAPSELL_ZONE_REWARDED }}
           TAPSELL_ZONE_NATIVE: ${{ secrets.TAPSELL_ZONE_NATIVE }}
+          CAFEBAZAAR_RSA_KEY: ${{ secrets.CAFEBAZAAR_RSA_KEY }}
           PUSHFA_API_PUBLIC_KEY: ${{ secrets.PUSHFA_API_PUBLIC_KEY }}
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
@@ -91,6 +92,7 @@ jobs:
           add TAPSELL_ZONE_INTERSTITIAL "$TAPSELL_ZONE_INTERSTITIAL"
           add TAPSELL_ZONE_REWARDED "$TAPSELL_ZONE_REWARDED"
           add TAPSELL_ZONE_NATIVE "$TAPSELL_ZONE_NATIVE"
+          add CAFEBAZAAR_RSA_KEY "$CAFEBAZAAR_RSA_KEY"
           add PUSHFA_API_PUBLIC_KEY "$PUSHFA_API_PUBLIC_KEY"
           add FIREBASE_APP_ID "$FIREBASE_APP_ID"
           add FIREBASE_API_KEY "$FIREBASE_API_KEY"
@@ -105,6 +107,35 @@ jobs:
           else
             echo "no google-services.json: building without Firebase (push disabled)"
           fi
+
+      # Release signing: the release APK is what is delivered (Telegram) and
+      # what goes to the CafeBazaar panel, so it must be signed. Put the
+      # keystore (base64 of the .jks: `base64 -w0 release.jks`) and its
+      # passwords in the repository secrets below; without them the release
+      # variant is signed with the Android debug key so the delivered APK
+      # still installs (with a warning in the build log).
+      - name: Configure release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not configured – the release APK will be signed with the Android debug key (installable, but not the store key)"
+            exit 0
+          fi
+          KS="$RUNNER_TEMP/release.keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KS"
+          chmod 600 "$KS"
+          add() { [ -n "$2" ] && printf '%s=%s\n' "$1" "$2" >> local.properties || true; }
+          add RELEASE_KEYSTORE_PATH "$KS"
+          add RELEASE_KEYSTORE_PASSWORD "$ANDROID_KEYSTORE_PASSWORD"
+          add RELEASE_KEY_ALIAS "$ANDROID_KEY_ALIAS"
+          add RELEASE_KEY_PASSWORD "${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+          keytool -list -keystore "$KS" -storepass "$ANDROID_KEYSTORE_PASSWORD" >/dev/null \
+            && echo "release keystore loaded ($(printf '%s' "$ANDROID_KEY_ALIAS"))" \
+            || { echo "::error::the configured keystore/password does not open"; exit 1; }
 
       # Branding: drop the logo at branding/logo-source.png (GitHub -> Add
       # file -> Upload files works) and this step renders every launcher icon,
@@ -125,7 +156,11 @@ jobs:
           fi
           command -v convert >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick; }
           python3 tools/branding/apply_logo.py --source "$SRC"
-          python3 tools/game-patches/apply_patches.py
+          # The packaged game is the ChistanSara bundle (`assets/index-*.js`):
+          # re-validate/refresh its patches after the branding rewrite. The
+          # labzband `apply_patches.py` targets `App-*.js`, which this bundle
+          # does not contain any more.
+          python3 tools/game-patches/apply_chistan_patches.py
           echo "$SUM" > branding/logo-source.sha256
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -179,11 +214,12 @@ jobs:
             app/build/test-results/testDebugUnitTest/**
           if-no-files-found: warn
 
-      - name: Build debug APK
-        run: |
-          set -o pipefail
-          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee -a build.log
-
+      # Only the release variant is built. It is the artifact that is
+      # delivered (Telegram) and the one that ships: R8 + resource shrinking
+      # on, signed with the release keystore when one is configured. The
+      # emulator jobs below build their own *debug* variant with
+      # `-PSMOKE_TEST_BUILD=true`, because their DevTools-driven checks need a
+      # debuggable WebView.
       - name: Build release APK (R8 / resource shrinking enabled)
         run: |
           set -o pipefail
@@ -199,12 +235,21 @@ jobs:
       - name: Verify APK contents
         run: |
           set -euo pipefail
-          APK=app/build/outputs/apk/debug/app-debug.apk
+          APK=$(ls app/build/outputs/apk/release/*.apk | grep -v -e 'unsigned' | head -1)
           ls -lh "$APK"
           echo "--- packaged WebApp bundle ---"
           unzip -l "$APK" | grep -E 'assets/web/' | head -20 || true
           echo "--- fonts / native resources ---"
-          unzip -l "$APK" | grep -E 'res/font/vazirmatn' || echo "::error::Vazirmatn fonts missing"
+          # Release builds shorten resource paths (aapt2 resource
+          # optimizations), so the Vazirmatn fonts are counted instead of
+          # matched by their directory name.
+          TTF_COUNT=$(unzip -l "$APK" | grep -cE '\.(ttf|woff2?)$' || true)
+          echo "font files packaged: $TTF_COUNT"
+          if [ "$TTF_COUNT" -lt 5 ]; then
+            echo "::error::Vazirmatn fonts missing from the APK (found $TTF_COUNT font files)"
+            unzip -l "$APK" | grep -iE 'font|\.ttf|\.woff' | head -20 || true
+            exit 1
+          fi
           unzip -l "$APK" | grep -cE 'resources.arsc|classes.dex'
           rm -rf /tmp/apk-inspect && mkdir -p /tmp/apk-inspect
           (cd /tmp/apk-inspect && unzip -q "$GITHUB_WORKSPACE/$APK")
@@ -249,21 +294,46 @@ jobs:
       - name: Inspect the ad SDK (manifest + WebView / orientation usage)
         run: python3 tools/inspect_ad_sdk.py
 
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          compression-level: 0
+      # The APK is delivered to the owner's Telegram chat and is *never*
+      # uploaded as a build artifact: repository secrets TELEGRAM_BOT_TOKEN and
+      # TELEGRAM_CHAT_ID (optional TELEGRAM_MESSAGE_THREAD_ID for a forum
+      # topic) are the only configuration needed. Secrets are not exposed to
+      # pull requests from forks, so the delivery is skipped there with a
+      # warning – such a run is about the code, not about shipping an APK. On a
+      # real build (push / manual dispatch) the delivery is a required step: if
+      # Telegram rejects the APK the job goes red, because there is no artifact
+      # to fall back to.
+      - name: Telegram delivery configured?
+        id: telegram
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$CHAT" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID are not configured – the release APK cannot be delivered to Telegram. Add both repository secrets (see README §4)."
+          fi
 
-      - name: Upload release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-apk
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
-          compression-level: 0
+      - name: Send release APK to Telegram
+        id: telegram_send
+        if: steps.telegram.outputs.enabled == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
+        run: |
+          set -uo pipefail
+          APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | grep -v -e 'unsigned' | head -1 || true)
+          if [ -z "$APK" ]; then
+            echo "::error::no release APK found in app/build/outputs/apk/release/"
+            exit 1
+          fi
+          if ! APK="$APK" bash tools/send_apk_telegram.sh "$APK" "چیستان‌سرا · release"; then
+            echo "::error::Telegram delivery failed – the APK is not uploaded as an artifact, re-run this job to rebuild and send it again."
+            exit 1
+          fi
 
   # ---------------------------------------------------------------------------
   # Runtime verification on a real Android system image: the app is installed,

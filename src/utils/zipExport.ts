@@ -38,7 +38,7 @@ export async function downloadAndroidProjectZip(
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'Labzband-Android-Container.zip';
+  link.download = 'ChistanSara-Android-Container.zip';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

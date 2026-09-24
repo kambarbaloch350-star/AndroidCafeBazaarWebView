@@ -1,44 +1,51 @@
 # Product changes applied to the packaged game
 
-The game in `app/src/main/assets/web/` is a **built** Vite/React bundle; its
-source lives outside this repository. Product changes that were requested for
-the packaged game are therefore applied to the built chunk by
-`tools/game-patches/apply_patches.py` (labzband) or `apply_chistan_patches.py`
-(chistansara) – exact, anchored, idempotent string edits – and covered by the
-jsdom contract tests (`scenarios.json` or `chistan_scenarios.json`). This page
-lists them so they can be ported into the game's source; once a change is in
-the source, delete its entry from the patch script (the script fails loudly
-when an anchor is gone).
+The game in `app/src/main/assets/web/` is a **built** Vite/React bundle
+(`assets/index-*.js`); its source lives outside this repository. Product changes
+that were requested for the packaged game are therefore applied to the built
+chunk by `tools/game-patches/apply_chistan_patches.py` – exact, anchored,
+idempotent string edits (a `None` target *deletes* its anchor) – and covered by
+the jsdom contract tests (`tools/game-tests/chistan_scenarios.json`). This page
+lists them so they can be ported into the game's source; once a change ships in
+the source, delete its entry (the script fails loudly when an anchor is gone).
 
 Run after every new game build is copied into `assets/web/`:
 
 ```bash
-python3 tools/branding/apply_logo.py                    # once the logo source exists (see below)
-python3 tools/game-patches/apply_patches.py             # labzband
-python3 tools/game-patches/apply_chistan_patches.py     # chistansara
-python3 tools/static_checks.py                          # warns when patches are pending or stale
-node tools/game-tests/run.mjs                           # auto-detects bundle, 40+ checks for chistan
+python3 tools/branding/apply_logo.py                    # only after branding/logo-source.png changes
+python3 tools/game-patches/apply_chistan_patches.py     # applies / validates the patches below
+python3 tools/game-patches/apply_chistan_patches.py --check   # CI guard, exit 0 = up to date
+python3 tools/static_checks.py
+node tools/game-tests/run.mjs                           # boots the chunk in jsdom (21 scenarios)
 ```
 
-The patched `App-*.js` and `index-*.js` chunks get **new content hashes**
-(and `index.html` is rewritten) because the local server serves hashed chunks
-with `Cache-Control: immutable`; a WebView that cached the previous build must
-see new file names.
+The script holds **12 product patches + the ES2019 syntax floor** (16 rewritten
+sites, see below) and verifies 19 invariants over the result; a run without
+`--check` re-hashes the chunk and rewrites `index.html` when anything changed.
+
+The patched chunk gets a **new content hash** and `index.html` is rewritten
+because the local server serves hashed chunks with `Cache-Control: immutable`: a
+WebView that cached the previous build must see new file names.
+`tools/game-patches/apply_patches.py` is the retired **labzband** patcher – this
+bundle has no `App-*.js` any more, neither locally nor in CI.
 
 ---
 
 ## ChistanSara (چیستان‌سرا) – current bundle (`index-*.js`)
 
 Packaged from `chistan-src` (Vite + React, 1347 riddles). The container is
-Persian-first: loading screen "چیستان‌سرا / در حال بارگذاری بازی… / ۱۳۴۷ چیستان
-جذاب فارسی", no "A Game By BalochAfzar" credit (`loading_credit` empty, view
-gone), app_name چیستان‌سرا.
+Persian-first: loading screen «چیستان‌سرا / در حال بارگذاری بازی… / ۱۳۴۷ چیستان
+جذاب فارسی», no "A Game By BalochAfzar" credit (`loading_credit` empty, view
+gone), app name چیستان‌سرا, package `com.chistan.quickgames`.
 
 ### Fair economy (1 coin = 50 tomans, no free coin packs)
 
-* Level reward 20 → **30 coins** (+10 streak bonus) – generous enough to progress without purchases.
-* Hint costs: letter 100→**60**, eliminate 150→**100**, clue 250→**150**, answer 250→**150**.
-* Store packs rewritten from 4 free packs to **9 priced SKUs** with toman display:
+* `level-reward-fair` – level reward 20 → **30 coins** (+10 streak bonus).
+* `hint-cost-letter-60`, `hint-cost-eliminate-100`, `hint-cost-clue-150`,
+  `hint-spend-clue-150`, `hint-cost-answer-150` – hint costs 100/150/250/250 →
+  **60/100/150/150**.
+* `store-packs-fair` – the four free packs → **9 priced SKUs** with toman display
+  and a CafeBazaar `sku`:
 
   | SKU | coins | price | badge |
   |-----|------:|------:|-------|
@@ -52,41 +59,147 @@ gone), app_name چیستان‌سرا.
   | `pack_vault` | 10000 | ۵۰۰,۰۰۰ تومان | خزانه سلطنتی |
   | `remove_ads` | 0 | ۲۰,۰۰۰ تومان | حذف تبلیغات |
 
-  All coin packs consumable, remove_ads non-consumable. CafeBazaar panel prices must match.
-  Button text changed from "دریافت رایگان" to price (e.g. "۱۰,۰۰۰ تومان").
+  The packs are consumable, `remove_ads` is not; the panel prices must match
+  (`CafeBazaarConfig.kt` holds the same table for the native side).
 
-* Free coins via rewarded video now **requires** `NativeAds.showRewarded()` – 150 coins only after ad completion.
+### Billing – CafeBazaar
 
-### Ads – interstitial every 3 levels
+* The store buys through `await window.CafeBazaar.purchase(sku)` and credits coins
+  only for `res.success === true && res.verified === true` (Poolakey validated the
+  signature). Cancelled/failed/unverified purchases show a toast and credit
+  nothing – there is no free fallback any more.
+* `store-remove-ads-not-consumed` – the `remove_ads` branch consumed the purchase
+  token. `remove_ads` is a **permanent (non-consumable)** unlock: consuming it
+  erases the entitlement on CafeBazaar and lets the same user be charged again, so
+  the stray `CafeBazaar.consume()` call is removed. Coin packs keep consuming (a
+  consumable must be consumed to be bought again); `CafeBazaarBillingManager`
+  additionally refuses to consume a token it knows belongs to a non-consumable.
 
-* Original cadence every 2 levels (`%2`) → **every 3 levels** (`%3`), gated by `remove_ads` ownership.
-* `native-bridge.js` overrides `localStorage.setItem` (via `Storage.prototype` defineProperty, jsdom-safe) to mirror `chistansara_game_save_v2` to `NativeApp.saveState` and trigger `NativeAds.showInterstitial()` when `Object.keys(completedLevels).length % 3 === 0`.
-* Respects `CafeBazaar.isRemoveAdsOwned()` + local `chistan_remove_ads` flag + `getInfo().removeAdsOwned`.
+### Ads – one interstitial every 3 completed levels (`interstitial-cadence-in-facade`)
 
-### Billing – CafeBazaar integration
+* The cadence lives in `app/src/main/assets/web/native-bridge.js`:
+  `ChistanBridge.showInterstitialIfNeeded()` is called from the save mirror (the
+  `localStorage.setItem` hook), requires
+  `Object.keys(completedLevels).length % interstitialEvery === 0` (`interstitialEvery = 3`),
+  is de-duplicated through `lastCompletedCount` and is skipped for owners of
+  `remove_ads` (native `CafeBazaar.isRemoveAdsOwned()` or the local
+  `chistan_remove_ads` flag).
+* The level-complete handler requested an interstitial itself **and** through
+  `ChistanBridge.showInterstitialIfNeeded()` – two requests in the same tick, and
+  a third once the save was mirrored. The patch **deletes the whole in-game block**:
+  the facade owns the policy, measured by the level count that is actually saved.
 
-* Store buy function rewritten to `await CafeBazaar.purchase(sku)` → `consume()` for coins, sets `chistan_remove_ads=1` for remove_ads, shows fanfare toast.
-* `CafeBazaarConfig.kt` updated: legacy `coin_pack_*` prices kept for unit-test compatibility (10k/30k/70k/150k/250k/500k), new chistan SKUs priced `coins*50` (fair, 1=50 tomans), `isConsumable` now checks `SUPPORTED_PRODUCTS`.
+### Coin credits – no double credit, no lost credit
 
-### Bridges – full contract
+* `triple-coins-state` – the ×3 bonus dispatched `chistan:coins` and then wrote
+  the coins straight into `localStorage`, which the game's save effect overwrote on
+  the next state change (the HUD never showed them). The patch drops that write.
+* `coin-event-listener` – adds the missing `chistan:coins` listener to the App
+  component, which credits the coins through the game's own coin updater
+  (`p(coins)`), so the HUD and the save both see them.
+* `free-coins-credit` – the store's rewarded row promises «دریافت +۱۵۰ سکه رایگان»
+  but credited nothing; the patch credits 150 coins once
+  `rewardGranted === true`.
+* `ChistanBridge.addCoins()` is a no-op acknowledgement in the facade: the
+  container never mints coins, they are only ever credited through verified
+  `CafeBazaar.purchase()` or the game's own economy.
 
-`native-bridge.js` unified bridge (436 lines) exposes:
-* `NativeApp`: isNative, appReady (auto on DOMContentLoaded/load + explicit), appLoaded, getInfo, getStartupRoute, reportError, navigateBack, setBackHandler, openEmail, openStorePage, openRatingPage, saveState/loadState/clearState, on.
-* `NativeAds`: showInterstitial, showRewarded, showNativeAt, hideNative, isReady, isAvailable, prepare, on.
-* `CafeBazaar`: isNativeBridgeAvailable, isAvailable, connect, getInfo, isRemoveAdsOwned, openRatingPage, openStorePage, purchase, consume, getPurchases + aliases.
-* Compat: `TapsellBridge` (init/showBanner/hideBanner/requestInterstitial/showInterstitial/requestRewarded/showRewarded/showNativeAt/moveNative/hideNative) → NativeAds, `PoolakeyBridge` (connect/disconnect/purchase/consume/getPurchasedProducts/getSkuDetails) → CafeBazaar, `BazaarBridge/CafeBazaarBridge` callbacks.
-* `ChistanBridge` economy helper: getEconomy, purchaseCoins, purchaseRemoveAds, isRemoveAdsOwned.
-* Constants: `BAZAAR_RSA_KEY`, `TAPSELL_CONFIG`.
+### Bridges – the facade contract
+
+`app/src/main/assets/web/native-bridge.js` is the **only** consumer of the
+container's `window.AndroidBridge` object; the game talks to the facade:
+
+* `NativeApp`: isNative, isProduction, getPackageName, appReady/appLoaded, getInfo,
+  getDeviceProfile, getRenderPixelRatio, getStartupRoute, reportError, navigateBack,
+  setBackHandler, onBackPressed, openEmail, composeEmail, openStorePage,
+  openRatingPage, isRemoveAdsOwned, saveState/loadState/clearState, on/onEvent.
+* `NativeAds`: showInterstitial, showRewarded, showNative, showNativeAt, hideNative,
+  isReady, isAvailable, prepare, on/onEvent. Every call returns a promise that
+  *always* settles (`{ ok, type, rewardGranted, reason, success }`), a second
+  request while one is pending answers `BUSY`, and the event envelope is de-duped.
+* `CafeBazaar`: isNativeBridgeAvailable, isAvailable, connect/connectAsync,
+  purchase, consume, getPurchases, isRemoveAdsOwned, openRatingPage, openStorePage.
+* `CafeBazaarBridge` / `TapsellBridge` / `PoolakeyBridge`: the callback and legacy
+  names the game and older builds may use, all routed into the namespaces above.
+* `ChistanBridge`: getEconomy, purchaseCoins, purchaseRemoveAds,
+  showInterstitialIfNeeded, addCoins.
+* No advertising or push identifier reaches the WebApp (`TAPSELL_CONFIG` and
+  `BAZAAR_RSA_KEY` are gone from the chunk).
 
 ### Persistence – force-stop survival
 
-* Save key `chistansara_game_save_v2` (alt `labzband_progress_v4`) mirrored to native via `saveState` on every `setItem`, restored on boot if web storage empty but native has data.
-* `localStorage.setItem` hook fixed for jsdom (assignment creates storage entry in jsdom – now uses `Object.defineProperty` on instance + `Storage.prototype`).
+* Save key `chistansara_game_save_v2` (alt `labzband_progress_v4`) is mirrored
+  natively on every `localStorage.setItem` (`NativeApp.saveState`) and restored at
+  boot when the web copy is missing or older.
+* The `localStorage.setItem` hook defines the property on the instance **and** on
+  `Storage.prototype` (jsdom-safe).
+
+### WebView baseline – the ES2019 syntax floor (`es2019-syntax-floor`)
+
+* The app runs on whatever WebView the device has (minSdk 24, Android 7+); the CI
+  emulator deliberately runs the old one every job installs on: **Chromium 83**
+  (API 30). `app/src/main/assets/native/compat.js` polyfills that generation's
+  *runtime* APIs (`Object.hasOwn`, `Array.prototype.at`, `String.replaceAll`,
+  `structuredClone`, `Promise.any/allSettled`, `crypto.randomUUID`, …) – but syntax
+  cannot be polyfilled.
+* Vite/React 19 ship ES2021 **logical assignment** (`a ??= b`, `a ||= b`,
+  `a &&= b`, Chrome 85). On Chromium 83 the module does not even parse: the page
+  stays empty, the game never boots and `appReady()` never arrives, so the
+  container shows its error plate instead (page-load watchdog 30 s, `APP_READY_TIMEOUT_MS` 45 s). That is exactly what
+  the emulator jobs reported (empty `#root`, `FAIL the WebApp never reported
+  readiness`, `SyntaxError: Unexpected token '='`).
+* The `es2019-syntax-floor` transform rewrites all 16 sites (20 operators) to the
+  ES2019 equivalent – `a ??= b` → `a ?? (a = b)`, `a ||= b` → `a || (a = b)`,
+  `a &&= b` → `a && (a = b)` – as one all-or-nothing unit: a partially applied
+  state fails loudly. Every left-hand side is a plain identifier or member access
+  on an ordinary object (`e`, `t`, `oe`, `e.title`, `this.musicTimer`, …), where
+  the two forms are indistinguishable.
+* `tools/static_checks.py` (`check_webview_baseline`) and the patcher's `verify()`
+  both fail when a logical assignment, a class static block or a private-in
+  expression is packaged, and warn about post-baseline APIs that `compat.js` does
+  not cover – so a refreshed game build cannot silently break old devices again.
+
+### Readiness handshake – who lifts the loading plate
+
+* The container keeps its native plate on screen until `AndroidBridge.appReady()`
+  arrives (minimum 3 s) and falls back to its error plate when it stays silent
+  (`PAGE_LOAD_TIMEOUT_MS` 30 s, `APP_READY_TIMEOUT_MS` 45 s), so the
+  handshake may not depend on the game finishing its own start-up.
+* `native-bridge.js` registers it at the **top** of the file, before any of its
+  namespaces are built: ~1 s after the document is ready, again on
+  `DOMContentLoaded`/`load`, and retried (bounded, 400 ms) while the bridge stays
+  unreachable. `NativeApp.appReady()` itself is idempotent, so the game's own call
+  (`window.NativeApp.appReady()` right after its settings hydrate) shares it.
+* Peripheral boot work (ad pipeline warm-up, billing connect, purchase restore)
+  runs separately and cannot delay or break the handshake.
+* `tools/game-tests/run.mjs` boots the page **without the game's scripts** and
+  asserts the facade still announces readiness, installs the save mirror and keeps
+  ads/billing running – the regression test for the failure above.
+* The container does not rely on the handshake alone: `MainActivity` runs a
+  **content probe** (`probeRenderedContent`, 2.5 s after `onPageFinished`, every
+  second, up to 12 attempts) and lifts the plate with a warning as soon as the page
+  has really rendered (`#root`/`#app`/`#game` has children and the body has text).
+  A WebView error page has no mount point and stays on the error path, so the
+  Persian error plate with its retry button is still shown when nothing rendered.
+  `tools/static_checks.py` (`check_loading_plate`) fails if either path disappears.
 
 ### Tests
 
-* `chistan_scenarios.json` – 10 scenarios, 43 checks: boot, fair prices (toman), economy (30/60/3), bridges present, interstitial every 3, no ad when remove_ads, coin purchase flow, rewarded ad for free coins, progress mirror, Persian loading.
-* `static_checks.py` updated to accept both `App-*.js` and `index-*.js` bundles.
+* `tools/game-tests/chistan_scenarios.json` – 21 scenarios: boot, fair prices
+  (toman, no «دریافت رایگان»), economy (30 / 60-100-150-150), the full bridge
+  contract, interstitial every 3 levels (exactly one request), no interstitial for
+  `remove_ads` owners, `remove_ads` bought but never consumed, coin purchase flow
+  (success / cancelled / unverified / no free exploit / balance after refresh),
+  the rewarded 150 coins, the ×3 bonus reaching the save, the progress mirror and
+  the Persian loading screen – plus four facade-only boot checks (readiness without
+  the game, the native save mirror, ads/billing support, no page errors) and two
+  checks that every container call matches the argument count `WebAppBridge.kt`
+  declares (the stub refuses a wrong count with the container's own
+  `Method not found`, which is how the save mirror was broken: a helper that could
+  not forward `saveState`'s third argument). **103 checks, all green.**
+* `tools/game-tests/run.mjs` auto-detects the bundle and selects that scenario file;
+  `tools/static_checks.py` warns when the chunk requests interstitials itself or
+  when a patch is pending, and fails on post-ES2019 syntax in the packaged assets.
 
 ---
 

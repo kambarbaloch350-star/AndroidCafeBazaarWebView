@@ -4,11 +4,13 @@ Everything the game's `index.html` needs to talk to the Android container.
 The container loads the bundle from `assets/web/index.html` through a local HTTP
 server and exposes exactly one JavaScript object: **`window.AndroidBridge`**.
 
-`app/src/main/assets/web/js/native-bridge.js` is a thin, optional convenience
-layer on top of it (`NativeApp`, `NativeAds`, `CafeBazaar`). Copy it into your
-bundle or call `AndroidBridge` directly — both are supported, and every method
-is safe to call when the page runs in a normal browser (`AndroidBridge` is simply
-`undefined`).
+`app/src/main/assets/web/native-bridge.js` (loaded by `index.html`) is the
+facade the WebApp talks to: it wraps `AndroidBridge` into promises
+(`NativeApp`, `NativeAds`, `CafeBazaar`, `ChistanBridge`) and is the **only**
+consumer of the raw interface, so a page never has to deal with the container's
+callback/event protocol. Every method is safe to call when the page runs in a
+normal browser (the facade detects the missing `AndroidBridge` and answers
+`false` / a settled promise).
 
 ```js
 const native = !!window.AndroidBridge;
@@ -30,9 +32,24 @@ window.AndroidBridge.appReady();   // or: window.NativeApp.appReady()
 ```
 
 If it never arrives the container shows its error/retry state instead of
-revealing a half-drawn game. There is a safety net (a finished page that stays
-silent for 6 s is treated as ready with a warning), but the explicit call is what
-you want.
+revealing a half-drawn game – *unless* the page has visibly rendered: 2.5 s after
+the document finished, the container probes the DOM and lifts the plate (with a
+warning in logcat) as soon as `#root`, `#app` or `#game` has children and the body
+has text. Mount your app into one of those ids so the safety net can recognise it.
+The call is idempotent and the bundled
+`native-bridge.js` **already announces readiness on its own** – about a second
+after the document is ready, again on `DOMContentLoaded`/`load`, with bounded
+retries while the bridge is unreachable – because the container's plate and its
+watchdogs (page load 30 s, `APP_READY_TIMEOUT_MS` 45 s) must not depend on the game's start-up: a bundle the WebView cannot
+parse, or one that hangs, must still lift the plate. Your own call stays useful
+(it can arrive earlier than the safety net on a fast boot) and costs nothing.
+
+The packaged bundle must also be **parseable by the container's WebView baseline
+(Chromium 83)**: `compat.js` polyfills that generation's runtime APIs, but
+post-ES2019 syntax (e.g. the `a ??= b` logical assignment React 19 emits) cannot
+be polyfilled – the module then never executes at all. `tools/static_checks.py`
+fails the build on such syntax; `tools/game-patches/apply_chistan_patches.py`
+rewrites it for the shipped chunk.
 
 ---
 
@@ -49,7 +66,7 @@ Register a handler that walks your own screen stack and returns `true` whenever
 it moved one page back:
 
 ```js
-// Option A – the helper (needs js/native-bridge.js)
+// Option A – the helper (native-bridge.js is already loaded by index.html)
 NativeApp.setBackHandler(() => {
   if (closeTopModal()) return true;            // modal/overlay closed
   if (screen === 'level')    { go('chapters'); return true; }
@@ -268,7 +285,7 @@ intent, so the in-game rating button should simply call `openRatingPage()`.
 
 ```js
 NativeApp.openEmail('balochappps@gmail.com');              // -> true when accepted
-AndroidBridge.composeEmail('balochappps@gmail.com', 'لبزبند'); // with a subject
+NativeApp.composeEmail('balochappps@gmail.com', 'چیستان‌سرا'); // with a subject
 ```
 
 The container composes the message natively: `ACTION_SENDTO` with a `mailto:`
@@ -293,7 +310,7 @@ window.addEventListener('nativeapp:deeplink', e => go(e.detail.route));
 
 In the Pushfa panel (or the send API) use a **relative** link such as
 `/level/12` – it reaches the WebApp as the route `level/12`. Full
-`labzband://level/12` links work too, and absolute `https://` links open the
+`chistan://level/12` links work too, and absolute `https://` links open the
 browser instead of the game.
 
 ---
@@ -413,7 +430,7 @@ Two container features cover them:
 So mirror every save natively and restore the newer copy at boot:
 
 ```js
-const KEY = 'labzband_progress_v4';
+const KEY = 'chistansara_game_save_v2';   // the game's save key (alt: labzband_progress_v4)
 
 function save(state) {
   const json = JSON.stringify(state), at = Date.now();
@@ -439,6 +456,17 @@ KB), `saveState` returns `true` when accepted, writes for the same key coalesce.
 In a browser (no bridge) `saveState` returns `false` and `loadState` `null`.
 The packaged game does exactly this (`docs/GAME_PATCHES.md` §8) and the
 emulator smoke test force-stops the app and checks the progress afterwards.
+
+> **Call every bridge method with exactly the arguments listed here.** A
+> JavaScript interface resolves a method by name **and argument count**:
+> `AndroidBridge.saveState(key, value)` with only two arguments answers
+> `Method not found`, which a `try/catch` around the call turns into a silent
+> fallback – the save is then never mirrored and the progress dies with the next
+> hard kill. (That is exactly how the mirror was broken: a helper that took
+> `(name, fallback, arg1, arg2)` could not forward the third argument.)
+> `tools/static_checks.py` compares every call site in `native-bridge.js` with
+> `WebAppBridge.kt`, and `tools/game-tests/run.mjs` calls the facade through a
+> container stub that refuses a wrong argument count the way the WebView does.
 
 ---
 
@@ -472,13 +500,13 @@ img, a { -webkit-user-drag: none; }
 |------|---------|
 | `AndroidBridge.appReady()` | boot finished – hide the loading screen |
 | `NativeApp.setBackHandler(fn)` | hardware back → previous page |
-| `NativeAds.showInterstitial()` | full-screen ad (every 2 levels) |
+| `NativeAds.showInterstitial()` | full-screen ad – the *facade* fires it every 3 completed levels (never for `remove_ads` owners), so the WebApp does not request it itself |
 | `NativeAds.showRewarded()` | rewarded video (spin wheel) |
 | `CafeBazaar.purchase(sku)` | coin pack / remove-ads |
 | `CafeBazaar.getPurchases()` | restore permanent unlocks |
 | `CafeBazaar.openRatingPage()` | CafeBazaar rating intent |
 | `NativeApp.openEmail(address)` | native e-mail composer (support / contact button) |
-| `NativeApp.saveState(key, json, savedAt)` / `loadState(key)` | native mirror of the save game (survives force stop / origin change) |
+| `NativeApp.saveState(key, json, savedAt)` / `loadState(key)` | native mirror of the save game (survives force stop / origin change) – pass all three arguments |
 | `NativeApp.getInfo()` | `{ platform, appVersion, serverPort, pushEnabled, adsReady, removeAdsOwned, device }` |
 | `NativeApp.getDeviceProfile()` | `{ tier, suggestedPixelRatio, totalRamMb, cpuCores, refreshRate, ... }` |
 | `NativeApp.getRenderPixelRatio()` | DPR to render a heavy canvas at (≤ real DPR) |

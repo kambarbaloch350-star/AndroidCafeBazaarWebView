@@ -14,6 +14,10 @@ checks that catch the majority of build breaks:
   7. the Pushfa / Tapsell wiring (dependency, BuildConfig keys, package name)
   8. app/google-services.json (when present) belongs to this package, so the
      Firebase project Pushfa delivers through is the one baked into the APK
+  9. the `native-bridge.js` facade calls every method of the container's
+     JavaScript interface with the signature `WebAppBridge.kt` declares (the
+     WebView resolves a method by name *and* argument count, and answers
+     `Method not found` when the two disagree)
 
 Exits non-zero when a problem is found.
 """
@@ -524,7 +528,9 @@ def check_gradle() -> None:
             ("TAPSELL_APP_KEY", r"^TAPSELL_APP_KEY=\S+$"),
             ("TAPSELL_ZONE_INTERSTITIAL", r"^TAPSELL_ZONE_INTERSTITIAL=[0-9a-f]{24}$"),
             ("TAPSELL_ZONE_REWARDED", r"^TAPSELL_ZONE_REWARDED=[0-9a-f]{24}$"),
-            ("TAPSELL_ZONE_NATIVE", r"^TAPSELL_ZONE_NATIVE=[0-9a-f]{24}$"),
+            # Empty is a valid answer for the native banner: the app then reports
+            # NOT_AVAILABLE instead of requesting an ad no zone can serve.
+            ("TAPSELL_ZONE_NATIVE", r"^TAPSELL_ZONE_NATIVE=([0-9a-f]{24})?$"),
             ("PUSHFA_API_PUBLIC_KEY", r"^PUSHFA_API_PUBLIC_KEY=\S+$")):
         if not re.search(pattern, props, re.M):
             errors.append(f"gradle.properties: {key} is not set to a valid value")
@@ -619,6 +625,306 @@ def check_ad_resilience() -> None:
             errors.append(f"{name} is missing")
 
 
+# The container ships to whatever WebView the device has, and the CI emulator
+# runs the oldest one the project supports on purpose: Chromium 83 (API 30).
+# `assets/native/compat.js` polyfills that generation's *runtime* APIs, but
+# syntax cannot be polyfilled – a single ES2021 operator makes the whole module
+# fail to parse, the page stays empty and the WebApp never announces readiness
+# (the game then hangs on the container's loading plate). Caught by hand once
+# (the emulator jobs went red); these checks keep it from happening again.
+BASELINE_SYNTAX = (
+    ("??=", "nullish assignment `a ??= b` (ES2021, Chrome 85)"),
+    ("||=", "logical OR assignment `a ||= b` (ES2021, Chrome 85)"),
+    ("&&=", "logical AND assignment `a &&= b` (ES2021, Chrome 85)"),
+    ("**=", "exponentiation assignment `a **= b` (ES2016, Chrome 52)"),
+)
+BASELINE_SYNTAX_PATTERNS = (
+    (re.compile(r"static\s*\{"), "class static block (ES2022, Chrome 94)"),
+    (re.compile(r"this\s*\.\s*#"), "private class member access (Chrome 84+)"),
+    (re.compile(r"\.\s*#\w+\s+in\s"), "private-in operator `#x in obj` (ES2022, Chrome 91)"),
+)
+# Post-83 runtime APIs. Everything the container's compat layer already covers is
+# listed there (Object.hasOwn, Array/String.at, replaceAll, structuredClone,
+# Promise.any/allSettled, crypto.randomUUID, Element.replaceChildren, …), so only
+# APIs that are *not* polyfilled are reported.
+BASELINE_RUNTIME_APIS = (
+    (".toSorted(", "Array.prototype.toSorted"), (".toReversed(", "Array.prototype.toReversed"),
+    (".toSpliced(", "Array.prototype.toSpliced"), (".with(", "Array.prototype.with"),
+    (".groupBy(", "Object.groupBy / Map.groupBy"), (".union(", "Set.prototype.union"),
+    (".intersection(", "Set.prototype.intersection"), (".difference(", "Set.prototype.difference"),
+    ("Array.fromAsync(", "Array.fromAsync"), ("Promise.withResolvers(", "Promise.withResolvers"),
+    ("new WeakRef(", "WeakRef"), ("new FinalizationRegistry(", "FinalizationRegistry"),
+    ("Iterator.", "Iterator helpers"), ("RegExp.escape(", "RegExp.escape"),
+    (".findLast(", "Array.prototype.findLast (compat.js covers it – check the polyfill is packaged)"),
+)
+
+
+def check_loading_plate() -> None:
+    """The loading plate must never be able to keep the game unreachable.
+
+    Two independent paths lift it, and both are required:
+
+      * the readiness handshake (`AndroidBridge.appReady()`), sent by the facade
+        – registered at the *top* of `native-bridge.js`, before any of its
+        namespaces exist, so it is sent even when the game never runs;
+      * the container's content probe (`MainActivity.probeRenderedContent`) –
+        a page that has visibly rendered (`#root`/`#app`/`#game` has children)
+        finishes the boot with a warning instead of leaving the player on
+        «در حال بارگذاری بازی…».
+    """
+    activity = open(os.path.join(JAVA, "MainActivity.kt"), encoding="utf-8").read()
+    for needle, what in (
+            ("probeRenderedContent", "the rendered-content probe (loading plate safety net)"),
+            ("CONTENT_PROBE_MIN_TEXT", "the probe's minimum-text constant"),
+            ("CONTENT_PROBE_ATTEMPTS", "the probe's retry bound")):
+        if needle not in activity:
+            errors.append(f"MainActivity.kt must keep {what} – a WebApp that renders but never "
+                          "calls appReady() would otherwise sit on the loading plate")
+    if "onDocumentLoaded" in activity and "probeRenderedContent(token, 1)" not in activity:
+        errors.append("MainActivity.kt: onDocumentLoaded must arm the rendered-content probe")
+    if 'lifting the loading plate for ' not in activity:
+        errors.append("MainActivity.kt: the content probe must log why it lifted the plate")
+
+    facade = open(os.path.join(ROOT, "app", "src", "main", "assets", "web", "native-bridge.js"),
+                  encoding="utf-8").read()
+    if "function announceReady()" not in facade:
+        errors.append("native-bridge.js must announce readiness itself (function announceReady)")
+    if "function scheduleReady(" not in facade:
+        errors.append("native-bridge.js must schedule the readiness handshake (scheduleReady)")
+    announce = facade.find("scheduleReady(1000)")
+    namespaces = facade.find("window.NativeApp = {")
+    if announce < 0 or namespaces < 0 or announce > namespaces:
+        errors.append("native-bridge.js must register the readiness handshake before it builds its "
+                      "namespaces (the game must not be able to break it)")
+
+
+
+def check_webview_baseline() -> None:
+    """The packaged WebApp must run on the container's Chromium 83 baseline."""
+    web = os.path.join(ROOT, "app", "src", "main", "assets", "web")
+    targets = [os.path.join(web, "native-bridge.js"), os.path.join(web, "js", "native-bridge.js")]
+    targets += sorted(glob.glob(os.path.join(web, "assets", "index-*.js")))
+    targets += sorted(glob.glob(os.path.join(web, "assets", "App-*.js")))
+    for path in targets:
+        if not os.path.isfile(path):
+            continue
+        text = open(path, encoding="utf-8", errors="ignore").read()
+        for needle, what in BASELINE_SYNTAX:
+            if needle in text:
+                errors.append(f"{rel(path)}: {what} cannot be parsed by the Chromium 83 WebView "
+                              f"baseline – run python3 tools/game-patches/apply_chistan_patches.py")
+        for pattern, what in BASELINE_SYNTAX_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                errors.append(f"{rel(path)}: {what} cannot be parsed by the Chromium 83 WebView "
+                              f"baseline (near {text[max(0, match.start() - 20):match.end() + 20]!r})")
+        for needle, what in BASELINE_RUNTIME_APIS:
+            if needle in text:
+                warnings.append(f"{rel(path)}: {what} is newer than the Chromium 83 baseline and "
+                                "needs a compat.js polyfill")
+
+
+def _brace_body(text: str, start: int) -> str:
+    """Source of a `{…}` block that starts at/after [start]."""
+    open_at = text.find("{", start)
+    if open_at < 0:
+        return ""
+    depth, i = 1, open_at + 1
+    quote = None
+    while i < len(text) and depth:
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'`":
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        i += 1
+    return text[open_at:i]
+
+
+def _split_arguments(text: str, angle: bool = False) -> list[str]:
+    """Split an argument list on top-level commas; quotes and brackets nest.
+
+    [angle] also treats `<`/`>` as nesting, for Kotlin generics – an argument
+    list of JavaScript must not (a `<` there is a comparison).
+    """
+    parts: list[str] = []
+    current = ""
+    depth = 0
+    quote = None
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                current += text[i:i + 2]
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            current += ch
+        elif ch in "\"'`":
+            quote = ch
+            current += ch
+        elif ch in ("([{<" if angle else "([{"):
+            depth += 1
+            current += ch
+        elif ch in (")]}>" if angle else ")]}"):
+            depth -= 1
+            current += ch
+        elif ch == "," and depth == 0:
+            parts.append(current.strip())
+            current = ""
+        else:
+            current += ch
+        i += 1
+    if current.strip():
+        parts.append(current.strip())
+    return [p for p in parts if p]
+
+
+def _java_interface_arities() -> dict[str, int]:
+    """`@JavascriptInterface` method name → argument count (WebAppBridge.kt)."""
+    path = os.path.join(JAVA, "WebAppBridge.kt")
+    text = open(path, encoding="utf-8", errors="ignore").read()
+    arities: dict[str, int] = {}
+    for match in re.finditer(r"@JavascriptInterface\s+fun\s+(\w+)\s*\(", text):
+        depth, i, start = 1, match.end(), match.end()
+        while i < len(text) and depth:
+            if text[i] == "(":
+                depth += 1
+            elif text[i] == ")":
+                depth -= 1
+            i += 1
+        arities[match.group(1)] = len(_split_arguments(text[start:i - 1], angle=True))
+    return arities
+
+
+def check_bridge_contract() -> None:
+    """The facade must call the JavaScript interface with the exact signature.
+
+    A JavaScript interface handles a call by *name and argument count*: a method
+    declared `saveState(key, value, savedAt)` that receives two arguments
+    answers `Method not found`, the facade swallows that into its fallback and
+    the container never sees the call. That is exactly how the native save
+    mirror (progress across a force stop) was silently dead: the `flag()`
+    helper took `(name, fallback, arg1, arg2)` and could not forward a third
+    argument.
+
+    So: the helpers must forward everything they are given from `arguments`, and
+    every call site in the facade must match `WebAppBridge.kt`.
+    """
+    facade = os.path.join(ASSETS, "web", "native-bridge.js")
+    mirror = os.path.join(ASSETS, "web", "js", "native-bridge.js")
+    if not os.path.isfile(facade):
+        errors.append("app/src/main/assets/web/native-bridge.js is missing")
+        return
+    text = open(facade, encoding="utf-8", errors="ignore").read()
+
+    if os.path.isfile(mirror):
+        if open(mirror, encoding="utf-8", errors="ignore").read() != text:
+            errors.append("the two native-bridge.js copies differ "
+                          "(app/src/main/assets/web/{,js/}native-bridge.js)")
+
+    # 1) the three bridge helpers forward their caller's arguments verbatim
+    for helper, skip in (("call", 2), ("accept", 1), ("flag", 2)):
+        found = re.search(rf"function\s+{helper}\s*\(", text)
+        body = _brace_body(text, found.end()) if found else ""
+        if not found or not body:
+            errors.append(f"native-bridge.js: the {helper}() helper is missing")
+            continue
+        if f"Array.prototype.slice.call(arguments, {skip})" not in body:
+            errors.append(f"native-bridge.js: {helper}() must forward the caller's arguments "
+                          f"(Array.prototype.slice.call(arguments, {skip})) – a fixed parameter "
+                          "list silently drops the trailing ones and the container answers "
+                          "'Method not found'")
+
+    # 2) every call site matches the Kotlin signature
+    arities = _java_interface_arities()
+    if not arities:
+        errors.append("WebAppBridge.kt exposes no @JavascriptInterface method")
+        return
+    site = re.compile(r"\b(call|flag|accept)\(\s*'([A-Za-z_$][\w$]*)'\s*([,)])")
+    for match in site.finditer(text):
+        helper, name, nxt = match.group(1), match.group(2), match.group(3)
+        if nxt == ")":
+            arguments: list[str] = []
+        else:
+            depth, i, start = 1, match.end(), match.end()
+            quote = None
+            while i < len(text) and depth:
+                ch = text[i]
+                if quote:
+                    if ch == "\\":
+                        i += 2
+                        continue
+                    if ch == quote:
+                        quote = None
+                elif ch in "\"'`":
+                    quote = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                i += 1
+            arguments = _split_arguments(text[start:i - 1])
+        # The name is already consumed by the pattern, so the first extracted
+        # argument is the fallback for call()/flag() and the first real one for
+        # accept(): call(name, fallback, …) / flag(name, fallback, …) /
+        # accept(name, …).
+        forwarded = len(arguments) - (1 if helper in ("call", "flag") else 0)
+        if name not in arities:
+            errors.append(f"native-bridge.js: {helper}('{name}') – no such @JavascriptInterface "
+                          "method in WebAppBridge.kt")
+        elif arities[name] != forwarded:
+            errors.append(f"native-bridge.js: {helper}('{name}') passes {forwarded} "
+                          f"argument(s) but WebAppBridge.{name} declares {arities[name]} – the "
+                          "container answers 'Method not found'")
+
+
+def check_emulator_scripts() -> None:
+    """The emulator self tests must use the shared helpers correctly.
+
+    `tools/game-tests/emulator_lib.mjs` mixes two kinds of helpers:
+    page-side snippets (`clickText`, `hasText`) that are *strings* and have to be
+    handed to `cdp.evaluate()`, and real promises (`waitForText`, `tapText`,
+    `readSave`). Calling `.then()` on a snippet – or importing a name the library
+    does not export – only shows up in CI, on the emulator, as an aborted
+    scenario (`TypeError: clickText(...).then is not a function`, which silently
+    cost the play-through its four levels and the persistence run its progress).
+    """
+    tests = os.path.join(ROOT, "tools", "game-tests")
+    library = os.path.join(tests, "emulator_lib.mjs")
+    if not os.path.isfile(library):
+        errors.append("tools/game-tests/emulator_lib.mjs is missing")
+        return
+    source = open(library, encoding="utf-8", errors="ignore").read()
+    exported = set(re.findall(r"export\s+(?:async\s+)?(?:function|const|let)\s+([A-Za-z_$][\w$]*)", source))
+    for name in sorted(glob.glob(os.path.join(tests, "emulator_*.mjs"))):
+        text = open(name, encoding="utf-8", errors="ignore").read()
+        imports = re.search(r"import\s*\{([^}]*)\}\s*from\s*'\./emulator_lib\.mjs'", text)
+        if imports:
+            for entry in imports.group(1).split(","):
+                # `screenshot as shot` imports `screenshot`
+                identifier = re.split(r"\s+as\s+", entry.strip())[0]
+                if not identifier:
+                    continue
+                if identifier not in exported:
+                    errors.append(f"{rel(name)}: imports {identifier} which emulator_lib.mjs "
+                                  "does not export")
+        for helper in ("clickText", "hasText"):
+            if re.search(rf"\b{helper}\s*\([^;]*?\)\s*\.", text):
+                errors.append(f"{rel(name)}: {helper}() returns a page-side snippet (a string), "
+                              "not a promise – hand it to cdp.evaluate() instead of chaining on it")
+
+
 def check_game_patches_and_contact() -> None:
     """Product changes that live in the packaged game and the container.
 
@@ -661,12 +967,18 @@ def check_game_patches_and_contact() -> None:
                 warnings.append("chistan store still shows free packs without toman prices – run tools/game-patches/apply_chistan_patches.py")
             for needle, what in (
                     ("remove_ads", "the remove_ads store product"),
-                    ("showInterstitial", "interstitial ad integration (every 3 levels)"),
                     ("CafeBazaar.purchase", "CafeBazaar billing integration"),
-                    ("NativeApp.appReady", "NativeApp.appReady handshake")):
+                    ("NativeApp.appReady", "NativeApp.appReady handshake"),
+                    ("window.CafeBazaar.consume", "purchase-token consumption")):
                 if needle not in bundle:
-                    if needle in ("showInterstitial", "CafeBazaar.purchase"):
-                        warnings.append(f"packaged game (chistan): {what} is missing – run tools/game-patches/apply_chistan_patches.py")
+                    warnings.append(f"packaged game (chistan): {what} is missing – run tools/game-patches/apply_chistan_patches.py")
+            # The interstitial cadence belongs to the facade: it fires from the
+            # save mirror, respects remove_ads and de-dupes the completed-level
+            # count, so the WebApp must not request ads itself (that fired two or
+            # three requests per level – see docs/GAME_PATCHES.md).
+            if "showInterstitial" in bundle:
+                warnings.append("packaged game (chistan): the WebApp requests interstitials itself – "
+                                "the cadence lives in native-bridge.js (run tools/game-patches/apply_chistan_patches.py)")
     else:
         warnings.append(f"expected one game bundle chunk, found {len(chunks)} (looked for App-*.js and index-*.js)")
 
@@ -692,24 +1004,60 @@ def check_game_patches_and_contact() -> None:
     facade = open(os.path.join(web, "native-bridge.js"), encoding="utf-8").read()
     if "saveState" not in facade or "loadState" not in facade:
         errors.append("native-bridge.js must expose NativeApp.saveState/loadState")
+    # `native-bridge.js` is the only place that talks to the `AndroidBridge`
+    # object, and it owns the interstitial cadence (every 3 completed levels,
+    # never for owners of remove_ads, one request per level count).
+    if "showInterstitialIfNeeded" not in facade or "interstitialEvery" not in facade:
+        errors.append("native-bridge.js must own the interstitial cadence "
+                      "(ChistanBridge.showInterstitialIfNeeded + interstitialEvery)")
+    if "AndroidBridge" not in facade:
+        errors.append("native-bridge.js must be the single AndroidBridge consumer")
     smoke = open(os.path.join(ROOT, "tools", "emulator_smoke.sh"), encoding="utf-8").read()
     if "emulator_persist.mjs" not in smoke:
         errors.append("emulator_smoke.sh must run the force-stop persistence check (emulator_persist.mjs)")
 
 
-def check_cafebazaar_key() -> None:
-    """CAFEBAZAAR_PUBLIC_KEY must be the console's RSA public key.
+def check_native_identifiers() -> None:
+    """The production identifiers must reach BuildConfig, and the keys must be valid.
 
-    Purchases are reported to the game as `verified` only when Poolakey can
-    check the signature with this key; a typo (truncated base64, wrong key)
-    silently means "charged but never credited". The value must decode to a
-    DER SubjectPublicKeyInfo carrying rsaEncryption (1.2.840.113549.1.1.1).
+    * Tapsell: app key + interstitial/rewarded zones are the *client* identifiers
+      of the app, committed in `gradle.properties` (BuildConfig only, never the
+      WebApp). The app must not ship without them: `TapsellManager` would report
+      NOT_CONFIGURED and the game would never show an ad.
+    * CafeBazaar: the RSA public key is what makes a purchase "verified"; a typo
+      (truncated base64, key of another app) silently means "charged but never
+      credited". The committed default lives in `CafeBazaarConfig.kt`, with a
+      `CAFEBAZAAR_RSA_KEY` override wired through `app/build.gradle.kts`.
     """
+    # ---- Tapsell: the committed app key must be a real key (a Tapsell Plus app
+    # key is a 64-72 character lowercase token) and must differ from the CI test
+    # key, otherwise a release APK would request Tapsell's test inventory.
+    properties = open(os.path.join(ROOT, "gradle.properties"), encoding="utf-8").read()
+    app_key = (re.search(r"^TAPSELL_APP_KEY=(\S+)$", properties, re.M) or [None, ""])[1].strip()
+    if app_key and not re.fullmatch(r"[a-z0-9]{48,96}", app_key):
+        errors.append(f"gradle.properties: TAPSELL_APP_KEY does not look like a Tapsell Plus app key "
+                      f"({len(app_key)} chars)")
+    gradle = open(os.path.join(ROOT, "app", "build.gradle.kts"), encoding="utf-8").read()
+    if app_key and app_key in gradle:
+        errors.append("app/build.gradle.kts: the production Tapsell app key is duplicated in the "
+                      "smoke-test key map – keep them separate")
+    tapsell = open(os.path.join(JAVA, "TapsellManager.kt"), encoding="utf-8").read()
+    if 'Tapsell zones configured: ' not in tapsell:
+        errors.append("TapsellManager.kt must log which zones are configured (one line per boot) – "
+                      "otherwise a key-less build fails ad requests silently")
+    if "cfg(\"CAFEBAZAAR_RSA_KEY\")" not in gradle:
+        errors.append("app/build.gradle.kts: CAFEBAZAAR_RSA_KEY must be a buildConfigField "
+                      "(so the key can be rotated from a secret)")
+
+    # ---- CafeBazaar RSA public key
     import base64
     src = open(os.path.join(JAVA, "CafeBazaarConfig.kt"), encoding="utf-8").read()
-    m = re.search(r'CAFEBAZAAR_PUBLIC_KEY\s*=\s*"([^"]*)"', src)
+    if "BuildConfig.CAFEBAZAAR_RSA_KEY" not in src:
+        errors.append("CafeBazaarConfig.kt: CAFEBAZAAR_PUBLIC_KEY must fall back to the "
+                      "CAFEBAZAAR_RSA_KEY build config value")
+    m = re.search(r'DEFAULT_CAFEBAZAAR_PUBLIC_KEY\s*=\s*\s*"([^"]*)"', src)
     if not m:
-        errors.append("CafeBazaarConfig.kt: CAFEBAZAAR_PUBLIC_KEY not found")
+        errors.append("CafeBazaarConfig.kt: DEFAULT_CAFEBAZAAR_PUBLIC_KEY not found")
         return
     key = m.group(1)
     if not key or key.startswith("YOUR_"):
@@ -736,7 +1084,7 @@ def check_cafebazaar_key() -> None:
 
 
 def main() -> int:
-    check_cafebazaar_key()
+    check_native_identifiers()
     check_xml_files()
     check_xml_references()
     check_kotlin_references()
@@ -747,6 +1095,10 @@ def main() -> int:
     check_google_services()
     check_ad_resilience()
     check_game_patches_and_contact()
+    check_webview_baseline()
+    check_loading_plate()
+    check_bridge_contract()
+    check_emulator_scripts()
 
     for warning in warnings:
         print(f"WARN  {warning}")

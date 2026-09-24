@@ -291,6 +291,168 @@ export async function clickUntil(cdp, selector, until, { max = 40, every = 160 }
   })()`, { awaitPromise: true, timeout: max * every + 15000 });
 }
 
+// ---------------------------------------------------------------------------
+// ChistanSara game helpers (text driven – the packaged UI has no stable ids)
+// ---------------------------------------------------------------------------
+/**
+ * Main-menu labels of the game. The play/resume button reads «شروع بازی» on a
+ * fresh save and «ادامه بازی» once there is progress, so both must be accepted.
+ */
+export const MENU_LABELS = ['ادامه بازی', 'شروع بازی'];
+/** The label that advances to the next level inside the win dialog. */
+export const NEXT_LEVEL_LABEL = 'مرحله بعدی';
+
+/** Waits for the main menu (either play/resume label). */
+export async function waitForMenu(cdp, timeoutMs, label = 'the main menu') {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const text of MENU_LABELS) {
+      let found = false;
+      try { found = await cdp.evaluate(hasText(text)); } catch { /* navigating */ }
+      if (found) return text;
+    }
+    await sleep(300);
+  }
+  return null;
+}
+
+/** The game's save key; the native mirror uses the same key. */
+export const SAVE_KEY = 'chistansara_game_save_v2';
+/** Legacy key of the labzband build – kept so a stale install still reads. */
+export const LEGACY_SAVE_KEY = 'labzband_progress_v4';
+
+/** Clicks the innermost clickable element whose visible text matches `text`. */
+export function clickText(text) {
+  return js`(function () {
+    var wanted = ${JSON.stringify(text)};
+    var nodes = document.querySelectorAll('button,[role="button"],a,div,span,p');
+    var best = null;
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var label = (node.innerText || node.textContent || '').trim();
+      if (label !== wanted) continue;
+      var rect = node.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) continue;
+      if (node.disabled === true) continue;
+      // innermost match wins (a button wrapping its label, not the page shell)
+      best = (!best || node.contains(best)) ? node : best;
+    }
+    if (!best) return null;
+    var target = best.closest ? (best.closest('button,[role="button"],a') || best) : best;
+    var r = target.getBoundingClientRect();
+    var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+    try {
+      target.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: x, clientY: y }));
+      target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y }));
+      target.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: x, clientY: y }));
+      target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
+      target.click();
+    } catch (e) { return 'error: ' + e.message; }
+    return (target.tagName || '') + ' @ ' + x + ',' + y;
+  })()`;
+}
+
+export function hasText(text) {
+  return js`(function () {
+    var wanted = ${JSON.stringify(text)};
+    var nodes = document.querySelectorAll('button,[role="button"],a,div,span,p,h1,h2,h3');
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if ((node.innerText || node.textContent || '').trim() !== wanted) continue;
+      var rect = node.getBoundingClientRect();
+      if (rect.width >= 2 && rect.height >= 2) return true;
+    }
+    return false;
+  })()`;
+}
+
+export function bodyText(cdp) {
+  return cdp.evaluate('(document.body && document.body.innerText || "").slice(0, 400)');
+}
+
+/** Polls for a visible element carrying exactly `text`. */
+export async function waitForText(cdp, text, timeoutMs, label = text, reporter = null) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let found = false;
+    try { found = await cdp.evaluate(hasText(text)); } catch { /* navigating */ }
+    if (found) return true;
+    await sleep(300);
+  }
+  if (reporter) reporter.fail(`${label} did not appear within ${timeoutMs} ms`, await bodyText(cdp));
+  return false;
+}
+
+/** Clicks `text` (waiting for it first) and reports what was clicked. */
+export async function tapText(cdp, text, timeoutMs = 20000, reporter = null) {
+  if (!await waitForText(cdp, text, timeoutMs, `"${text}"`, reporter)) return false;
+  const clicked = await cdp.evaluate(clickText(text));
+  if (!clicked) {
+    if (reporter) reporter.fail(`"${text}" could not be clicked`, await bodyText(cdp));
+    return false;
+  }
+  return true;
+}
+
+/** Reads the game's progress from localStorage and its native mirror. */
+export function readSave(cdp) {
+  return cdp.evaluate(js`(function () {
+    var key = ${JSON.stringify(SAVE_KEY)}, legacy = ${JSON.stringify(LEGACY_SAVE_KEY)};
+    var out = { key: key, port: location.port, origin: location.origin, coins: null, completions: -1,
+      current: -1, savedAt: null, mirror: null, info: null };
+    var raw = null;
+    try {
+      raw = localStorage.getItem(key);
+      if (raw === null) { key = legacy; raw = localStorage.getItem(key); out.key = key; }
+      if (raw) {
+        var p = JSON.parse(raw);
+        out.coins = typeof p.coins === 'number' ? p.coins : null;
+        out.completions = p.completedLevels ? Object.keys(p.completedLevels).length : -1;
+        out.current = typeof p.currentLevel === 'number' ? p.currentLevel : -1;
+      }
+      out.savedAt = localStorage.getItem(key + ':savedAt');
+    } catch (e) { out.error = String(e); }
+    try {
+      var m = window.NativeApp && window.NativeApp.loadState ? window.NativeApp.loadState(key) : null;
+      if (m && m.value) {
+        var q = JSON.parse(m.value);
+        out.mirror = { completions: q.completedLevels ? Object.keys(q.completedLevels).length : -1,
+          coins: typeof q.coins === 'number' ? q.coins : null, savedAt: m.savedAt };
+      }
+    } catch (e) { out.mirrorError = String(e); }
+    try {
+      var i = window.NativeApp.getInfo();
+      out.info = { serverPort: i.serverPort, stableOrigin: i.stableOrigin, stateMirror: i.stateMirror };
+    } catch (e) {}
+    return out;
+  })()`);
+}
+
+/** Seeds the game's save game (a *fresh* save unless levels are asked for). */
+export async function seedChistan(cdp, { completions = 0, coins = 500, currentLevel = null } = {}) {
+  await cdp.evaluate(js`(function () {
+    var key = ${JSON.stringify(SAVE_KEY)};
+    var levels = {};
+    for (var i = 1; i <= ${completions}; i++) levels[i] = { stars: 3, solvedAt: i, completedAt: i };
+    var save = {
+      version: 2, coins: ${coins}, currentLevel: ${currentLevel === null ? completions + 1 : currentLevel},
+      completedLevels: levels, streak: 0, currentStreak: 0, totalCorrect: ${completions},
+      soundEnabled: true, musicEnabled: true, hintsUsed: 0, purchasedTokens: [], adsRemoved: false,
+      savedAt: Date.now()
+    };
+    localStorage.setItem(key, JSON.stringify(save));
+    localStorage.setItem(key + ':savedAt', String(Date.now() + 1000));
+    return true;
+  })()`);
+  await sleep(400);
+}
+
+/** Reloads the page inside the running WebView (the closest thing to a cold URL load). */
+export async function reloadPage(cdp, waitMs = 2500) {
+  await cdp.evaluate('setTimeout(function () { location.reload(); }, 50); true');
+  await sleep(waitMs);
+}
+
 /** The save game used to skip the tutorial and afford unlimited hints. */
 export const PROGRESS_KEY = 'labzband_progress_v4';
 export const RICH_PROGRESS = {

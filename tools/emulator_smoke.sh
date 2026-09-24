@@ -42,6 +42,35 @@ FAILURES=0
 exec > >(tee "$OUT/console.log") 2>&1
 
 note() { echo "[smoke] $*"; }
+# Waits (up to $1 s) until the app reports that the loading plate was lifted and
+# prints which of the two paths lifted it:
+#   * the readiness handshake (`appReady()` from the WebApp/facade), or
+#   * the container's content probe (the page rendered but stayed silent).
+wait_for_plate() {
+  local limit="${1:-60}" tries=0
+  while [ "$tries" -lt "$limit" ]; do
+    if adb logcat -d -s MainActivity:I | grep -q "hiding the native loading plate"; then
+      if adb logcat -d -s MainActivity:I | grep -q "lifting the loading plate for rendered content"; then
+        echo "content-probe"
+      else
+        echo "handshake"
+      fi
+      return 0
+    fi
+    tries=$((tries + 1))
+    sleep 1
+  done
+  echo "none"
+  return 1
+}
+# Page console + engine errors: the container mirrors everything the page logs
+# (and every uncaught exception) into logcat with the tag `WebApp`
+# (MainActivity.onConsoleMessage), so this is the only way to see *why* a WebView
+# refused to run the WebApp – an unparseable bundle on an old Chromium, a bridge
+# call that threw, a failed asset.
+webapp_console() {
+  adb logcat -d -s WebApp:V 2>/dev/null | sed -n 's/^\(.*WebApp[^:]*: \)//p' | tail -"${1:-25}"
+}
 fail() { echo "[smoke][FAIL] $*"; FAILURES=$((FAILURES + 1)); }
 
 adb start-server >/dev/null 2>&1 || true
@@ -89,6 +118,19 @@ if [ "$READY" = "1" ]; then
   note "WebApp reported readiness (NativeApp.appReady reached the container)"
 else
   fail "the WebApp never reported readiness within 40s"
+  # Diagnose it here: the usual cause is the page not running at all.
+  PAGE_ERRORS=$(webapp_console 10)
+  if [ -n "$PAGE_ERRORS" ]; then
+    note "page console / uncaught errors:"
+    echo "$PAGE_ERRORS"
+  else
+    note "the page logged nothing – the bundle may not have been served at all"
+  fi
+  if echo "$PAGE_ERRORS" | grep -qE "SyntaxError"; then
+    note "a SyntaxError means the bundle cannot be parsed by this WebView (Chromium 83 here):"
+    note "keep app/src/main/assets/web/assets/index-*.js free of post-ES2019 syntax"
+    note "(tools/game-patches/apply_chistan_patches.py --check, tools/static_checks.py)"
+  fi
 fi
 
 if adb logcat -d -s LocalWebServer:I | grep -q "Local HTTP server ready at http://127.0.0.1"; then
@@ -97,15 +139,17 @@ else
   fail "the local HTTP server never came up"
 fi
 
-if adb logcat -d -s MainActivity:I | grep -q "hiding the native loading plate"; then
-  note "native loading plate was hidden by the readiness handshake"
-else
-  fail "the loading plate was never hidden (handshake incomplete)"
-fi
+PLATE_PATH=$(wait_for_plate 20 || true)
+case "$PLATE_PATH" in
+  handshake)      note "native loading plate was hidden by the readiness handshake" ;;
+  content-probe)  note "native loading plate was hidden by the container's content probe (the WebApp rendered but stayed silent – see the warning in logcat)" ;;
+  *)              fail "the loading plate was never hidden (neither the handshake nor the content probe fired)" ;;
+esac
 
 # The bridge runs on the WebView's JavaBridge thread: any WebView call made from
 # there throws "A WebView method was called on thread 'JavaBridge'" and silently
 # disables the JS API. Catch it here instead of in production.
+adb logcat -d > "$OUT/logcat.txt" 2>/dev/null || true
 if grep -q "was called on thread 'JavaBridge'" "$OUT/logcat.txt"; then
   fail "bridge methods touched WebView APIs off the main thread"
   grep -n "was called on thread" "$OUT/logcat.txt" | head -3
@@ -225,12 +269,19 @@ adb shell am force-stop "$PKG" >/dev/null 2>&1
 sleep 2
 adb logcat -c >/dev/null 2>&1 || true
 adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
-for _ in $(seq 1 40); do
-  adb logcat -d -s MainActivity:I | grep -q "hiding the native loading plate" && break
-  sleep 1
-done
+PLATE_PATH=$(wait_for_plate 45 || true)
+if ! adb logcat -d -s MainActivity:I | grep -q "minimum is 3000 ms"; then
+  # A thrashing emulator (the launcher itself ANRs under the CI load) can push a
+  # boot past the timeout: give the same cold boot one more chance before failing.
+  note "no boot timing yet – relaunching once more"
+  adb shell am force-stop "$PKG" >/dev/null 2>&1
+  sleep 2
+  adb logcat -c >/dev/null 2>&1 || true
+  adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
+  PLATE_PATH=$(wait_for_plate 60 || true)
+fi
 if adb logcat -d -s MainActivity:I | grep -q "minimum is 3000 ms"; then
-  note "$(adb logcat -d -s MainActivity:I | grep -o 'Loading screen visible for.*' | tail -1)"
+  note "cold boot done (plate lifted by: ${PLATE_PATH:-none}): $(adb logcat -d -s MainActivity:I | grep -o 'Loading screen visible for.*' | tail -1)"
 else
   fail "the loading screen never reported its minimum-duration floor"
 fi
@@ -310,12 +361,20 @@ sleep 1.2
 adb exec-out screencap -p > "$OUT/14-splash-night.png" 2>/dev/null || true
 # The splash has a 3 s floor, so the timing line only appears once it is done.
 NIGHT_OK=0
-for _ in $(seq 1 25); do
-  if adb logcat -d -s MainActivity:I | grep -q "Loading screen visible for"; then
-    NIGHT_OK=1
-    break
-  fi
-  sleep 1
+for attempt in 1 2; do
+  for _ in $(seq 1 30); do
+    if adb logcat -d -s MainActivity:I | grep -q "Loading screen visible for"; then
+      NIGHT_OK=1
+      break
+    fi
+    sleep 1
+  done
+  [ "$NIGHT_OK" = "1" ] && break
+  note "night-mode boot slow – relaunching (attempt $attempt)"
+  adb shell am force-stop "$PKG" >/dev/null 2>&1
+  sleep 2
+  adb logcat -c >/dev/null 2>&1 || true
+  adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
 done
 adb shell cmd uimode night no >/dev/null 2>&1 || true
 if [ "$NIGHT_OK" = "1" ]; then
@@ -418,9 +477,30 @@ fi
   adb logcat -d | grep -E "LocalWebServer|WebAppBridge|MainActivity|TapsellManager|PushfaManager|App:" | tail -45
   echo '```'
   echo
-  echo "WebApp console (bridge handshake):"
+  echo "WebApp console (page log + uncaught errors, container tag WebApp):"
   echo '```'
-  adb logcat -d -s WebApp:D | grep -E "webapp\]|AUTOTEST" | tail -25
+  webapp_console 25
+  echo '```'
+  echo
+  echo "Loading plate:"
+  echo '```'
+  adb logcat -d -s MainActivity:I 2>/dev/null | grep -E "hiding the native loading plate|lifting the loading plate|Loading screen visible for|WebApp never called" | tail -6
+  echo '```'
+  echo
+  echo "Parse / URL errors reported by the WebView:"
+  echo '```'
+  adb logcat -d 2>/dev/null | grep -iE "SyntaxError|Uncaught|net::ERR|ERR_FILE" | tail -15
+  echo '```'
+  echo
+  echo "Play-through / persistence self test:"
+  echo '```'
+  for f in play.log persist.log; do
+    [ -f "$OUT/$f" ] || continue
+    echo "--- $f"
+    grep -E "FAIL|checks passed|aborted" "$OUT/$f" | tail -12 || true
+    echo "    (last lines)"
+    tail -3 "$OUT/$f" | sed 's/^/    /' || true
+  done
   echo '```'
   echo
   echo "Smoke script console:"

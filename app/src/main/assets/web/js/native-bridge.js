@@ -1,14 +1,162 @@
 /**
- * Native container facade for چیستان (ChistanSara)
- * Supports:
- *  - Old labzband bridges: NativeApp, NativeAds, CafeBazaar
- *  - Jadooye Adad bridges: TapsellBridge, PoolakeyBridge, BAZAAR_RSA_KEY, TAPSELL_CONFIG
- *  - ChistanSara integration: fair economy, 3-level interstitials, progress mirror, Persian loading
+ * Native container facade for چیستان‌سرا (ChistanSara)
+ * ====================================================
+ *
+ * The container exposes exactly one JavaScript object – `window.AndroidBridge`
+ * (`WebAppBridge.kt`) – and this file is its *only* intended consumer: it turns
+ * the container's callback/event protocol into promises and DOM events a WebApp
+ * can await, and it never invents a result the container did not produce (an ad
+ * that was not shown, a purchase that was not verified, a reward that was not
+ * granted).
+ *
+ * Calls used (all optional – every one degrades to a safe value in a browser):
+ *   readiness   appReady, appLoaded, reportError
+ *   environment isNativeApp, isProduction, getPackageName, getInfo,
+ *               getDeviceProfile
+ *   navigation  navigateBack, getStartupRoute, consumeStartupRoute,
+ *               openEmail, composeEmail, openRatingPage, openStorePage
+ *   save game   saveState, loadState, clearState
+ *   ads         showInterstitial, showRewarded, showNative, showNativeAt,
+ *               hideNative, isAdReady, isAdsAvailable, prepareAds
+ *   billing     isBillingAvailable/isAvailable, connectBilling, buyProduct,
+ *               buyProductWithPayload, consumePurchase, getPurchases,
+ *               isRemoveAdsOwned
+ *
+ * Events consumed (both channels are always delivered by the container):
+ *   `NativeAds.onEvent(json)` + `nativeads:event`            → ads:*
+ *   `CafeBazaarBridge.onConnectionResult|onPurchaseResult|  → cafebazaar:*
+ *    onConsumeResult|onPurchasesQueryResult|onOwnedProductsChanged`
+ *   `NativeApp.onEvent(json)` + `nativeapp:ready`,           → app:*
+ *    `nativeapp:resume|pause|memorywarning|resize|deeplink`
+ *
+ * Notes on the container contract (docs/WEBAPP_INTEGRATION.md):
+ *   - no advertising / push / billing identifier is ever exposed here: the
+ *     Tapsell key & zones and the CafeBazaar RSA key live in the native layer
+ *     (`TapsellConfig.kt`, `CafeBazaarConfig.kt`);
+ *   - a `show*()` request always settles (closed / skipped / error / timeout),
+ *     and a settled request must release the slot so the next ad can be shown;
+ *   - the hardware back button is answered through `NativeApp.onBackPressed()`
+ *     (registered with `NativeApp.setBackHandler`) – the container dispatches
+ *     the cancelable `nativeapp:back` event only when that returned `false`, so
+ *     this facade must not run the handler a second time;
+ *   - the WebApp owns its economy: the container never mints coins.
+ *
+ * Supports the older bridges as thin aliases: `TapsellBridge`, `PoolakeyBridge`,
+ * `BazaarBridge` / `CafeBazaarBridge`, plus the چستان helpers `ChistanBridge`.
  */
 (function (window) {
   'use strict';
 
   // ------------------------------------------------------------------ core
+  var BRIDGE = 'AndroidBridge';
+  var AD_TIMEOUT_MS = { interstitial: 6000, rewarded: 18000, native: 6000 };
+
+  function warn() { try { if (window.console && window.console.warn) window.console.warn.apply(window.console, arguments); } catch (_) {} }
+  function bridge() { return window[BRIDGE] || null; }
+  function method(name) {
+    var b = bridge();
+    return b && typeof b[name] === 'function' ? b[name] : null;
+  }
+  /** Calls a container method; returns `fallback` when it is unavailable/failed. */
+  function call(name, fallback) {
+    var fn = method(name);
+    if (!fn) return fallback;
+    try { return fn.apply(bridge(), Array.prototype.slice.call(arguments, 2)); }
+    catch (e) { warn('[NativeBridge] ' + name + '() failed', e); return fallback; }
+  }
+  /** Calls a void-returning container method; `true` when it accepted the request. */
+  function accept(name) {
+    var fn = method(name);
+    if (!fn) return false;
+    try { fn.apply(bridge(), Array.prototype.slice.call(arguments, 1)); return true; }
+    catch (e) { warn('[NativeBridge] ' + name + '() failed', e); return false; }
+  }
+  /**
+   * Calls a boolean-returning container method.
+   *
+   * Every argument the caller passed is forwarded **as is**: the container's
+   * JavaScript interface resolves a method by name *and* argument count, and
+   * answers `Method not found` when the two do not line up
+   * (`WebAppBridge.saveState(key, value, savedAt)` seen from here with two
+   * arguments, for example – which silently disabled the save mirror). A
+   * wrapper with a fixed `arg1, arg2` parameter list cannot forward three, so
+   * this one forwards `arguments`. `tools/static_checks.py` asserts both the
+   * shape of this function and the arity of every call site below, and
+   * `tools/game-tests/run.mjs` calls the facade through a container stub that
+   * rejects a wrong argument count exactly like the WebView does.
+   */
+  function flag(name, fallback) {
+    var rest = Array.prototype.slice.call(arguments, 2);
+    return call.apply(null, [name, fallback === undefined ? false : fallback].concat(rest)) === true;
+  }
+  function parse(value) {
+    try {
+      var data = typeof value === 'string' ? JSON.parse(value) : value;
+      return data && typeof data === 'object' ? data : {};
+    } catch (_) { return {}; }
+  }
+  function fail(reason) {
+    return { ok: false, success: false, rewardGranted: false, reason: reason, errorCode: reason };
+  }
+  function emit(name, data) {
+    (listeners[name] || []).slice().forEach(function (fn) {
+      try { fn(data); } catch (e) { (window.console && console.error) && console.error(e); }
+    });
+  }
+  function on(name, fn) {
+    (listeners[name] = listeners[name] || []).push(fn);
+    return function () {
+      listeners[name] = listeners[name].filter(function (item) { return item !== fn; });
+    };
+  }
+  function event(name, data) {
+    try { window.dispatchEvent(new CustomEvent(name, { detail: data })); } catch (_) {}
+  }
+  /**
+   * The container delivers the same event through two channels (`X.onEvent(json)`
+   * *and* a DOM event, in the same tick); a facade listener must fire once.
+   */
+  function emitOnce(name, data) {
+    var key = name + '|' + JSON.stringify(data === undefined ? null : data);
+    if (lastEmit[name] === key) return;
+    lastEmit[name] = key;
+    setTimeout(function () { if (lastEmit[name] === key) lastEmit[name] = null; }, 0);
+    emit(name, data);
+  }
+
+  // ------------------------------------------------------ readiness handshake
+  // `AndroidBridge.appReady()` is what hides the container's native loading
+  // plate and marks the boot as successful; the container gives up after 30 s
+  // and shows its error plate instead. The handshake may therefore never wait
+  // for the game's own (heavy, asynchronous) start-up, and it must survive a
+  // failure anywhere below: it is registered before every object in this file is
+  // built. `appReady()` is idempotent, so the game's own call and this one share
+  // the single native handshake.
+  var booted = false, readyAttempts = 0;
+  function announceReady() {
+    if (booted) return;
+    try {
+      var app = window.NativeApp;
+      if (app && typeof app.appReady === 'function' && app.appReady() === true) { booted = true; return; }
+    } catch (e) { warn('[NativeBridge] readiness handshake failed', e); }
+    // The bridge can still be unreachable for a moment (WebView restored from a
+    // killed process, interface re-attached): retry, bounded, so a single miss
+    // cannot cost the whole boot.
+    if (readyAttempts++ < 20) setTimeout(announceReady, 400);
+  }
+  function scheduleReady(delay) { setTimeout(announceReady, delay); }
+  // Earliest safe moment: the document is there, the container's plate is up and
+  // the container holds it for at least 3 s – announcing early costs nothing,
+  // announcing late leaves the player on a blank screen until the watchdog.
+  scheduleReady(1000);
+  if (document.readyState === 'complete' || document.readyState === 'interactive') scheduleReady(0);
+  else window.addEventListener('DOMContentLoaded', function () { announceReady(); });
+  window.addEventListener('load', function () { announceReady(); });
+
+  var listeners = Object.create(null);
+  var lastEmit = Object.create(null);
+
+  // ------------------------------------------------------------------ audio
   // Keep every Web Audio context under lifecycle control. WebView.onPause()
   // does not reliably suspend a page-created AudioContext on all Android
   // WebView versions, so background music must be stopped explicitly.
@@ -35,67 +183,67 @@
   function resumeWebAudio() {
     nativeAudioContexts.forEach(function (ctx) { try { ctx.resume(); } catch (_) {} });
   }
-  window.addEventListener('nativeapp:pause', pauseWebAudio);
-  window.addEventListener('nativeapp:resume', resumeWebAudio);
 
-  var adPending = null, purchasePending = null, queryPending = null;
-  var consumePending = Object.create(null), listeners = Object.create(null);
-  var ready = false, backHandler = null;
+  // --------------------------------------------------------------- pending
+  // One request per kind: the container serialises ads and purchases, so a
+  // second request while one is pending is answered BUSY instead of queueing a
+  // promise that can never settle. Every timer releases the slot it owns.
+  var adPending = null, purchasePending = null, queryPending = null, connectPending = null;
+  var consumePending = Object.create(null);
+  var ready = false, backHandler = null, removeAdsOwned = false, billingConnected = false;
+  var lastAdEnvelope = null;
   var lastCompletedCount = 0;
-  var lastLevel = 0;
-  var interstitialEvery = 3; // show ad every 3 levels
+  var interstitialEvery = 3; // show an interstitial every 3 completed levels
   var SAVE_KEY = 'chistansara_game_save_v2';
   var SAVE_KEY_ALT = 'labzband_progress_v4'; // legacy support
 
-  function call(method, fallback) {
-    var b = window.AndroidBridge;
-    if (!b || typeof b[method] !== 'function') return fallback;
-    try { return b[method].apply(b, Array.prototype.slice.call(arguments, 2)); }
-    catch (_) { return fallback; }
-  }
-  function parse(value) {
-    try { var data = typeof value === 'string' ? JSON.parse(value) : value;
-      return data && typeof data === 'object' ? data : {}; } catch (_) { return {}; }
-  }
-  function emit(name, data) {
-    (listeners[name] || []).slice().forEach(function (fn) { try { fn(data); } catch (e) { console.error(e); } });
-  }
-  function on(name, fn) {
-    (listeners[name] = listeners[name] || []).push(fn);
-    return function () { listeners[name] = listeners[name].filter(function (item) { return item !== fn; }); };
-  }
-  function event(name, data) { window.dispatchEvent(new CustomEvent(name, { detail: data })); }
-  function fail(reason) { return { ok: false, success: false, rewardGranted: false, reason: reason, errorCode: reason }; }
-  function request(timeout) {
+  /**
+   * Promise + timeout. [onTimeout] releases the slot the request occupies, so a
+   * container that never answers (no ad fill, SDK stall) cannot wedge the
+   * bridge: without it one timed-out interstitial answered BUSY to every later
+   * ad request for the rest of the session.
+   */
+  function request(timeout, onTimeout) {
     var entry = { done: false };
     entry.promise = new Promise(function (resolve) {
       entry.finish = function (result) {
         if (entry.done) return;
-        entry.done = true; clearTimeout(entry.timer); resolve(result);
+        entry.done = true;
+        clearTimeout(entry.timer);
+        resolve(result);
       };
-      entry.timer = setTimeout(function () { entry.finish(fail('TIMEOUT')); }, timeout);
+      entry.timer = setTimeout(function () {
+        if (typeof onTimeout === 'function') { try { onTimeout(entry); } catch (_) {} }
+        entry.finish(fail('TIMEOUT'));
+      }, timeout);
     });
     return entry;
   }
-  function show(kind, method, args) {
+
+  /** Requests a full-screen ad and settles when the container reports the end. */
+  function show(kind, name, args) {
     if (adPending) return Promise.resolve(fail('BUSY'));
-    // Keep the WebApp-side timeout aligned with the native contract. Native
-    // requests are bounded to six seconds for interstitial/native and eighteen
-    // seconds for rewarded; the JS facade must not leave a game waiting for
-    // three minutes when a bridge callback is lost.
-    var entry = request(kind === 'rewarded' ? 18000 : 6000);
-    entry.kind = kind; entry.reward = false; adPending = entry;
-    var accepted = call.apply(null, [method, false].concat(args || []));
-    if (accepted !== true) { adPending = null; entry.finish(fail('NOT_AVAILABLE')); }
+    var entry = request(AD_TIMEOUT_MS[kind] || 6000, function () {
+      if (adPending === entry) adPending = null;
+    });
+    entry.kind = kind;
+    entry.reward = false;
+    adPending = entry;
+    var accepted = accept.apply(null, [name].concat(args || []));
+    if (!accepted) {
+      adPending = null;
+      entry.finish(fail('NOT_AVAILABLE'));
+    }
     return entry.promise;
   }
-  var lastAdEnvelope = null;
+
   function adEvent(value) {
-    var e = parse(value), data = parse(e.data), entry = adPending, type = e.type;
+    var e = parse(value), data = parse(e.data), type = e.type, entry = adPending;
     var key = type + '|' + JSON.stringify(data);
     if (key === lastAdEnvelope) return;
     lastAdEnvelope = key;
     setTimeout(function () { if (lastAdEnvelope === key) lastAdEnvelope = null; }, 0);
+
     if (entry) {
       if (entry.kind === 'rewarded' && (type === 'reward_granted' || type === 'rewarded_completed')) entry.reward = true;
       var closed = type === entry.kind + '_closed' || (entry.kind === 'native' && type === 'native_shown');
@@ -105,94 +253,238 @@
         adPending = null;
         var granted = !error && (entry.reward || data.rewardGranted === true);
         entry.finish(error ? fail(data.error || 'AD_ERROR') : {
-          ok: entry.kind !== 'rewarded' || granted, type: entry.kind,
+          ok: entry.kind !== 'rewarded' || granted,
+          type: entry.kind,
           rewardGranted: entry.kind === 'rewarded' && granted,
-          success: !error, verified: !error,
-          reason: skipped ? 'SKIPPED' : (entry.kind === 'rewarded' && !granted ? 'NOT_REWARDED' : undefined), data: data
+          success: !error,
+          verified: !error,
+          reason: skipped ? 'SKIPPED' : (entry.kind === 'rewarded' && !granted ? 'NOT_REWARDED' : undefined),
+          data: data
         });
       }
     }
-    emit('ads:' + type, data); emit('ads:event', e);
+    emit('ads:' + type, data);
+    emit('ads:event', e);
   }
+
+  // -------------------------------------------------------------- container
+  // Lifecycle events arrive as `nativeapp:*` DOM events from MainActivity and
+  // are re-emitted under the documented `NativeApp.on(...)` names (`pause`,
+  // `resume`, `memorywarning`, `resize`, `deeplink`, `ready`).
+  var LIFECYCLE = {
+    'nativeapp:pause': 'pause',
+    'nativeapp:resume': 'resume',
+    'nativeapp:memorywarning': 'memorywarning',
+    'nativeapp:resize': 'resize'
+  };
+  Object.keys(LIFECYCLE).forEach(function (domName) {
+    window.addEventListener(domName, function (e) {
+      var data = (e && e.detail) || {};
+      if (domName === 'nativeapp:pause') pauseWebAudio();
+      if (domName === 'nativeapp:resume') resumeWebAudio();
+      emitOnce('app:' + LIFECYCLE[domName], data);
+    });
+  });
+  // `nativeapp:ready` / `container:ready` carry `{ route, pushSupported }`.
+  ['nativeapp:ready', 'container:ready'].forEach(function (domName) {
+    window.addEventListener(domName, function (e) {
+      ready = true;
+      emitOnce('app:ready', (e && e.detail) || {});
+    });
+  });
+  // Deep links: the container also calls NativeApp.onEvent({type:'deep_link'}),
+  // so `emitOnce` keeps a listener from firing twice for one link.
+  window.addEventListener('nativeapp:deeplink', function (e) {
+    var detail = (e && e.detail) || {};
+    var route = detail.route !== undefined ? detail.route : '';
+    emitOnce('app:deeplink', { route: route });
+    emitOnce('app:deep_link', { route: route });
+  });
+  window.addEventListener('nativeads:event', function (e) { adEvent(e.detail); });
 
   // ---------------------------------------------------------------- NativeApp
   window.NativeApp = {
-    isNative: function () { return !!window.AndroidBridge; },
+    isNative: function () { return !!bridge(); },
+    isNativeApp: function () { return flag('isNativeApp', !!bridge()); },
+    isProduction: function () { return flag('isProduction', false); },
+    getPackageName: function () { return call('getPackageName', ''); },
     appReady: function () {
       if (!ready) {
         ready = call('appReady', false) === true;
-        // Also try to save that we are ready
-        try { localStorage.setItem('native_app_ready', '1'); } catch(e){}
+        if (ready) emitOnce('app:ready', {});
       }
       return ready;
     },
     appLoaded: function () { return window.NativeApp.appReady(); },
     getInfo: function () { return parse(call('getInfo', '{}')); },
-    getStartupRoute: function () { var route = call('getStartupRoute', ''); call('consumeStartupRoute', null); return route || ''; },
+    getDeviceProfile: function () {
+      var profile = parse(call('getDeviceProfile', '{}'));
+      if (!Object.keys(profile).length) {
+        var info = window.NativeApp.getInfo();
+        if (info && info.device) profile = info.device;
+      }
+      return profile;
+    },
+    /**
+     * DPR a heavy Canvas/WebGL game should render at: the container's advice for
+     * the device tier, never above the real device pixel ratio.
+     */
+    getRenderPixelRatio: function () {
+      var real = window.devicePixelRatio || 1;
+      var suggested = window.NativeApp.getDeviceProfile().suggestedPixelRatio;
+      if (typeof suggested !== 'number' || !(suggested > 0)) return real;
+      return Math.min(suggested, real);
+    },
+    getStartupRoute: function () {
+      var route = call('getStartupRoute', '');
+      call('consumeStartupRoute', null);
+      return route || '';
+    },
     reportError: function (message) { call('reportError', null, String(message)); },
-    navigateBack: function () { return call('navigateBack', false) === true; },
-    setBackHandler: function (fn) { backHandler = fn; },
-    onBackPressed: function () { try { return !!backHandler && backHandler() === true; } catch (_) { return false; } },
-    openEmail: function (address) { return call('openEmail', false, String(address)) === true; },
-    openStorePage: function () { return call('openStorePage', false) === true; },
-    openRatingPage: function () { return call('openRatingPage', false) === true; },
+    navigateBack: function () { return flag('navigateBack', false); },
+    /** Hardware back: registered once, answered by the container before its own chain. */
+    setBackHandler: function (fn) { backHandler = typeof fn === 'function' ? fn : null; },
+    onBackPressed: function () {
+      try { return !!backHandler && backHandler() === true; } catch (e) {
+        warn('[NativeApp] back handler failed', e);
+        return false;
+      }
+    },
+    openEmail: function (address, subject) {
+      if (subject === undefined || subject === null || subject === '') return flag('openEmail', false, String(address));
+      return flag('composeEmail', false, String(address), String(subject));
+    },
+    composeEmail: function (address, subject) { return flag('composeEmail', false, String(address), String(subject)); },
+    openStorePage: function () { return flag('openStorePage', false); },
+    openRatingPage: function () { return flag('openRatingPage', false); },
+    isRemoveAdsOwned: function () { return window.CafeBazaar.isRemoveAdsOwned(); },
     saveState: function (key, value, savedAt) {
-      try {
-        return call('saveState', false, String(key), String(value), String(savedAt == null ? Date.now() : savedAt)) === true;
-      } catch(e){ return false; }
+      if (key === undefined || key === null) return false;
+      return flag('saveState', false, String(key), String(value), String(savedAt == null ? Date.now() : savedAt));
     },
     loadState: function (key) {
       var raw = call('loadState', null, String(key));
       if (!raw || typeof raw !== 'string') return null;
-      try { var o = JSON.parse(raw); return o && typeof o === 'object' && typeof o.value === 'string' ? o : null; } catch (_) { return null; }
+      try {
+        var o = JSON.parse(raw);
+        return o && typeof o === 'object' && typeof o.value === 'string' ? o : null;
+      } catch (_) { return null; }
     },
-    clearState: function (key) { return call('clearState', false, String(key)) === true; },
+    clearState: function (key) { return flag('clearState', false, String(key)); },
     on: function (name, fn) { return on('app:' + name, fn); },
-    onEvent: function (value) { var e = parse(value); emit('app:' + e.type, e.data || e); emit('app:event', e); }
+    /**
+     * Container → WebApp event envelope. `{type:'deep_link',data:{route}}` is a
+     * push/deep-link route, a payload without a type is the container-ready
+     * announcement.
+     */
+    onEvent: function (value) {
+      var e = parse(value);
+      var type = e.type || (e.route !== undefined || e.pushSupported !== undefined ? 'ready' : 'event');
+      if (type === 'deep_link' || type === 'deeplink') {
+        var route = (e.data && e.data.route !== undefined) ? e.data.route : (e.route || '');
+        emitOnce('app:deeplink', { route: route });
+        emitOnce('app:deep_link', { route: route });
+        emitOnce('app:event', e);
+        return;
+      }
+      if (type === 'ready') {
+        ready = true;
+        emitOnce('app:ready', e.data || e);
+      }
+      emitOnce('app:' + type, e.data || e);
+      emitOnce('app:event', e);
+    }
   };
 
   // --------------------------------------------------------------- NativeAds
   window.NativeAds = {
     showInterstitial: function () { return show('interstitial', 'showInterstitial'); },
-    // Rewarded ads must never mint currency. Coin packs are CafeBazaar-only;
-    // callers receive a settled failure instead of a reward that can be
-    // converted into coins by the game bundle.
-    showRewarded: function () { return Promise.resolve(fail('REWARDED_DISABLED')); },
+    /**
+     * Rewarded video. Resolves `{ ok, rewardGranted, reason }`; the container
+     * grants the reward (`rewarded_completed`) and the WebApp decides what it is
+     * worth. Only a `rewardGranted === true` result may credit the player.
+     */
+    showRewarded: function () { return show('rewarded', 'showRewarded'); },
     showNative: function () { return show('native', 'showNative'); },
-    showNativeAt: function (x, y, w, h) { return show('native', 'showNativeAt', [x|0,y|0,w|0,h|0]); },
-    hideNative: function () { return call('hideNative', false) === true; },
-    isReady: function (type) { return call('isAdReady', false, type) === true; },
-    isAvailable: function () { return call('isAdsAvailable', false) === true; },
-    prepare: function () { call('prepareAds', null); },
-    on: function (name, fn) { return on('ads:' + name, fn); }, onEvent: adEvent
+    showNativeAt: function (x, y, w, h) {
+      return show('native', 'showNativeAt', [x | 0, y | 0, w | 0, h | 0]);
+    },
+    hideNative: function () { return accept('hideNative'); },
+    isReady: function (type) { return flag('isAdReady', false, type); },
+    isAvailable: function () { return flag('isAdsAvailable', false); },
+    prepare: function () { return accept('prepareAds'); },
+    on: function (name, fn) { return on('ads:' + name, fn); },
+    onEvent: adEvent
   };
 
   // -------------------------------------------------------------- CafeBazaar
   window.CafeBazaar = {
     isNativeBridgeAvailable: window.NativeApp.isNative,
-    isAvailable: function () { return call('isBillingAvailable', false) === true; },
-    connect: function () { return call('connectBilling', false) === true; },
+    isAvailable: function () {
+      if (method('isBillingAvailable') || method('isAvailable')) {
+        return flag('isBillingAvailable', flag('isAvailable', billingConnected));
+      }
+      return billingConnected;
+    },
+    isRemoveAdsOwned: function () { return removeAdsOwned || flag('isRemoveAdsOwned', false); },
+    /**
+     * Starts the billing connection. The container answers through
+     * `CafeBazaarBridge.onConnectionResult` → `cafebazaar:connection`; the
+     * return value is "the request was accepted" (the container's own call
+     * returns nothing), which is what callers use to fall back to a toast.
+     */
+    connect: function () { return accept('connectBilling'); },
+    /** Resolves with the connection result (`{ success, message }`). */
+    connectAsync: function (timeout) {
+      var entry = request(timeout || 10000, function () { if (connectPending === entry) connectPending = null; });
+      if (!connectPending) {
+        connectPending = entry;
+        if (!accept('connectBilling')) {
+          connectPending = null;
+          entry.finish({ success: false, message: 'BILLING_UNAVAILABLE', errorCode: 'NOT_AVAILABLE' });
+        }
+      }
+      return entry.promise;
+    },
     getInfo: window.NativeApp.getInfo,
-    isRemoveAdsOwned: function () { return call('isRemoveAdsOwned', false) === true; },
-    openRatingPage: function () { return call('openRatingPage', false) === true; },
-    openStorePage: function () { return call('openStorePage', false) === true; },
+    openRatingPage: function () { return flag('openRatingPage', false); },
+    openStorePage: function () { return flag('openStorePage', false); },
     purchase: function (productId, payload) {
-      if (purchasePending) return Promise.resolve({ success: false, verified: false, productId: productId, errorCode: 'BUSY' });
-      var entry = request(300000); entry.productId = productId; purchasePending = entry;
-      var result = payload ? call('buyProductWithPayload', false, productId, payload) : call('buyProduct', false, productId);
-      if (result === false) { purchasePending = null; entry.finish({ success: false, verified: false, productId: productId, errorCode: 'NOT_AVAILABLE' }); }
+      if (!productId) return Promise.resolve({ success: false, verified: false, errorCode: 'INVALID_PRODUCT' });
+      if (purchasePending) {
+        return Promise.resolve({ success: false, verified: false, productId: productId, errorCode: 'BUSY' });
+      }
+      var entry = request(300000, function () { if (purchasePending === entry) purchasePending = null; });
+      entry.productId = productId;
+      purchasePending = entry;
+      var accepted = (payload === undefined || payload === null)
+        ? accept('buyProduct', productId)
+        : accept('buyProductWithPayload', productId, String(payload));
+      if (!accepted) {
+        purchasePending = null;
+        entry.finish({ success: false, verified: false, productId: productId, errorCode: 'NOT_AVAILABLE' });
+      }
       return entry.promise;
     },
     consume: function (token) {
+      if (!token) return Promise.resolve({ success: false, errorCode: 'INVALID_TOKEN' });
       if (consumePending[token]) return consumePending[token].promise;
-      var entry = request(30000); consumePending[token] = entry;
-      if (call('consumePurchase', false, token) === false) { delete consumePending[token]; entry.finish({ success: false, errorCode: 'NOT_AVAILABLE' }); }
+      var entry = request(30000, function () { if (consumePending[token] === entry) delete consumePending[token]; });
+      consumePending[token] = entry;
+      if (!accept('consumePurchase', token)) {
+        delete consumePending[token];
+        entry.finish({ success: false, purchaseToken: token, errorCode: 'NOT_AVAILABLE' });
+      }
       return entry.promise;
     },
     getPurchases: function () {
       if (queryPending) return queryPending.promise;
-      var entry = request(30000); queryPending = entry;
-      if (call('getPurchases', false) === false) { queryPending = null; entry.finish({ success: false, errorCode: 'NOT_AVAILABLE', purchases: [] }); }
+      var entry = request(30000, function () { if (queryPending === entry) queryPending = null; });
+      queryPending = entry;
+      if (!accept('getPurchases')) {
+        queryPending = null;
+        entry.finish({ success: false, errorCode: 'NOT_AVAILABLE', purchases: [] });
+      }
       return entry.promise;
     }
   };
@@ -200,13 +492,22 @@
   window.CafeBazaar.buyProductWithPayload = window.CafeBazaar.buyProduct;
   window.CafeBazaar.consumePurchase = window.CafeBazaar.consume;
   window.CafeBazaar.rateApp = window.CafeBazaar.openRatingPage;
+  window.CafeBazaar.getStoreInfo = window.CafeBazaar.getInfo;
   window.BazaarBridge = window.CafeBazaar;
   window.CafeBazaarBridge = {
-    onConnectionResult: function (value) { event('cafebazaar:connection', parse(value)); },
+    onConnectionResult: function (value) {
+      var data = parse(value);
+      billingConnected = data.success === true;
+      if (connectPending) { var entry = connectPending; connectPending = null; entry.finish(data); }
+      event('cafebazaar:connection', data);
+    },
     onPurchaseResult: function (value) {
       var data = parse(value);
-      if (purchasePending && purchasePending.productId === data.productId) {
-        var entry = purchasePending; purchasePending = null; entry.finish(data);
+      if (data.productId === 'remove_ads' && data.success === true && data.verified === true) removeAdsOwned = true;
+      if (purchasePending && (!data.productId || data.productId === purchasePending.productId)) {
+        var entry = purchasePending;
+        purchasePending = null;
+        entry.finish(data);
       }
       event('cafebazaar:purchase', data);
     },
@@ -217,99 +518,79 @@
     },
     onPurchasesQueryResult: function (value) {
       var data = parse(value);
+      try {
+        (data.purchases || []).forEach(function (p) {
+          if (p && p.productId === 'remove_ads' && p.success === true && p.verified === true) removeAdsOwned = true;
+        });
+      } catch (_) {}
       if (queryPending) { var entry = queryPending; queryPending = null; entry.finish(data); }
       event('cafebazaar:purchases', data);
     },
-    onOwnedProductsChanged: function (value) { event('cafebazaar:ownedproducts', parse(value)); }
-  };
-
-  // ------------------------------------------------------- Jadooye Adad compat
-  // These are what the math game expects
-  try {
-    var info = window.NativeApp.getInfo();
-    window.BAZAAR_RSA_KEY = info && info.appId ? "configured" : "";
-  } catch(e) { window.BAZAAR_RSA_KEY = ""; }
-  // Provide real RSA key from native if available via AndroidBridge? We'll try to get it
-  // The Kotlin side has it, but we expose via getInfo? Actually we need to expose via call
-  // For simplicity, let PoolakeyBridge use CafeBazaar underneath
-
-  window.TAPSELL_CONFIG = {
-    appKey: "tkonjgrntiepgsjgnkmhkrbassggiekcsafqrbkgqoihkkqdndgqojsldtdnojagjjtddh",
-    zones: {
-      banner: "6ab339d96da4b558f3901bc1",
-      interstitial: "6ab339cee237e15c69fbab2b",
-      native: "6ab339d96da4b558f3901bc1",
-      rewarded: "6ab339c3da860d2c9f00cfa9"
+    onOwnedProductsChanged: function (value) {
+      var data = parse(value);
+      if (data.removeAdsOwned === true) removeAdsOwned = true;
+      event('cafebazaar:ownedproducts', data);
+      emitOnce('app:ownedproducts', data);
     }
   };
 
-  // TapsellBridge that uses NativeAds
-  window.TapsellBridge = {
-    init: function(appKey) { window.NativeAds.prepare(); },
-    showBanner: function(zoneId) { /* banner handled natively via plate */ },
-    hideBanner: function() { window.NativeAds.hideNative(); },
-    requestInterstitial: function(zoneId) {
-      return new Promise(function(resolve){ resolve("inter-" + Date.now()); });
-    },
-    showInterstitial: function(responseId) {
-      return window.NativeAds.showInterstitial().then(function(){});
-    },
-    requestRewarded: function(zoneId) {
-      return new Promise(function(resolve){ resolve("reward-" + Date.now()); });
-    },
-    showRewarded: function(responseId) {
-      return window.NativeAds.showRewarded().then(function(){});
-    },
-    showNativeAt: function(zoneId, x, y, w, h) {
-      return window.NativeAds.showNativeAt(x,y,w,h).then(function(){});
-    },
-    moveNative: function(x,y,w,h) { /* handled */ },
-    hideNative: function() { window.NativeAds.hideNative(); }
+  // ------------------------------------------------------- legacy compat API
+  // Identifiers stay native: `TapsellConfig.kt` holds the Tapsell app key and
+  // zone ids, `CafeBazaarConfig.kt` the CafeBazaar RSA public key. The objects
+  // below only keep the shape older WebApps read so they can fall back to the
+  // bridge instead of hard-coding anything.
+  window.BAZAAR_RSA_KEY = '';
+  window.TAPSELL_CONFIG = {
+    appKey: '',
+    zones: { banner: '', interstitial: '', native: '', rewarded: '' },
+    managedBy: 'native'
   };
 
-  // PoolakeyBridge that uses CafeBazaar
+  window.TapsellBridge = {
+    init: function () { return window.NativeAds.prepare(); },
+    showBanner: function () { return window.NativeAds.showNative(); },   // rendered by the native plate
+    hideBanner: function () { return window.NativeAds.hideNative(); },
+    requestInterstitial: function () { return window.NativeAds.isReady('interstitial'); },
+    showInterstitial: function () { return window.NativeAds.showInterstitial(); },
+    requestRewarded: function () { return window.NativeAds.isReady('rewarded'); },
+    showRewarded: function () { return window.NativeAds.showRewarded(); },
+    showNativeAt: function (zoneId, x, y, w, h) { return window.NativeAds.showNativeAt(x, y, w, h); },
+    moveNative: function (x, y, w, h) { return window.NativeAds.showNativeAt(x, y, w, h); },
+    hideNative: function () { return window.NativeAds.hideNative(); }
+  };
+
   window.PoolakeyBridge = {
-    connect: function(rsaKey) {
-      return new Promise(function(resolve){
-        var ok = window.CafeBazaar.connect();
-        // Give it a moment
-        setTimeout(function(){ resolve(ok); }, 300);
-      });
-    },
-    disconnect: function() {},
-    purchase: function(productId, payload) {
-      return window.CafeBazaar.purchase(productId, payload).then(function(res){
-        if (res.success && res.verified) {
+    connect: function () { return window.CafeBazaar.connectAsync(); },
+    disconnect: function () { return true; },
+    purchase: function (productId, payload) {
+      return window.CafeBazaar.purchase(productId, payload).then(function (res) {
+        if (res && res.success === true && res.verified === true) {
           return {
             status: 'success',
             purchase: {
-              orderId: res.purchaseToken || ('order-' + Date.now()),
+              orderId: res.orderId || res.purchaseToken || ('order-' + Date.now()),
               productId: res.productId,
               purchaseToken: res.purchaseToken,
-              payload: payload || '',
-              purchaseTime: Date.now()
+              payload: res.payload || payload || '',
+              purchaseTime: res.purchaseTime || Date.now()
             }
           };
-        } else if (res.errorCode === 'USER_CANCELED' || res.errorCode === 'CANCELLED') {
-          return { status: 'canceled' };
-        } else {
-          return { status: 'failed', message: res.errorCode || 'FAILED' };
         }
+        if (res && (res.errorCode === 'USER_CANCELED' || res.errorCode === 'CANCELLED')) return { status: 'canceled' };
+        return { status: 'failed', message: (res && res.errorCode) || 'FAILED' };
       });
     },
-    consume: function(token) {
-      return window.CafeBazaar.consume(token).then(function(res){
-        return res.success !== false;
-      });
+    consume: function (token) {
+      return window.CafeBazaar.consume(token).then(function (res) { return !!res && res.success !== false; });
     },
-    getPurchasedProducts: function() {
-      return window.CafeBazaar.getPurchases().then(function(res){
+    getPurchasedProducts: function () {
+      return window.CafeBazaar.getPurchases().then(function (res) {
         var list = [];
         try {
-          if (res.purchases && Array.isArray(res.purchases)) {
-            list = res.purchases.map(function(p){
+          if (res && Array.isArray(res.purchases)) {
+            list = res.purchases.map(function (p) {
               return {
-                orderId: p.purchaseToken || p.orderId || '',
+                orderId: p.orderId || p.purchaseToken || '',
                 productId: p.productId,
                 purchaseToken: p.purchaseToken,
                 payload: p.payload || '',
@@ -317,122 +598,64 @@
               };
             });
           }
-        } catch(e){}
+        } catch (_) {}
         return list;
       });
     },
-    getSkuDetails: function(skus) {
-      return Promise.resolve([]);
-    }
+    getSkuDetails: function () { return Promise.resolve([]); }
   };
 
-  // ------------------------------------------------------- Chistan helpers
+  // ------------------------------------------------------- چستان helpers
+  function saveKeyFor(key) { return key === SAVE_KEY || key === SAVE_KEY_ALT; }
+
   function getCompletedCount() {
     try {
-      var raw = localStorage.getItem(SAVE_KEY);
-      if (!raw) return 0;
-      var data = JSON.parse(raw);
-      if (data.completedLevels && typeof data.completedLevels === 'object') {
+      var data = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+      if (data && data.completedLevels && typeof data.completedLevels === 'object') {
         return Object.keys(data.completedLevels).length;
       }
-      return 0;
-    } catch(e){ return 0; }
+    } catch (_) {}
+    return 0;
   }
+
+  function removeAdsOwnedLocally() {
+    try { if (localStorage.getItem('chistan_remove_ads') === '1') return true; } catch (_) {}
+    return window.CafeBazaar.isRemoveAdsOwned();
+  }
+
   function shouldShowAd(newCount) {
     if (newCount <= 0) return false;
     if (newCount % interstitialEvery !== 0) return false;
     if (newCount === lastCompletedCount) return false;
-    // Secure: only check native ownership, not localStorage (prevent bypass)
-    try {
-      if (window.CafeBazaar.isRemoveAdsOwned()) return false;
-      var info = window.NativeApp.getInfo();
-      if (info && info.removeAdsOwned) return false;
-    } catch(e){}
-    return true;
+    // Never trust the WebApp's own flag alone: the container knows whether the
+    // remove_ads product is really owned.
+    return !removeAdsOwnedLocally();
   }
+
+  /**
+   * Interstitial every [interstitialEvery] completed levels, driven by the save
+   * mirror: the WebApp's own level-complete handler may already have requested
+   * one, and the container answers BUSY for a second request, so this stays a
+   * single call per level count.
+   */
   function tryShowInterstitial() {
     var count = getCompletedCount();
     if (shouldShowAd(count)) {
       lastCompletedCount = count;
-      console.log('[Chistan] Interstitial trigger at level count', count);
-      // Small delay to let UI settle
-      setTimeout(function(){
-        window.NativeAds.showInterstitial().catch(function(){});
+      setTimeout(function () {
+        window.NativeAds.showInterstitial().catch(function () {});
       }, 800);
     } else {
       lastCompletedCount = count;
     }
   }
 
-  // Hook localStorage.setItem to detect save changes
-  // IMPORTANT: In some WebView/jsdom implementations, assigning to localStorage.setItem creates a storage entry.
-  // We must override via defineProperty on the instance and on Storage.prototype.
-  (function(){
-    var origSetItem = null;
-    try {
-      origSetItem = window.Storage ? window.Storage.prototype.setItem : localStorage.setItem;
-    } catch(e) {
-      origSetItem = localStorage.setItem;
-    }
-    var hookedSetItem = function(key, value) {
-      var result;
-      try {
-        result = origSetItem.apply(this, arguments);
-      } catch(e) {
-        // Fallback if orig is not bound
-        result = Storage.prototype.setItem.apply(this, arguments);
-      }
-      if (key === SAVE_KEY || key === SAVE_KEY_ALT) {
-        // Mirror to native for persistence (force stop survival)
-        try {
-          window.NativeApp.saveState(key, value, Date.now());
-        } catch(e){}
-        // Check ad every 3 levels
-        try { tryShowInterstitial(); } catch(e){}
-      }
-      return result;
-    };
-    try {
-      Object.defineProperty(localStorage, 'setItem', { value: hookedSetItem, writable: true, configurable: true });
-    } catch(e) {
-      try { localStorage.setItem = hookedSetItem; } catch(e2){}
-    }
-    try {
-      if (window.Storage && window.Storage.prototype) {
-        // Keep original for other instances
-        if (!window.Storage.prototype._origSetItem) {
-          window.Storage.prototype._origSetItem = window.Storage.prototype.setItem;
-        }
-        // Only override if not already our hook
-        var current = window.Storage.prototype.setItem;
-        if (current !== hookedSetItem && current.toString().indexOf('SAVE_KEY') === -1) {
-          Object.defineProperty(window.Storage.prototype, 'setItem', { value: hookedSetItem, writable: true, configurable: true });
-        }
-      }
-    } catch(e){}
-    // Also mirror on load
-    try {
-      var nativeData = window.NativeApp.loadState(SAVE_KEY);
-      if (nativeData && nativeData.value) {
-        try {
-          var webRaw = localStorage.getItem(SAVE_KEY);
-          // If native has data and web doesn't, restore
-          if (!webRaw && nativeData.value) {
-            origSetItem.call(localStorage, SAVE_KEY, nativeData.value);
-          }
-        } catch(e){}
-      }
-    } catch(e){}
-    lastCompletedCount = getCompletedCount();
-  })();
-
-  // Expose Chistan economy helpers
   window.ChistanBridge = {
-    getEconomy: function() {
+    getEconomy: function () {
       return {
         coinsPerLevel: 30,
         hintCosts: { letter: 60, eliminate: 100, clue: 150, answer: 150 },
-        dailyRewards: [50,75,100,125,150,200,350],
+        dailyRewards: [50, 75, 100, 125, 150, 200, 350],
         packs: [
           { id: 'pack_starter', sku: 'pack_starter', coins: 200, toman: 10000, priceDisplay: '۱۰,۰۰۰ تومان' },
           { id: 'chistan_pack_500', sku: 'chistan_pack_500', coins: 500, toman: 25000, priceDisplay: '۲۵,۰۰۰ تومان' },
@@ -445,69 +668,111 @@
           { id: 'remove_ads', sku: 'remove_ads', coins: 0, toman: 20000, priceDisplay: '۲۰,۰۰۰ تومان' }
         ],
         removeAds: { sku: 'remove_ads', toman: 20000, priceDisplay: '۲۰,۰۰۰ تومان' },
-        interstitialEvery: 3
+        interstitialEvery: interstitialEvery
       };
     },
+    isRemoveAdsOwned: function () { return window.CafeBazaar.isRemoveAdsOwned(); },
     showInterstitialIfNeeded: tryShowInterstitial,
-    purchaseCoins: function(sku, coins) {
-      return window.CafeBazaar.purchase(sku).then(function(res){
-        if (res.success && res.verified) {
-          // consume
-          if (res.purchaseToken) {
-            window.CafeBazaar.consume(res.purchaseToken).catch(function(){});
-          }
+    purchaseCoins: function (sku, coins) {
+      return window.CafeBazaar.purchase(sku).then(function (res) {
+        if (res && res.success === true && res.verified === true) {
+          if (res.purchaseToken) window.CafeBazaar.consume(res.purchaseToken).catch(function () {});
           return { success: true, coins: coins };
         }
-        return { success: false, error: res.errorCode };
+        return { success: false, error: (res && res.errorCode) || 'FAILED' };
       });
     },
-    purchaseRemoveAds: function() {
-      return window.CafeBazaar.purchase('remove_ads').then(function(res){
-        if (res.success && res.verified) {
+    purchaseRemoveAds: function () {
+      return window.CafeBazaar.purchase('remove_ads').then(function (res) {
+        if (res && res.success === true && res.verified === true) {
+          removeAdsOwned = true;
           return { success: true };
         }
-        return { success: false, error: res.errorCode };
+        return { success: false, error: (res && res.errorCode) || 'FAILED' };
       });
-    }
+    },
+    /**
+     * Acknowledges a reward the WebApp has already credited in its own state
+     * (`docs/GAME_PATCHES.md`). The container never mints coins: crediting them
+     * here as well would double every rewarded bonus, and coin packs stay the
+     * only purchasable currency.
+     */
+    addCoins: function (coins) { return Number(coins) > 0; }
   };
 
-  // Auto appReady after boot
-  function autoReady() {
-    try {
-      if (!ready) {
-        window.NativeApp.appReady();
-        window.NativeAds.prepare();
-        window.CafeBazaar.connect();
+  // -------------------------------------------------- save mirror (force stop)
+  // `localStorage` alone is not safe inside a WebView: Chromium commits it
+  // lazily and the origin is only stable because the container binds a fixed
+  // loopback port. Mirror every save natively (SharedPreferences) and restore
+  // the newer copy at boot.
+  (function () {
+    var originalSetItem = null;
+    try { originalSetItem = window.Storage ? window.Storage.prototype.setItem : localStorage.setItem; } catch (_) {}
+    if (typeof originalSetItem !== 'function') { try { originalSetItem = localStorage.setItem; } catch (_) {} }
+
+    function stampKey(key) { return key + ':savedAt'; }
+
+    var hookedSetItem = function (key, value) {
+      var result;
+      try { result = originalSetItem.apply(this, arguments); }
+      catch (_) { try { Storage.prototype.setItem.apply(this, arguments); } catch (__) { return; } }
+      if (saveKeyFor(key)) {
+        var at = Date.now();
+        try { originalSetItem.call(this, stampKey(key), String(at)); } catch (_) {}
+        window.NativeApp.saveState(key, String(value), at); // native mirror, written at once
+        try { tryShowInterstitial(); } catch (_) {}
       }
-    } catch(e){}
-  }
-  if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    setTimeout(autoReady, 800);
-  } else {
-    window.addEventListener('DOMContentLoaded', function(){ setTimeout(autoReady, 800); });
-  }
-  window.addEventListener('load', function(){ setTimeout(autoReady, 1200); });
+      return result;
+    };
 
-  // Back handler passthrough for Chistan
-  window.addEventListener('nativeapp:back', function(e){
-    // Let game's own back handler run first via NativeApp.onBackPressed
-    // If not handled, router will handle
-  });
+    try { Object.defineProperty(localStorage, 'setItem', { value: hookedSetItem, writable: true, configurable: true }); }
+    catch (_) { try { localStorage.setItem = hookedSetItem; } catch (__) {} }
+    try {
+      if (window.Storage && window.Storage.prototype && window.Storage.prototype.setItem !== hookedSetItem) {
+        Object.defineProperty(window.Storage.prototype, 'setItem', { value: hookedSetItem, writable: true, configurable: true });
+      }
+    } catch (_) {}
 
-  window.addEventListener('nativeads:event', function (e) { adEvent(e.detail); });
-  window.addEventListener('nativeapp:deeplink', function (e) { emit('app:deep_link', e.detail); });
-
-  // Restore remove_ads entitlement on start
-  setTimeout(function(){
-    window.CafeBazaar.getPurchases().then(function(res){
+    // Boot: the newer *valid* copy of the save wins (native mirror vs. web).
+    [SAVE_KEY, SAVE_KEY_ALT].forEach(function (key) {
+      var mirror = null;
+      try { mirror = window.NativeApp.loadState(key); } catch (_) { return; }
+      if (!mirror || !mirror.value) return;
+      var webRaw = null, webAt = 0;
       try {
-        var purchases = res.purchases || [];
-        var hasRemoveAds = purchases.some(function(p){ return p.productId === 'remove_ads'; });
-        if (hasRemoveAds) {
-          console.log('[Chistan] Remove Ads restored');
-        }
-      } catch(e){}
-    }).catch(function(){});
-  }, 1500);
+        webRaw = localStorage.getItem(key);
+        webAt = Number(localStorage.getItem(stampKey(key))) || 0;
+      } catch (_) {}
+      if (!webRaw) {
+        try { originalSetItem.call(localStorage, key, mirror.value); originalSetItem.call(localStorage, stampKey(key), String(mirror.savedAt || 0)); } catch (_) {}
+        return;
+      }
+      var usable = false;
+      try { usable = !!JSON.parse(webRaw); } catch (_) {}
+      if (!usable || Number(mirror.savedAt || 0) > webAt) {
+        try { originalSetItem.call(localStorage, key, mirror.value); originalSetItem.call(localStorage, stampKey(key), String(mirror.savedAt || 0)); } catch (_) {}
+      }
+    });
+    lastCompletedCount = getCompletedCount();
+  })();
 
+  // ------------------------------------------------------------- boot support
+  // Peripheral boot work that needs the objects above: warm the ad pipeline and
+  // restore the billing connection plus the owned purchases. The readiness
+  // handshake is registered at the top of this file and does not depend on any
+  // of it (nor on it succeeding).
+  var supportStarted = false;
+  function startSupport() {
+    if (supportStarted) return;
+    supportStarted = true;
+    try { window.NativeAds.prepare(); } catch (_) {}
+    try { window.CafeBazaar.connect(); } catch (_) {}
+    try { window.CafeBazaar.getPurchases().catch(function () {}); } catch (_) {}
+  }
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', function () { setTimeout(startSupport, 800); });
+  } else {
+    setTimeout(startSupport, 800);
+  }
+  window.addEventListener('load', startSupport);
 })(window);

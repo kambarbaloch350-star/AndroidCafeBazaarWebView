@@ -65,6 +65,33 @@ val smokeTestBuild: Boolean =
 val smokeTestAds: Boolean = smokeTestBuild &&
     gradle.startParameter.projectProperties["SMOKE_TEST_ADS"]?.equals("true", ignoreCase = true) == true
 
+// ---------------------------------------------------------------------------
+// Release signing.
+//
+// The release APK is the artifact CI delivers (Telegram) and the one that is
+// uploaded to the CafeBazaar panel, so it has to be *signed*: an unsigned
+// `app-release-unsigned.apk` cannot be installed by anyone.
+//
+// The keystore is never committed. It is resolved like every other native
+// setting (CLI property > local.properties > environment > gradle.properties):
+//
+//   RELEASE_KEYSTORE_PATH      path to the .jks/.keystore
+//   RELEASE_KEYSTORE_PASSWORD  store password
+//   RELEASE_KEY_ALIAS          key alias
+//   RELEASE_KEY_PASSWORD       key password (defaults to the store password)
+//
+// In CI the keystore is written from the ANDROID_KEYSTORE_BASE64 secret and
+// passed with -PRELEASE_KEYSTORE_PATH=… . Without a configured keystore the
+// release variant is signed with the Android *debug* key so the delivered APK
+// still installs (with a loud warning) – never left unsigned.
+// ---------------------------------------------------------------------------
+val releaseKeystorePath = cfg("RELEASE_KEYSTORE_PATH")
+val releaseKeystoreFile = releaseKeystorePath.takeIf { it.isNotEmpty() }?.let { rootProject.file(it) }
+val hasReleaseKeystore = releaseKeystoreFile?.exists() == true
+if (releaseKeystorePath.isNotEmpty() && !hasReleaseKeystore) {
+    logger.warn("RELEASE_KEYSTORE_PATH=$releaseKeystorePath does not exist – falling back to the debug key")
+}
+
 val tapsellTestKeys = mapOf(
     "TAPSELL_APP_KEY" to "alsoatsrtrotpqacegkehkaiieckldhrgsbspqtgqnbrrfccrtbdomgjtahflchkqtqosa",
     "TAPSELL_ZONE_INTERSTITIAL" to "5cfaa942e8d17f0001ffb292",
@@ -113,6 +140,14 @@ android {
         buildConfigField("String", "TAPSELL_ZONE_NATIVE", quoted(sdkKey("TAPSELL_ZONE_NATIVE")))
 
         // ---- Pushfa (native push) - public key only, never the private one ----
+        // CafeBazaar public RSA key: `local.properties`/secret override first
+        // (CI rotates it without a code change), committed default otherwise.
+        buildConfigField(
+            "String",
+            "CAFEBAZAAR_RSA_KEY",
+            quoted(cfg("CAFEBAZAAR_RSA_KEY"))
+        )
+
         buildConfigField("String", "PUSHFA_API_PUBLIC_KEY", quoted(sdkKey("PUSHFA_API_PUBLIC_KEY")))
 
         // ---- Firebase (optional: allows FCM to run without google-services.json) ----
@@ -121,6 +156,17 @@ android {
         buildConfigField("String", "FIREBASE_PROJECT_ID", quoted(cfg("FIREBASE_PROJECT_ID")))
         buildConfigField("String", "FIREBASE_SENDER_ID", quoted(cfg("FIREBASE_SENDER_ID")))
         buildConfigField("String", "FIREBASE_STORAGE_BUCKET", quoted(cfg("FIREBASE_STORAGE_BUCKET")))
+    }
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = releaseKeystoreFile
+                storePassword = cfg("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = cfg("RELEASE_KEY_ALIAS")
+                keyPassword = cfg("RELEASE_KEY_PASSWORD").ifEmpty { cfg("RELEASE_KEYSTORE_PASSWORD") }
+            }
+        }
     }
 
     buildTypes {
@@ -135,6 +181,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Signed so the CI artifact (Telegram delivery) can be installed;
+            // the debug key is only a fallback for keystore-less environments.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            if (!hasReleaseKeystore) {
+                logger.warn(
+                    "release variant signed with the Android DEBUG key " +
+                        "(set RELEASE_KEYSTORE_PATH/RELEASE_KEYSTORE_PASSWORD/RELEASE_KEY_ALIAS to ship with the real key)"
+                )
+            }
         }
     }
 
