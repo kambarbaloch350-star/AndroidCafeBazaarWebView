@@ -50,8 +50,13 @@ called into it, with two different result shapes):
   timeouts and a single pending slot (`BUSY` for a concurrent request);
 * the event envelopes (`NativeAds.onEvent` + the `nativeads:*` DOM events) are
   de-duplicated;
-* the state store is mirrored natively on every save (`NativeApp.saveState`) and
-  the newer copy is restored at boot;
+* the state store is mirrored natively on every save (`NativeApp.saveState` –
+  **all three arguments**: a JavaScript interface resolves a method by name *and*
+  argument count, so a call that misses one answers `Method not found`. The old
+  `flag()` helper forwarded at most two arguments, which silently disabled the
+  mirror and lost progress on a hard kill – the emulator persist job caught it,
+  `tools/static_checks.py` and `tools/game-tests/run.mjs` now fail on it) and the
+  newer copy is restored at boot;
 * `NativeApp.appReady()` is forwarded, with a 3 s auto-ready safety net.
 
 **The packaged game chunk** (`tools/game-patches/apply_chistan_patches.py`, now

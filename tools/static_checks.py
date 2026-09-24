@@ -14,6 +14,10 @@ checks that catch the majority of build breaks:
   7. the Pushfa / Tapsell wiring (dependency, BuildConfig keys, package name)
   8. app/google-services.json (when present) belongs to this package, so the
      Firebase project Pushfa delivers through is the one baked into the APK
+  9. the `native-bridge.js` facade calls every method of the container's
+     JavaScript interface with the signature `WebAppBridge.kt` declares (the
+     WebView resolves a method by name *and* argument count, and answers
+     `Method not found` when the two disagree)
 
 Exits non-zero when a problem is found.
 """
@@ -720,6 +724,171 @@ def check_webview_baseline() -> None:
                                 "needs a compat.js polyfill")
 
 
+def _brace_body(text: str, start: int) -> str:
+    """Source of a `{…}` block that starts at/after [start]."""
+    open_at = text.find("{", start)
+    if open_at < 0:
+        return ""
+    depth, i = 1, open_at + 1
+    quote = None
+    while i < len(text) and depth:
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'`":
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        i += 1
+    return text[open_at:i]
+
+
+def _split_arguments(text: str, angle: bool = False) -> list[str]:
+    """Split an argument list on top-level commas; quotes and brackets nest.
+
+    [angle] also treats `<`/`>` as nesting, for Kotlin generics – an argument
+    list of JavaScript must not (a `<` there is a comparison).
+    """
+    parts: list[str] = []
+    current = ""
+    depth = 0
+    quote = None
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                current += text[i:i + 2]
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            current += ch
+        elif ch in "\"'`":
+            quote = ch
+            current += ch
+        elif ch in ("([{<" if angle else "([{"):
+            depth += 1
+            current += ch
+        elif ch in (")]}>" if angle else ")]}"):
+            depth -= 1
+            current += ch
+        elif ch == "," and depth == 0:
+            parts.append(current.strip())
+            current = ""
+        else:
+            current += ch
+        i += 1
+    if current.strip():
+        parts.append(current.strip())
+    return [p for p in parts if p]
+
+
+def _java_interface_arities() -> dict[str, int]:
+    """`@JavascriptInterface` method name → argument count (WebAppBridge.kt)."""
+    path = os.path.join(JAVA, "WebAppBridge.kt")
+    text = open(path, encoding="utf-8", errors="ignore").read()
+    arities: dict[str, int] = {}
+    for match in re.finditer(r"@JavascriptInterface\s+fun\s+(\w+)\s*\(", text):
+        depth, i, start = 1, match.end(), match.end()
+        while i < len(text) and depth:
+            if text[i] == "(":
+                depth += 1
+            elif text[i] == ")":
+                depth -= 1
+            i += 1
+        arities[match.group(1)] = len(_split_arguments(text[start:i - 1], angle=True))
+    return arities
+
+
+def check_bridge_contract() -> None:
+    """The facade must call the JavaScript interface with the exact signature.
+
+    A JavaScript interface handles a call by *name and argument count*: a method
+    declared `saveState(key, value, savedAt)` that receives two arguments
+    answers `Method not found`, the facade swallows that into its fallback and
+    the container never sees the call. That is exactly how the native save
+    mirror (progress across a force stop) was silently dead: the `flag()`
+    helper took `(name, fallback, arg1, arg2)` and could not forward a third
+    argument.
+
+    So: the helpers must forward everything they are given from `arguments`, and
+    every call site in the facade must match `WebAppBridge.kt`.
+    """
+    facade = os.path.join(ASSETS, "web", "native-bridge.js")
+    mirror = os.path.join(ASSETS, "web", "js", "native-bridge.js")
+    if not os.path.isfile(facade):
+        errors.append("app/src/main/assets/web/native-bridge.js is missing")
+        return
+    text = open(facade, encoding="utf-8", errors="ignore").read()
+
+    if os.path.isfile(mirror):
+        if open(mirror, encoding="utf-8", errors="ignore").read() != text:
+            errors.append("the two native-bridge.js copies differ "
+                          "(app/src/main/assets/web/{,js/}native-bridge.js)")
+
+    # 1) the three bridge helpers forward their caller's arguments verbatim
+    for helper, skip in (("call", 2), ("accept", 1), ("flag", 2)):
+        found = re.search(rf"function\s+{helper}\s*\(", text)
+        body = _brace_body(text, found.end()) if found else ""
+        if not found or not body:
+            errors.append(f"native-bridge.js: the {helper}() helper is missing")
+            continue
+        if f"Array.prototype.slice.call(arguments, {skip})" not in body:
+            errors.append(f"native-bridge.js: {helper}() must forward the caller's arguments "
+                          f"(Array.prototype.slice.call(arguments, {skip})) – a fixed parameter "
+                          "list silently drops the trailing ones and the container answers "
+                          "'Method not found'")
+
+    # 2) every call site matches the Kotlin signature
+    arities = _java_interface_arities()
+    if not arities:
+        errors.append("WebAppBridge.kt exposes no @JavascriptInterface method")
+        return
+    site = re.compile(r"\b(call|flag|accept)\(\s*'([A-Za-z_$][\w$]*)'\s*([,)])")
+    for match in site.finditer(text):
+        helper, name, nxt = match.group(1), match.group(2), match.group(3)
+        if nxt == ")":
+            arguments: list[str] = []
+        else:
+            depth, i, start = 1, match.end(), match.end()
+            quote = None
+            while i < len(text) and depth:
+                ch = text[i]
+                if quote:
+                    if ch == "\\":
+                        i += 2
+                        continue
+                    if ch == quote:
+                        quote = None
+                elif ch in "\"'`":
+                    quote = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                i += 1
+            arguments = _split_arguments(text[start:i - 1])
+        # The name is already consumed by the pattern, so the first extracted
+        # argument is the fallback for call()/flag() and the first real one for
+        # accept(): call(name, fallback, …) / flag(name, fallback, …) /
+        # accept(name, …).
+        forwarded = len(arguments) - (1 if helper in ("call", "flag") else 0)
+        if name not in arities:
+            errors.append(f"native-bridge.js: {helper}('{name}') – no such @JavascriptInterface "
+                          "method in WebAppBridge.kt")
+        elif arities[name] != forwarded:
+            errors.append(f"native-bridge.js: {helper}('{name}') passes {forwarded} "
+                          f"argument(s) but WebAppBridge.{name} declares {arities[name]} – the "
+                          "container answers 'Method not found'")
+
+
 def check_game_patches_and_contact() -> None:
     """Product changes that live in the packaged game and the container.
 
@@ -892,6 +1061,7 @@ def main() -> int:
     check_game_patches_and_contact()
     check_webview_baseline()
     check_loading_plate()
+    check_bridge_contract()
 
     for warning in warnings:
         print(f"WARN  {warning}")

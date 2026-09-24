@@ -457,6 +457,17 @@ In a browser (no bridge) `saveState` returns `false` and `loadState` `null`.
 The packaged game does exactly this (`docs/GAME_PATCHES.md` §8) and the
 emulator smoke test force-stops the app and checks the progress afterwards.
 
+> **Call every bridge method with exactly the arguments listed here.** A
+> JavaScript interface resolves a method by name **and argument count**:
+> `AndroidBridge.saveState(key, value)` with only two arguments answers
+> `Method not found`, which a `try/catch` around the call turns into a silent
+> fallback – the save is then never mirrored and the progress dies with the next
+> hard kill. (That is exactly how the mirror was broken: a helper that took
+> `(name, fallback, arg1, arg2)` could not forward the third argument.)
+> `tools/static_checks.py` compares every call site in `native-bridge.js` with
+> `WebAppBridge.kt`, and `tools/game-tests/run.mjs` calls the facade through a
+> container stub that refuses a wrong argument count the way the WebView does.
+
 ---
 
 ## 7. Copy protection & touch behaviour (native, no work for the WebApp)
@@ -495,7 +506,7 @@ img, a { -webkit-user-drag: none; }
 | `CafeBazaar.getPurchases()` | restore permanent unlocks |
 | `CafeBazaar.openRatingPage()` | CafeBazaar rating intent |
 | `NativeApp.openEmail(address)` | native e-mail composer (support / contact button) |
-| `NativeApp.saveState(key, json, savedAt)` / `loadState(key)` | native mirror of the save game (survives force stop / origin change) |
+| `NativeApp.saveState(key, json, savedAt)` / `loadState(key)` | native mirror of the save game (survives force stop / origin change) – pass all three arguments |
 | `NativeApp.getInfo()` | `{ platform, appVersion, serverPort, pushEnabled, adsReady, removeAdsOwned, device }` |
 | `NativeApp.getDeviceProfile()` | `{ tier, suggestedPixelRatio, totalRamMb, cpuCores, refreshRate, ... }` |
 | `NativeApp.getRenderPixelRatio()` | DPR to render a heavy canvas at (≤ real DPR) |

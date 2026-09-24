@@ -106,7 +106,9 @@ NativeApp.appReady();       // hides the native loading plate (no arbitrary dela
 
 `app/src/main/assets/web/native-bridge.js` is the **only** consumer of the container's
 `window.AndroidBridge` object; everything else talks to the facade, which turns the callback /
-event protocol into promises:
+event protocol into promises. Call every method with exactly the arguments listed below – the
+interface resolves a method by name **and** argument count, and answers `Method not found` when
+the two disagree (`tools/static_checks.py` and the game harness both enforce that):
 
 ```js
 NativeApp.appReady()                  // readiness handshake (hides the native loading plate)
@@ -118,7 +120,7 @@ NativeApp.getStartupRoute()           // deep-link route that opened the app (co
 NativeApp.reportError(message)        // native error/retry plate
 NativeApp.navigateBack() / setBackHandler(fn) / onBackPressed()
 NativeApp.openEmail(address, subject) / composeEmail() / openRatingPage() / openStorePage()
-NativeApp.saveState(key, value, savedAt) / loadState(key) / clearState(key)
+NativeApp.saveState(key, value, savedAt) / loadState(key) / clearState(key)   // three arguments, all required
 NativeApp.on('ready' | 'deeplink' | 'pause' | 'resume' | 'memorywarning' | 'resize' | 'event' | 'ownedproducts', handler)
 
 NativeAds.showInterstitial()          // Promise, always settles: { ok, type, reason, success }

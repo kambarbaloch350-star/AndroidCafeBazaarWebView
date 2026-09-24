@@ -62,9 +62,67 @@ const settle = (ms = SETTLE_MS) => new Promise(r => setTimeout(r, ms));
 // ---------------------------------------------------------------------------
 // Bridge stub
 // ---------------------------------------------------------------------------
+/**
+ * Argument count of every `@JavascriptInterface` method of the container.
+ *
+ * A JavaScript interface resolves a call by name **and** argument count: a
+ * method declared `saveState(key, value, savedAt)` invoked with two arguments
+ * throws `Method not found`, which `native-bridge.js` turns into a warning and
+ * its fallback – the call silently disappears. That is how the native save
+ * mirror (progress across a force stop) was dead for a whole round: the
+ * facade's `flag()` helper forwarded at most two arguments. The stub below
+ * enforces the same rule, so the harness fails on an arity bug long before an
+ * emulator would.
+ */
+const BRIDGE_ARITIES = (() => {
+  const file = path.join(ROOT, 'app', 'src', 'main', 'java', 'com', 'chistan',
+    'quickgames', 'WebAppBridge.kt');
+  const source = fs.readFileSync(file, 'utf8');
+  const arities = new Map();
+  for (const match of source.matchAll(/@JavascriptInterface\s+fun\s+(\w+)\s*\(([^)]*)\)/g)) {
+    const params = match[2].trim();
+    arities.set(match[1], params ? params.split(',').length : 0);
+  }
+  return arities;
+})();
+
+/**
+ * The container as the WebView presents it: a call whose argument count does
+ * not match the declaration throws `Method not found`. Trailing `undefined`s
+ * are dropped first – the container's binding does that too, which is why
+ * `flag('navigateBack', false)` (a fixed-parameter wrapper padding with two
+ * `undefined`s) still worked on the device.
+ */
+function strictContainer(window, stub) {
+  const rejected = [];
+  window.__harness.rejected = rejected;
+  const container = {};
+  for (const key of Object.keys(stub)) {
+    const member = stub[key];
+    const arity = BRIDGE_ARITIES.get(key);
+    if (typeof member !== 'function' || arity === undefined) {
+      container[key] = member;
+      continue;
+    }
+    container[key] = function (...args) {
+      let used = args.length;
+      while (used > 0 && args[used - 1] === undefined) used -= 1;
+      if (used !== arity) {
+        const detail = `${key}() called with ${used} argument(s), declared with ${arity}`;
+        rejected.push(detail);
+        throw new Error('Method not found');
+      }
+      return member.apply(this, args.slice(0, used));
+    };
+  }
+  return container;
+}
+
 function installBridge(window) {
   window.__harness = {
     calls: [],
+    /** Calls the container refused: name + argument count (WebView: 'Method not found'). */
+    rejected: [],
     adsEnabled: true,
     rewardGranted: true,
     billingConnected: true,
@@ -82,11 +140,13 @@ function installBridge(window) {
         purchases: this.purchases.slice(),
         adCalls: this.calls.filter(c => c.startsWith('NativeAds.')),
         billingCalls: this.calls.filter(c => c.startsWith('CafeBazaar.')),
-        ratingCalls: this.calls.filter(c => c.startsWith('CafeBazaar.openRatingPage'))
+        ratingCalls: this.calls.filter(c => c.startsWith('CafeBazaar.openRatingPage')),
+        rejected: this.rejected.slice()
       };
     },
     reset() {
       this.calls.length = 0;
+      this.rejected.length = 0;
       // Every scenario starts from the same "device": ads served, rewards
       // granted, billing connected, nothing owned.
       this.adsEnabled = true;
@@ -117,7 +177,7 @@ function installBridge(window) {
   }, delay);
   window.__harness.adEvent = adEvent;
 
-  window.AndroidBridge = {
+  const bridgeStub = {
     isNativeApp: () => true,
     isProduction: () => true,
     getPackageName: () => 'com.labzband.balochafzar',
@@ -223,6 +283,7 @@ function installBridge(window) {
     openStorePage: () => { record('CafeBazaar.openStorePage'); return true; },
     rateApp: () => { record('CafeBazaar.openRatingPage'); return true; }
   };
+  window.AndroidBridge = strictContainer(window, bridgeStub);
 }
 
 /**
@@ -775,6 +836,19 @@ check('no unhandled console errors',
   !log.some(l => l.startsWith('error:')),
   log.filter(l => l.startsWith('error:')).slice(0, 2).join(' | '));
 
+// Container protocol: a JavaScript interface resolves a call by name *and*
+// argument count, and answers `Method not found` when the two disagree. The
+// facade turns that into a warning and a fallback, so a mismatch is invisible
+// at runtime – it just silently disables whatever the call was for (that is how
+// the native save mirror died: `saveState(key, value, savedAt)` invoked with
+// two arguments). `strictContainer()` above refuses such a call the way the
+// WebView does, so the harness fails here instead.
+{
+  const rejected = window.__harness.state().rejected;
+  check('every container call matches its WebAppBridge.kt signature',
+    rejected.length === 0, rejected.slice(0, 4).join(' | '));
+}
+
 // Container contract: the native loading plate is lifted by
 // `AndroidBridge.appReady()`, and the container gives up (error plate) when it
 // never arrives. The game may not be the one who sends it – its own start-up can
@@ -797,6 +871,9 @@ check('no unhandled console errors',
   check('the facade keeps working without the game (ads and billing booted)',
     calls().includes('NativeAds.prepare') && calls().includes('CafeBazaar.connect'),
     calls().join(', ') || '(no bridge call)');
+  check('the facade without the game calls the container with the declared signatures',
+    facadeOnly.window.__harness.state().rejected.length === 0,
+    facadeOnly.window.__harness.state().rejected.slice(0, 4).join(' | '));
   check('the facade without the game throws nothing',
     !facadeOnly.log.some(l => l.startsWith('jsdomError')),
     facadeOnly.log.filter(l => l.startsWith('jsdomError')).slice(0, 2).join(' | '));

@@ -192,8 +192,11 @@ container's `window.AndroidBridge` object; the game talks to the facade:
   (success / cancelled / unverified / no free exploit / balance after refresh),
   the rewarded 150 coins, the ×3 bonus reaching the save, the progress mirror and
   the Persian loading screen – plus four facade-only boot checks (readiness without
-  the game, the native save mirror, ads/billing support, no page errors).
-  **101 checks, all green.**
+  the game, the native save mirror, ads/billing support, no page errors) and two
+  checks that every container call matches the argument count `WebAppBridge.kt`
+  declares (the stub refuses a wrong count with the container's own
+  `Method not found`, which is how the save mirror was broken: a helper that could
+  not forward `saveState`'s third argument). **103 checks, all green.**
 * `tools/game-tests/run.mjs` auto-detects the bundle and selects that scenario file;
   `tools/static_checks.py` warns when the chunk requests interstitials itself or
   when a patch is pending, and fails on post-ES2019 syntax in the packaged assets.

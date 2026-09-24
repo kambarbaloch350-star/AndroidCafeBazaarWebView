@@ -71,9 +71,23 @@
     try { fn.apply(bridge(), Array.prototype.slice.call(arguments, 1)); return true; }
     catch (e) { warn('[NativeBridge] ' + name + '() failed', e); return false; }
   }
-  /** Calls a boolean-returning container method. */
-  function flag(name, fallback, arg1, arg2) {
-    return call(name, fallback === undefined ? false : fallback, arg1, arg2) === true;
+  /**
+   * Calls a boolean-returning container method.
+   *
+   * Every argument the caller passed is forwarded **as is**: the container's
+   * JavaScript interface resolves a method by name *and* argument count, and
+   * answers `Method not found` when the two do not line up
+   * (`WebAppBridge.saveState(key, value, savedAt)` seen from here with two
+   * arguments, for example – which silently disabled the save mirror). A
+   * wrapper with a fixed `arg1, arg2` parameter list cannot forward three, so
+   * this one forwards `arguments`. `tools/static_checks.py` asserts both the
+   * shape of this function and the arity of every call site below, and
+   * `tools/game-tests/run.mjs` calls the facade through a container stub that
+   * rejects a wrong argument count exactly like the WebView does.
+   */
+  function flag(name, fallback) {
+    var rest = Array.prototype.slice.call(arguments, 2);
+    return call.apply(null, [name, fallback === undefined ? false : fallback].concat(rest)) === true;
   }
   function parse(value) {
     try {
