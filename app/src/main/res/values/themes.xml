@@ -77,15 +77,15 @@
         <item name="android:paddingEnd">32dp</item>
     </style>
     <!-- Light green, animated exit confirmation dialog -->
-    <style name="Theme.QuickGames.ExitDialog" parent="Theme.MaterialComponents.Dialog">
+    <style name="Theme.Labzband.ExitDialog" parent="Theme.MaterialComponents.Dialog">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsFloating">true</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:backgroundDimEnabled">true</item>
-        <item name="android:windowAnimationStyle">@style/Animation.QuickGames.ExitDialog</item>
+        <item name="android:windowAnimationStyle">@style/Animation.Labzband.ExitDialog</item>
     </style>
 
-    <style name="Animation.QuickGames.ExitDialog" parent="@android:style/Animation.Dialog">
+    <style name="Animation.Labzband.ExitDialog" parent="@android:style/Animation.Dialog">
         <item name="android:windowEnterAnimation">@anim/dialog_enter</item>
         <item name="android:windowExitAnimation">@anim/dialog_exit</item>
     </style>

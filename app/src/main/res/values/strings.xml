@@ -1,18 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">لبزبند</string>
+    <string name="app_name">چیستان</string>
 
     <!-- ==================== Native loading screen ==================== -->
-    <string name="loading_title">لبزبند</string>
-    <string name="loading_message">لیب لوڈ بوھگ ءَ ایں۔</string>
-    <string name="loading_subtitle">بلوچی مئے وتی شہد ایں زبان ایں</string>
+    <string name="loading_title">چیستان</string>
+    <string name="loading_message">در حال بارگذاری بازی…</string>
+    <string name="loading_subtitle">۱۳۴۷ چیستان جذاب فارسی</string>
 
     <!-- ==================== Error / retry state ==================== -->
     <string name="error_title">بارگذاری ناموفق بود</string>
     <string name="error_message_default">ارتباط با سرور داخلی برنامه برقرار نشد. لطفاً دوباره تلاش کنید.</string>
     <string name="error_message_webview">نمایشگر وب نتوانست برنامه را بارگذاری کند. لطفاً دوباره تلاش کنید.</string>
     <string name="error_message_crashed">نمایشگر وب به‌طور غیرمنتظره بسته شد. برنامه دوباره بارگذاری می‌شود.</string>
+    <string name="error_renderer_crash_loop">برنامه چند بار پشت‌سرهم متوقف شد؛ احتمالاً حافظهٔ دستگاه کافی نیست. برنامه‌های دیگر را ببندید و دوباره تلاش کنید.</string>
     <string name="error_retry">تلاش مجدد</string>
+
+    <!-- ==================== WebView version advice ==================== -->
+    <string name="webview_update_title">به‌روزرسانی Android System WebView</string>
+    <string name="webview_update_message">نسخهٔ WebView این دستگاه (نسخهٔ %1$d) قدیمی است و ممکن است رنگ‌ها و صفحه‌های بازی درست نمایش داده نشوند. لطفاً «Android System WebView» را از بازار به‌روز کنید و بازی را دوباره باز کنید.</string>
+    <string name="webview_update_action">به‌روزرسانی</string>
+    <string name="webview_update_later">بعداً</string>
+    <string name="webview_update_unavailable">صفحهٔ WebView در فروشگاه پیدا نشد؛ آن را از بازار یا گوگل‌پلی به‌روز کنید.</string>
 
     <!-- ==================== Notification permission ==================== -->
     <string name="notification_channel_default_name">اعلان‌ها</string>
@@ -28,12 +36,14 @@
     <string name="native_ad_loading">در حال دریافت تبلیغ…</string>
     <string name="native_ad_unavailable">تبلیغی برای نمایش موجود نیست</string>
     <string name="native_ad_close">بستن تبلیغ</string>
+    <string name="email_chooser_title">ارسال ایمیل با…</string>
+    <string name="email_app_missing">برنامه‌ای برای ارسال ایمیل پیدا نشد. نشانی %1$s در حافظه کپی شد.</string>
     <string name="bazaar_not_installed">برای ثبت امتیاز، برنامه کافه‌بازار باید روی دستگاه نصب باشد.</string>
-    <string name="loading_credit">A Game By BalochAfzar</string>
+    <string name="loading_credit"></string>
 
     <!-- Exit confirmation dialog -->
     <string name="exit_dialog_title">می‌خواهید از بازی خارج شوید؟</string>
-    <string name="exit_dialog_message">امتیاز دادن به لبزبند کمک زیادی به ما می‌کند.</string>
+    <string name="exit_dialog_message">امتیاز دادن به چیستان کمک زیادی به ما می‌کند.</string>
     <string name="exit_dialog_rate">امتیاز بده</string>
     <string name="exit_dialog_cancel">انصراف</string>
     <string name="exit_dialog_exit">خروج</string>

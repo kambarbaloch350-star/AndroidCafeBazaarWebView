@@ -6,7 +6,7 @@
       Network access is required for:
         * the WebApp's own remote API calls (fetch / XHR / WebSocket),
         * Tapsell ad delivery,
-        * Najva push registration (FCM).
+        * Pushfa push registration (FCM).
       The WebApp bundle itself is served by an in-process loopback HTTP server,
       so no packaged web server, no file:// hacks and no internet round trip is
       needed to open it.
@@ -15,10 +15,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
-    <!-- Android 13+ runtime permission for system push notifications (Najva). -->
+    <!-- Android 13+ runtime permission for system push notifications (Pushfa + offline). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Optional hardware: the WebView degrades gracefully without them. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -73,7 +74,17 @@
             android:launchMode="singleTask"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize"
+            android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection|navigation">
+            <!--
+                screenOrientation="portrait": the game is a portrait layout, and
+                a full-screen ad (Tapsell's ad Activity rotates landscape video
+                creatives) must not leave the container behind in landscape.
+                Without the lock the WebView came back from such an ad with two
+                relayouts in a row (landscape, then portrait again) – a resize
+                storm in the middle of the level-complete animation. With it the
+                container never changes orientation, whatever the ad did.
+            -->
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -83,30 +94,32 @@
             <!--
               Deep links: a push notification (or any other app) can open the
               container and hand a route to the WebApp router, e.g.
-                  quickgames://open/game/42   ->   WebApp route "game/42"
+                  labzband://open/game/42     ->   WebApp route "game/42"
+                  quickgames://open/game/42   ->   WebApp route "game/42" (legacy)
                   https://host/#/game/42      ->   WebApp route "game/42"
+              A Pushfa notification whose link is a relative path ("/game/42")
+              re-opens this Activity with the path in Pushfa.EXTRA_TARGET_URL.
             -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="labzband" />
                 <data android:scheme="quickgames" />
+                <data android:scheme="chistan" />
+                <data android:scheme="com.chistan.quickgames" />
             </intent-filter>
         </activity>
 
-        <!-- ======================= Najva push (native) ======================= -->
+        <!-- ======================= Pushfa push (native) ====================== -->
         <!--
-          Najva configuration lives exclusively in the native layer. Both values
-          are injected at build time (local.properties / gradle.properties) and
-          are never exposed to the WebApp or to the JavaScript bridge.
+          Pushfa (https://pushfa.com) is configured exclusively in the native
+          layer: the public key is injected at build time (BuildConfig) and
+          `App.kt` initializes the SDK. Its FirebaseMessagingService and the
+          notification-click Activity are merged in from the SDK manifest, so
+          nothing push-related is declared here and the merged manifest keeps
+          exactly one messaging service.
         -->
-        <meta-data
-            android:name="com.najva.sdk.metadata.API_KEY"
-            android:value="${najvaApiKey}" />
-        <meta-data
-            android:name="com.najva.sdk.metadata.WEBSITE_ID"
-            android:value="${najvaWebsiteId}" />
-
         <meta-data
             android:name="firebase_messaging_auto_init_enabled"
             android:value="true" />
@@ -115,11 +128,29 @@
             android:value="false" />
 
         <!--
-          The FCM <service> entries (including Najva's own listener) are declared
-          by the SDK manifests and merged in automatically. Nothing is declared
-          here on purpose, so the merged manifest keeps exactly one messaging
-          service and no duplicate intent filter.
+          Fallbacks used by FCM itself for the rare "notification" payload that
+          bypasses the Pushfa renderer: same monochrome icon and channel.
         -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/primary" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="labzband_default" />
+
+        <!-- Offline game notifications: reschedule after reboot -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

@@ -119,6 +119,13 @@ coverage/
 *.log
 .env*
 !.env.example
+package-lock.json
+.gradle/
+.idea/
+*.iml
+app/release/
+__pycache__/
+*.pyc
 `
   },
   {
@@ -130,8 +137,7 @@ TAPSELL_APP_KEY=
 TAPSELL_ZONE_INTERSTITIAL=
 TAPSELL_ZONE_REWARDED=
 TAPSELL_ZONE_NATIVE=
-NAJVA_API_KEY=
-NAJVA_WEBSITE_ID=
+PUSHFA_API_PUBLIC_KEY=
 FIREBASE_APP_ID=
 FIREBASE_API_KEY=
 FIREBASE_PROJECT_ID=

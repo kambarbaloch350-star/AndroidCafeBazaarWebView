@@ -15,7 +15,7 @@ export interface BillingLogItem {
     | 'WebAppConsole'
     | 'PoolakeySDK'
     | 'TapsellManager'
-    | 'NajvaManager'
+    | 'PushfaManager'
     | 'LocalWebServer'
     | 'Container';
   level: 'D' | 'I' | 'W' | 'E';

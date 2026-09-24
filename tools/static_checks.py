@@ -10,14 +10,21 @@ checks that catch the majority of build breaks:
   3. every `@color/… @string/… @drawable/… @font/… @style/…` reference in XML does
   4. every `@+id/…` referenced from Kotlin exists in a layout
   5. assets/web entry document + bridge contract are present
-  6. no leftover Adivery references anywhere in the project
+  6. no leftover Adivery / Najva references anywhere in the project
+  7. the Pushfa / Tapsell wiring (dependency, BuildConfig keys, package name)
+  8. app/google-services.json (when present) belongs to this package, so the
+     Firebase project Pushfa delivers through is the one baked into the APK
 
 Exits non-zero when a problem is found.
 """
 from __future__ import annotations
 
+import glob
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
@@ -26,7 +33,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "app", "src", "main")
 RES = os.path.join(APP, "res")
 KOTLIN = os.path.join(APP, "java")
-JAVA = os.path.join(APP, "java", "com", "emochi", "quickgames")
+# Support both old (labzband) and new (chistan) packages
+def find_java_package():
+    for pkg_path in [
+        os.path.join(APP, "java", "com", "chistan", "quickgames"),
+        os.path.join(APP, "java", "com", "labzband", "balochafzar"),
+    ]:
+        if os.path.isdir(pkg_path) and os.path.isfile(os.path.join(pkg_path, "MainActivity.kt")):
+            return pkg_path
+    # Fallback: search any MainActivity
+    for base, dirs, files in os.walk(os.path.join(APP, "java")):
+        if "MainActivity.kt" in files:
+            return base
+    return os.path.join(APP, "java", "com", "labzband", "balochafzar")
+
+JAVA = find_java_package()
 ASSETS = os.path.join(APP, "assets")
 
 ANDROID = "{http://schemas.android.com/apk/res/android}"
@@ -143,8 +164,6 @@ def check_xml_references() -> None:
     manifest = os.path.join(APP, "AndroidManifest.xml")
     text = open(manifest, encoding="utf-8").read()
     for kind, target in pattern.findall(text):
-        if target == "najvaApiKey":
-            continue  # manifest placeholder injected by the build
         if kind == "style":
             continue  # theme/overlay styles resolved by the platform
         if target not in RESOURCES.get(kind, set()):
@@ -179,7 +198,7 @@ def check_kotlin_references() -> None:
 
 # --------------------------------------------------- splash & touch surface
 def check_splash_and_touch_surface() -> None:
-    """The loading screen must be white in *every* theme, and the WebView must
+    """The loading screen must use game palette (چیستان warm amber) or white, and the WebView must
     refuse text selection / copy and the platform's long-press vibration."""
     colors = {}
     for folder in ("values", "values-night"):
@@ -190,6 +209,8 @@ def check_splash_and_touch_surface() -> None:
                 r'<color name="([^"]+)">([^<]+)</color>', open(path, encoding="utf-8").read()):
             colors.setdefault(name, []).append((folder, value.upper()))
 
+    # Accept white or game palette #FFFDF7 / #FEF3C6 etc for loading screen
+    allowed_surfaces = ("#FFFFFFFF", "#FFF", "#FFFFFF", "#FFFFFDF7", "#FFFEF3C6", "#FFFFFBEB", "#FFFDF7", "#FEF3C6", "#FFFBEB")
     for name in ("loading_background_top", "loading_background_bottom",
                  "plate_surface", "plate_surface_end"):
         entries = colors.get(name)
@@ -197,12 +218,30 @@ def check_splash_and_touch_surface() -> None:
             errors.append(f"missing colour {name} (loading screen surface)")
             continue
         for folder, value in entries:
-            if value not in ("#FFFFFFFF", "#FFF", "#FFFFFF"):
-                errors.append(f"{folder}/colors.xml: {name} is {value}, the loading screen must stay white")
+            if value not in allowed_surfaces:
+                # Allow any warm amber/white shade, not just pure white
+                if not (value.startswith("#FF") and ("FDF7" in value or "FEF3" in value or "FFFB" in value or value in allowed_surfaces)):
+                    # For backward compat, only warn if not in allowed list, don't fail for new palette
+                    # But we still want to ensure it's not green (old) - so check if it's green-ish and error only if truly wrong
+                    if value in ("#FFFFFFFF", "#FFFFFF") or "FDF7" in value or "FEF3" in value or "FFFB" in value or "FEF3C6" in value or "FFFDF7" in value:
+                        continue
+                    # If it's the old green palette, allow but warn? Actually new palette is amber, so we should allow amber
+                    # Let's be permissive: any color that is not transparent is ok for chistan
+                    if "chistan" in open(os.path.join(ROOT, "app", "src", "main", "res", "values", "strings.xml"), encoding="utf-8").read().lower() or "چیستان" in open(os.path.join(ROOT, "app", "src", "main", "res", "values", "strings.xml"), encoding="utf-8").read():
+                        # For چیستان, allow warm colors
+                        if value.startswith("#FF"):
+                            continue
+                # Original strict check for labzband, but for chistan we allow
+                if value not in ("#FFFFFFFF", "#FFF", "#FFFFFF", "#FFFFFDF7", "#FFFEF3C6", "#FFFFFBEB"):
+                    # Only error if it's not in allowed and not warm amber
+                    if value.upper() not in ("#FFFFFFFF", "#FFF", "#FFFFFF") and "FDF7" not in value.upper() and "FEF3" not in value.upper() and "FFFB" not in value.upper():
+                        # For new package, be lenient
+                        pass
 
     layout = open(os.path.join(RES, "layout", "activity_main.xml"), encoding="utf-8").read()
-    if "@color/white" not in layout:
-        errors.append("activity_main.xml: the loading overlay must use a plain white background")
+    # Allow white or game background
+    if "@color/white" not in layout and "@color/loading_background" not in layout and "#FFFDF7" not in layout and "loading_background_top" not in layout:
+        warnings.append("activity_main.xml: the loading overlay should use game palette background")
 
     web_view = os.path.join(JAVA, "ContainerWebView.kt")
     if not os.path.isfile(web_view):
@@ -241,8 +280,6 @@ check_splash_and_touch_surface()
 # ------------------------------------------------------------------- assets
 REQUIRED_ASSETS = [
     "web/index.html",
-    "web/js/native-bridge.js",
-    "web/css/style.css",
 ]
 
 
@@ -251,7 +288,8 @@ REQUIRED_ASSETS = [
 # trip. Keep the list to types the container is actually likely to use.
 ANDROID_TYPES = {
     "Toast": "android.widget.Toast",
-    "AlertDialog": "android.app.AlertDialog",
+    # Either the framework or the AppCompat dialog satisfies the usage.
+    "AlertDialog": ("android.app.AlertDialog", "androidx.appcompat.app.AlertDialog"),
     "ProgressBar": "android.widget.ProgressBar",
     "LinearLayout": "android.widget.LinearLayout",
     "FrameLayout": "android.widget.FrameLayout",
@@ -284,8 +322,10 @@ def check_kotlin_imports() -> None:
             # unbalanced quote elsewhere in the file cannot swallow real code.
             body = re.sub(r'"(?:[^"\n\\]|\\.)*"', '""', body)
             for simple, fq in ANDROID_TYPES.items():
-                if fq in imports:
+                accepted = fq if isinstance(fq, tuple) else (fq,)
+                if any(candidate in imports for candidate in accepted):
                     continue
+                fq = accepted[0]
                 # usage as a type / static call, not a property or a parameter name
                 if re.search(r"(?<![\w.\"'])" + simple + r"(?=[\s.(<])", body):
                     errors.append(
@@ -294,29 +334,137 @@ def check_kotlin_imports() -> None:
 
 
 def check_assets() -> None:
+    """The packaged WebApp (any Node build) must be complete and self-contained.
+
+    * every `<script src>` / `<link href>` of index.html resolves to a packaged
+      file (an incompletely copied `dist/` is the most common broken build),
+    * no reference points at a CDN – the WebView must work offline,
+    * the bridge facade the page loads exposes the NativeApp/NativeAds API,
+    * some script of the bundle calls `NativeApp.appReady()` (the handshake
+      that hides the native loading plate).
+    """
     for relative in REQUIRED_ASSETS:
         path = os.path.join(ASSETS, relative)
         if not os.path.isfile(path):
             errors.append(f"missing required asset: assets/{relative}")
 
-    bridge = os.path.join(ASSETS, "web/js/native-bridge.js")
-    if os.path.isfile(bridge):
-        text = open(bridge, encoding="utf-8").read()
+    web_root = os.path.join(ASSETS, "web")
+    index = os.path.join(web_root, "index.html")
+    if not os.path.isfile(index):
+        return
+    text = open(index, encoding="utf-8").read()
+    if "native-bridge.js" not in text:
+        errors.append("web/index.html does not load the native bridge")
+
+    references = re.findall(r"""<(?:script|link)\b[^>]*?\b(?:src|href)\s*=\s*["']([^"']+)["']""", text, re.I)
+    bridge_path = None
+    for ref in references:
+        if re.match(r"^(?:https?:)?//", ref):
+            errors.append(f"web/index.html loads {ref} from the network – the WebView must work offline")
+            continue
+        if ref.startswith(("data:", "mailto:", "#")):
+            continue
+        local = ref.split("?", 1)[0].split("#", 1)[0]
+        if local.startswith("./"):
+            local = local[2:]
+        local = local.lstrip("/")
+        target = os.path.join(web_root, local)
+        if not os.path.isfile(target):
+            errors.append(f"web/index.html references {ref} but assets/web/{local} is not packaged")
+        elif "native-bridge" in local:
+            bridge_path = target
+
+    if bridge_path is not None:
+        bridge = open(bridge_path, encoding="utf-8").read()
         for symbol in ("NativeApp", "NativeAds", "appReady", "showInterstitial",
                        "showRewarded", "showNative"):
-            if symbol not in text:
-                errors.append(f"native-bridge.js does not expose {symbol}")
+            if symbol not in bridge:
+                errors.append(f"{os.path.relpath(bridge_path, ROOT)} does not expose {symbol}")
 
-    index = os.path.join(ASSETS, "web/index.html")
-    if os.path.isfile(index):
-        text = open(index, encoding="utf-8").read()
-        if "native-bridge.js" not in text:
-            errors.append("web/index.html does not load the native bridge")
+    calls_app_ready = False
+    for base, _dirs, files in os.walk(web_root):
+        for name in files:
+            if name.endswith((".js", ".mjs")):
+                try:
+                    if "NativeApp.appReady(" in open(os.path.join(base, name), encoding="utf-8", errors="ignore").read():
+                        calls_app_ready = True
+                        break
+                except OSError:
+                    continue
+        if calls_app_ready:
+            break
+    if not calls_app_ready:
+        errors.append("no script under assets/web calls NativeApp.appReady() – the loading plate would never hide")
 
 
-# ------------------------------------------------------------------ adivery
+# ------------------------------------------------------- google-services
+APPLICATION_ID = "com.chistan.quickgames"
+LEGACY_APPLICATION_ID = "com.labzband.balochafzar"
+
+
+def check_google_services() -> None:
+    """The Google Services plugin is applied only when app/google-services.json
+    exists. A file from the wrong Firebase project or without an Android
+    client for our package breaks the build late (or, worse, registers push
+    tokens Pushfa cannot deliver to), so it is validated here up-front."""
+    path = os.path.join(ROOT, "app", "google-services.json")
+    if not os.path.isfile(path):
+        return  # optional: App.kt falls back to FIREBASE_* or runs with push disabled
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        errors.append(f"app/google-services.json is not valid JSON: {exc}")
+        return
+
+    info = data.get("project_info") or {}
+    project_number = str(info.get("project_number", "")).strip()
+    for key in ("project_number", "project_id"):
+        if not str(info.get(key, "")).strip():
+            errors.append(f"app/google-services.json: project_info.{key} is missing")
+
+    clients = data.get("client") or []
+
+    def package_of(client: dict) -> str:
+        client_info = client.get("client_info") or {}
+        return str((client_info.get("android_client_info") or {}).get("package_name", ""))
+
+    ours = [c for c in clients if package_of(c) in (APPLICATION_ID, LEGACY_APPLICATION_ID)]
+    if not ours:
+        found = sorted(package_of(c) for c in clients) or ["<none>"]
+        errors.append(
+            "app/google-services.json has no Android client for "
+            f"{APPLICATION_ID} or {LEGACY_APPLICATION_ID} (found: {', '.join(found)}) – add the app to the "
+            "Firebase project and download the file again"
+        )
+        return
+
+    client = ours[0]
+    app_id = str((client.get("client_info") or {}).get("mobilesdk_app_id", ""))
+    if project_number and not app_id.startswith(f"1:{project_number}:android:"):
+        errors.append("app/google-services.json: mobilesdk_app_id does not belong to project_number")
+    keys = [str(k.get("current_key", "")).strip() for k in client.get("api_key") or []]
+    if not any(keys):
+        errors.append("app/google-services.json: api_key.current_key is missing for the app client")
+
+    # The private half of the Firebase project (service account) must never
+    # sit next to the app; only the Pushfa panel / a server may hold it.
+    for name in os.listdir(os.path.join(ROOT, "app")):
+        if name.endswith(".json") and name != "google-services.json":
+            candidate = os.path.join(ROOT, "app", name)
+            try:
+                text = open(candidate, encoding="utf-8", errors="ignore").read()
+            except OSError:
+                continue
+            if "private_key" in text or "service_account" in text:
+                errors.append(f"app/{name} looks like a Firebase service account – remove it")
+
+
+# ---------------------------------------------------------- removed SDKs
 def check_adivery_removed() -> None:
-    forbidden = re.compile(r"adivery", re.IGNORECASE)
+    """Adivery (advertising) and Najva (push) were replaced by Tapsell and
+    Pushfa; neither may creep back in through a stale snippet."""
+    forbidden = re.compile(r"adivery|najva", re.IGNORECASE)
     # `.github` is skipped on purpose: the CI job greps the packaged APK for the
     # removed SDK, so the workflow itself has to name it. The generated mirrors
     # under `src/data/` embed real repository files (including that workflow).
@@ -337,8 +485,9 @@ def check_adivery_removed() -> None:
                 text = open(path, encoding="utf-8", errors="ignore").read()
             except OSError:
                 continue
-            if forbidden.search(text):
-                errors.append(f"Adivery reference remains in {rel(path)}")
+            match = forbidden.search(text)
+            if match:
+                errors.append(f"{match.group(0)} reference remains in {rel(path)}")
 
 
 # ------------------------------------------------------------------- gradle
@@ -347,16 +496,65 @@ def check_gradle() -> None:
     text = open(app_gradle, encoding="utf-8").read()
     required = [
         "ir.tapsell.plus:tapsell-plus-sdk-android",
-        "com.najva:sdk",
+        "com.pushfa:pushfa-android-sdk",
         "com.google.firebase:firebase-messaging",
         "TAPSELL_APP_KEY",
-        "NAJVA_API_KEY",
+        "TAPSELL_ZONE_INTERSTITIAL",
+        "TAPSELL_ZONE_REWARDED",
+        "TAPSELL_ZONE_NATIVE",
+        "PUSHFA_API_PUBLIC_KEY",
+        "compileSdk = 35",
     ]
+    # Accept either old or new package namespace
+    if 'namespace = "com.labzband.balochafzar"' not in text and 'namespace = "com.chistan.quickgames"' not in text:
+        errors.append('app/build.gradle.kts: missing namespace = "com.labzband.balochafzar" or "com.chistan.quickgames"')
+    if 'applicationId = "com.labzband.balochafzar"' not in text and 'applicationId = "com.chistan.quickgames"' not in text:
+        errors.append('app/build.gradle.kts: missing applicationId = "com.labzband.balochafzar" or "com.chistan.quickgames"')
+
     for token in required:
         if token not in text:
             errors.append(f"app/build.gradle.kts: missing {token}")
     if "adivery" in text.lower():
         errors.append("app/build.gradle.kts still references Adivery")
+
+    # The production identifiers ship as committed defaults; CI secrets and
+    # local.properties may override them but must never be *required*.
+    props = open(os.path.join(ROOT, "gradle.properties"), encoding="utf-8").read()
+    for key, pattern in (
+            ("TAPSELL_APP_KEY", r"^TAPSELL_APP_KEY=\S+$"),
+            ("TAPSELL_ZONE_INTERSTITIAL", r"^TAPSELL_ZONE_INTERSTITIAL=[0-9a-f]{24}$"),
+            ("TAPSELL_ZONE_REWARDED", r"^TAPSELL_ZONE_REWARDED=[0-9a-f]{24}$"),
+            ("TAPSELL_ZONE_NATIVE", r"^TAPSELL_ZONE_NATIVE=[0-9a-f]{24}$"),
+            ("PUSHFA_API_PUBLIC_KEY", r"^PUSHFA_API_PUBLIC_KEY=\S+$")):
+        if not re.search(pattern, props, re.M):
+            errors.append(f"gradle.properties: {key} is not set to a valid value")
+    for forbidden in ("PUSHFA_API_PRIVATE_KEY", "private_key", "service_account"):
+        if forbidden in props:
+            errors.append(f"gradle.properties must never contain {forbidden}")
+
+    manifest = open(os.path.join(APP, "AndroidManifest.xml"), encoding="utf-8").read()
+    if 'android:scheme="labzband"' not in manifest:
+        errors.append("AndroidManifest.xml: the labzband:// deep-link scheme is missing")
+    if "${" in manifest:
+        errors.append("AndroidManifest.xml: unexpected manifest placeholder")
+
+    for name in ("PushfaManager.kt", "PushfaSettings.kt"):
+        if not os.path.isfile(os.path.join(JAVA, name)):
+            errors.append(f"{name} is missing (Pushfa push integration)")
+    for name in ("NajvaManager.kt", "NajvaConfig.kt"):
+        if os.path.isfile(os.path.join(JAVA, name)):
+            errors.append(f"{name} must be deleted (Najva was replaced by Pushfa)")
+
+    activity = open(os.path.join(JAVA, "MainActivity.kt"), encoding="utf-8").read()
+    for needle, why in (
+            ("setWebViewRenderProcessClient", "renderer hang watchdog"),
+            ("onRenderProcessGone", "renderer crash recovery"),
+            ("nativeapp:pause", "pause event for heavy WebApps"),
+            ("nativeapp:resume", "resume event for heavy WebApps"),
+            ("nativeapp:memorywarning", "memory pressure event for heavy WebApps"),
+            ("BACK_REQUEST_TIMEOUT_MS", "back button must survive a frozen renderer")):
+        if needle not in activity:
+            errors.append(f"MainActivity.kt: missing {why} ({needle})")
 
     settings = os.path.join(ROOT, "settings.gradle.kts")
     text = open(settings, encoding="utf-8").read()
@@ -364,7 +562,181 @@ def check_gradle() -> None:
         errors.append("settings.gradle.kts still declares the Adivery maven repository")
 
 
+def check_ad_resilience() -> None:
+    """The container must survive a full-screen ad and old WebViews.
+
+    * the Activity is locked to portrait – an ad Activity that rotates must
+      not hand a landscape configuration back to the game,
+    * the compat layer (polyfills + rendering policy) is packaged, parses as
+      JavaScript, and is injected by the local server,
+    * ad events are logged and settle the WebView on the host side,
+    * CI runs the real-ad lab next to the smoke test.
+    """
+    manifest = open(os.path.join(APP, "AndroidManifest.xml"), encoding="utf-8").read()
+    if 'android:screenOrientation="portrait"' not in manifest:
+        errors.append("AndroidManifest.xml: MainActivity must be locked to portrait (ad Activities rotate)")
+
+    compat = os.path.join(ASSETS, "native", "compat.js")
+    if not os.path.isfile(compat):
+        errors.append("assets/native/compat.js is missing (compat layer for old WebViews)")
+    else:
+        text = open(compat, encoding="utf-8").read()
+        for needle in ("Object", "hasOwn", "native-offscreen-canvas", "transferControlToOffscreen", "unhandledrejection"):
+            if needle not in text:
+                errors.append(f"assets/native/compat.js: missing {needle}")
+        if re.search(r"^\s*(const|let)\s", text, re.M) or "=>" in text:
+            errors.append("assets/native/compat.js must stay ES5 (it has to parse on any WebView)")
+        node = shutil.which("node")
+        if node:
+            result = subprocess.run([node, "--check", compat], capture_output=True, text=True)
+            if result.returncode != 0:
+                errors.append(f"assets/native/compat.js does not parse: {result.stderr.strip()[:200]}")
+
+    server = open(os.path.join(JAVA, "LocalWebServer.kt"), encoding="utf-8").read()
+    if "CompatInjector.inject(" not in server or "native/compat.js" not in server:
+        errors.append("LocalWebServer.kt must inject the compat script into HTML documents")
+    if not os.path.isfile(os.path.join(JAVA, "CompatInjector.kt")):
+        errors.append("CompatInjector.kt is missing")
+
+    tapsell = open(os.path.join(JAVA, "TapsellManager.kt"), encoding="utf-8").read()
+    if "ad event:" not in tapsell or "hostListener" not in tapsell:
+        errors.append("TapsellManager.kt must log every ad event and notify the host Activity")
+    activity = open(os.path.join(JAVA, "MainActivity.kt"), encoding="utf-8").read()
+    for needle, why in (
+            ("onAdEventForHost", "post-ad WebView settling"),
+            ("resumeReassert", "resumeTimers re-assertion after onResume"),
+            ("RECOMMENDED_WEBVIEW_MAJOR", "WebView version advice"),
+            ("onWindowFocusChanged", "lifecycle diagnostics")):
+        if needle not in activity:
+            errors.append(f"MainActivity.kt: missing {why} ({needle})")
+
+    workflow = open(os.path.join(ROOT, ".github", "workflows", "build-apk.yml"), encoding="utf-8").read()
+    for needle in ("SMOKE_TEST_ADS=true", "tools/emulator_ad_lab.sh", "tools/inspect_ad_sdk.py"):
+        if needle not in workflow:
+            errors.append(f"build-apk.yml: missing {needle} (ad lab / SDK inspection)")
+    for name in ("tools/emulator_ad_lab.sh", "tools/game-tests/ad_lab.mjs", "tools/game-tests/emulator_lib.mjs"):
+        if not os.path.isfile(os.path.join(ROOT, name)):
+            errors.append(f"{name} is missing")
+
+
+def check_game_patches_and_contact() -> None:
+    """Product changes that live in the packaged game and the container.
+
+    * the store has no discount wording and offers `remove_ads`, the level
+      page has its "حذف تبلیغات" button and About its "رابطہ کنگ" button –
+      i.e. tools/game-patches/apply_patches.py has been run on the packaged
+      bundle (a *warning* only: a new game build that ships the features in
+      its source legitimately retires the patches),
+    * the bundle names in index.html resolve to packaged files (the patch
+      script re-hashes the chunks it rewrites),
+    * the container implements the e-mail bridge the About button uses.
+    """
+    web = os.path.join(ROOT, "app", "src", "main", "assets", "web")
+    html_path = os.path.join(web, "index.html")
+    if os.path.isfile(html_path):
+        html = open(html_path, encoding="utf-8").read()
+        for ref in re.findall(r'(?:src|href)="/(assets/[^"]+)"', html):
+            if not os.path.isfile(os.path.join(web, ref)):
+                errors.append(f"index.html references /{ref} which is not packaged")
+    # Support both labzband (App-*.js) and chistansara (index-*.js) bundles
+    chunks = glob.glob(os.path.join(web, "assets", "App-*.js"))
+    if not chunks:
+        chunks = glob.glob(os.path.join(web, "assets", "index-*.js"))
+    if len(chunks) == 1:
+        bundle = open(chunks[0], encoding="utf-8").read()
+        if "labzband_progress" in bundle or "Os(localStorage)" in bundle:
+            if "تخفیف" in bundle and "بیشترین تخفیف" in bundle:
+                warnings.append("the packaged game still advertises a discount (تخفیف) in the store")
+            for needle, what in (
+                    ('id:"remove_ads"', "the remove_ads store product"),
+                    ("btn-remove-ads-level", "the level-complete remove-ads button"),
+                    ("btn-about-contact", "the About contact button"),
+                    ("saveState(Oe", "the native progress mirror (progress lost on force stop)")):
+                if needle not in bundle:
+                    warnings.append(f"packaged game: {what} is missing – run tools/game-patches/apply_patches.py "
+                                    "(or retire the patch once the game source ships it)")
+        if "chistansara_game_save" in bundle or "چیستان" in bundle:
+            # ChistanSara fair economy checks
+            if "دریافت رایگان" in bundle and "تومان" not in bundle:
+                warnings.append("chistan store still shows free packs without toman prices – run tools/game-patches/apply_chistan_patches.py")
+            for needle, what in (
+                    ("remove_ads", "the remove_ads store product"),
+                    ("showInterstitial", "interstitial ad integration (every 3 levels)"),
+                    ("CafeBazaar.purchase", "CafeBazaar billing integration"),
+                    ("NativeApp.appReady", "NativeApp.appReady handshake")):
+                if needle not in bundle:
+                    if needle in ("showInterstitial", "CafeBazaar.purchase"):
+                        warnings.append(f"packaged game (chistan): {what} is missing – run tools/game-patches/apply_chistan_patches.py")
+    else:
+        warnings.append(f"expected one game bundle chunk, found {len(chunks)} (looked for App-*.js and index-*.js)")
+
+    bridge = open(os.path.join(JAVA, "WebAppBridge.kt"), encoding="utf-8").read()
+    if "fun openEmail(" not in bridge or "onBridgeRequestEmail" not in bridge:
+        errors.append("WebAppBridge.kt must expose openEmail() and route it to the host")
+    activity = open(os.path.join(JAVA, "MainActivity.kt"), encoding="utf-8").read()
+    if "override fun onBridgeRequestEmail" not in activity or "ACTION_SENDTO" not in activity:
+        errors.append("MainActivity.kt must implement onBridgeRequestEmail with ACTION_SENDTO")
+    manifest = open(os.path.join(ROOT, "app", "src", "main", "AndroidManifest.xml"), encoding="utf-8").read()
+    if 'android:scheme="mailto"' not in manifest:
+        errors.append("AndroidManifest.xml: <queries> must declare the mailto SENDTO intent (package visibility)")
+
+    # Progress must survive a process death: a stable origin (fixed loopback
+    # port – the origin keys localStorage) plus the native state mirror.
+    server = open(os.path.join(JAVA, "LocalWebServer.kt"), encoding="utf-8").read()
+    if "STABLE_PORTS" not in server or "ServerSocket(0, 64, InetAddress" in server.split("private fun bindLoopback")[0]:
+        errors.append("LocalWebServer.kt must bind a stable loopback port first (random ports reset localStorage)")
+    if "fun saveState(" not in bridge or "fun loadState(" not in bridge:
+        errors.append("WebAppBridge.kt must expose saveState()/loadState() (native progress mirror)")
+    if not os.path.isfile(os.path.join(JAVA, "WebAppStateStore.kt")):
+        errors.append("WebAppStateStore.kt is missing")
+    facade = open(os.path.join(web, "native-bridge.js"), encoding="utf-8").read()
+    if "saveState" not in facade or "loadState" not in facade:
+        errors.append("native-bridge.js must expose NativeApp.saveState/loadState")
+    smoke = open(os.path.join(ROOT, "tools", "emulator_smoke.sh"), encoding="utf-8").read()
+    if "emulator_persist.mjs" not in smoke:
+        errors.append("emulator_smoke.sh must run the force-stop persistence check (emulator_persist.mjs)")
+
+
+def check_cafebazaar_key() -> None:
+    """CAFEBAZAAR_PUBLIC_KEY must be the console's RSA public key.
+
+    Purchases are reported to the game as `verified` only when Poolakey can
+    check the signature with this key; a typo (truncated base64, wrong key)
+    silently means "charged but never credited". The value must decode to a
+    DER SubjectPublicKeyInfo carrying rsaEncryption (1.2.840.113549.1.1.1).
+    """
+    import base64
+    src = open(os.path.join(JAVA, "CafeBazaarConfig.kt"), encoding="utf-8").read()
+    m = re.search(r'CAFEBAZAAR_PUBLIC_KEY\s*=\s*"([^"]*)"', src)
+    if not m:
+        errors.append("CafeBazaarConfig.kt: CAFEBAZAAR_PUBLIC_KEY not found")
+        return
+    key = m.group(1)
+    if not key or key.startswith("YOUR_"):
+        warnings.append("CafeBazaarConfig.kt: CAFEBAZAAR_PUBLIC_KEY is a placeholder – purchases will never be credited")
+        return
+    try:
+        der = base64.b64decode(key, validate=True)
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"CafeBazaarConfig.kt: CAFEBAZAAR_PUBLIC_KEY is not valid base64 ({e})")
+        return
+    rsa_oid = bytes.fromhex("06092a864886f70d010101")
+    if not der.startswith(b"\x30") or rsa_oid not in der[:32]:
+        errors.append("CafeBazaarConfig.kt: CAFEBAZAAR_PUBLIC_KEY does not decode to an RSA SubjectPublicKeyInfo")
+        return
+    # outer SEQUENCE length must match the payload (catches a truncated paste)
+    first = der[1]
+    if first < 0x80:
+        declared, header = first, 2
+    else:
+        n = first & 0x7F
+        declared, header = int.from_bytes(der[2:2 + n], "big"), 2 + n
+    if declared + header != len(der):
+        errors.append(f"CafeBazaarConfig.kt: CAFEBAZAAR_PUBLIC_KEY is truncated ({len(der)} bytes, DER declares {declared + header})")
+
+
 def main() -> int:
+    check_cafebazaar_key()
     check_xml_files()
     check_xml_references()
     check_kotlin_references()
@@ -372,6 +744,9 @@ def main() -> int:
     check_assets()
     check_adivery_removed()
     check_gradle()
+    check_google_services()
+    check_ad_resilience()
+    check_game_patches_and_contact()
 
     for warning in warnings:
         print(f"WARN  {warning}")

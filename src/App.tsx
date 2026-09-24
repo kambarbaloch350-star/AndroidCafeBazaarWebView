@@ -80,7 +80,7 @@ export default function App() {
       timestamp: '10:00:00.100',
       tag: 'Container',
       level: 'I',
-      message: 'App.onCreate: notification channels created, Najva push initialized (native)'
+      message: 'App.onCreate: notification channels created, Pushfa push initialized (native)'
     },
     {
       id: '2',
@@ -199,17 +199,17 @@ export default function App() {
     addAdEvent('native_shown', 'AdHolder(native_banner)', true);
   };
 
-  /** Simulates a Najva system notification arriving while the app is open. */
+  /** Simulates a Pushfa system notification arriving while the app is open. */
   const simulatePush = () => {
     setPushVisible(true);
-    addLog('NajvaManager', 'I', 'Push received (native system notification, foreground)');
+    addLog('PushfaManager', 'I', 'Push received (native system notification, foreground)');
   };
 
   /** A tap on the notification re-opens the app and routes the WebApp. */
   const tapPush = () => {
     setPushVisible(false);
     setRoute('capabilities');
-    addLog('NajvaManager', 'I', 'Notification tapped → MainActivity intent route="capabilities"');
+    addLog('PushfaManager', 'I', 'Notification tapped → MainActivity intent route="capabilities"');
     addLog('Container', 'I', 'DeepLinkBus: route buffered until NativeApp.appReady()');
     addLog('WebAppConsole', 'I', 'deep link delivered → location.hash = "#/capabilities"');
   };
@@ -264,11 +264,11 @@ export default function App() {
             <div className="flex items-center gap-2">
               <h1 className="text-base font-bold text-white tracking-tight">WebApp Container</h1>
               <span className="px-2 py-0.5 text-[11px] font-mono rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/40">
-                com.emochi.quickgames
+                com.labzband.balochafzar
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Local HTTP Server &rarr; WebView &bull; Tapsell Ads (native) &bull; Najva Push (native)
+              Local HTTP Server &rarr; WebView &bull; Tapsell Ads (native) &bull; Pushfa Push (native)
               &bull; CafeBazaar Billing
             </p>
           </div>
@@ -357,7 +357,7 @@ export default function App() {
 
               <div className="px-5 py-1 bg-slate-950 text-[10px] text-slate-400 flex justify-between items-center select-none shrink-0 border-b border-slate-900">
                 <span>12:00</span>
-                <span className="font-mono text-emerald-400">127.0.0.1 &bull; Tapsell &bull; Najva</span>
+                <span className="font-mono text-emerald-400">127.0.0.1 &bull; Tapsell &bull; Pushfa</span>
                 <span>100%</span>
               </div>
 
@@ -537,7 +537,7 @@ export default function App() {
                       </div>
                     </div>
                     <div className="text-center" dir="rtl">
-                      <div className="text-xl font-extrabold text-emerald-900">QuickGames</div>
+                      <div className="text-xl font-extrabold text-emerald-900">لبزبند</div>
                       <div className="mt-1.5 text-[15px] font-semibold text-teal-700">
                         در حال بارگذاری...
                       </div>
@@ -607,7 +607,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* ============ Najva system notification ============ */}
+                {/* ============ Pushfa system notification ============ */}
                 {pushVisible && (
                   <button
                     onClick={tapPush}
@@ -620,7 +620,7 @@ export default function App() {
                       </div>
                       <div className="flex-1">
                         <div className="text-[11px] font-bold text-white">
-                          QuickGames • اعلان سیستمی اندروید
+                          لبزبند • اعلان سیستمی اندروید
                         </div>
                         <div className="text-[10px] text-slate-400">
                           تست قابلیت‌ها را ببین — برای ادامه لمس کنید
@@ -736,7 +736,7 @@ export default function App() {
                       • Ad and push failures are contained natively; every JS promise always settles.
                     </li>
                     <li>
-                      • No Tapsell/Najva identifier ever reaches JavaScript.
+                      • No Tapsell/Pushfa identifier ever reaches JavaScript.
                     </li>
                     <li>
                       • Renderer crash → WebView is rebuilt and the WebApp reboots (no app crash).
@@ -861,7 +861,7 @@ export default function App() {
             </div>
             <p className="text-[11px] text-slate-500">
               Real device output: <span className="font-mono">adb logcat -s MainActivity WebAppBridge
-              LocalWebServer TapsellManager NajvaManager</span>
+              LocalWebServer TapsellManager PushfaManager</span>
             </p>
           </div>
         )}
@@ -870,7 +870,7 @@ export default function App() {
       <footer className="border-t border-slate-800 px-6 py-3 text-[11px] text-slate-500 flex flex-wrap items-center justify-between gap-2">
         <span>
           Gradle 8.5 &bull; AGP 8.3.2 &bull; Kotlin 2.1.10 &bull; Poolakey 2.2.0 &bull; Tapsell Plus
-          2.3.3 &bull; Najva 1.8.4
+          2.3.3 &bull; Pushfa 2.0.4
         </span>
         <span className="flex items-center gap-1.5">
           <Play className="w-3 h-3 text-emerald-500" />

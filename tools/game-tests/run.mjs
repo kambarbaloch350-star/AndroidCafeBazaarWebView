@@ -8,12 +8,30 @@
  * game the way a player would.
  *
  * The container itself is verified on a real Android emulator
- * (`tools/emulator_smoke.sh`); this harness covers the WebApp/game logic:
- * coins, levels, the spinning wheel, interstitials, the remove-ads purchase and
- * the rating dialog, all without an emulator.
+ * (`tools/emulator_smoke.sh` + `emulator_play.mjs`); this harness covers the
+ * WebApp/game logic against the container's *protocol*: the stub speaks the
+ * exact TapsellManager event envelopes (`interstitial_shown/closed`,
+ * `rewarded_completed`, `ad_error` with stable codes, delivered through both
+ * `NativeAds.onEvent` and `nativeads:event`) and Poolakey purchase results
+ * (`success`/`verified`/`purchaseToken`), so coins, levels, the spin wheel,
+ * interstitials, coin packs and the rating button are exercised for real.
+ *
+ * Vite/webpack bundles (`<script type="module">`) are bundled with esbuild
+ * into one classic script before they are handed to jsdom.
  *
  * Usage:
  *   node tools/game-tests/run.mjs [--scenarios <file.json>] [--dump]
+ *
+ * Scenario steps (tools/game-tests/scenarios.json):
+ *   clearStorage, storage {key: value}, reload, click "text", clickSelector,
+ *   clickUntil {selector, until, max, every}, wait, pressBack ('webapp' |
+ *   'container'), adEvent {type, data}, evaluate "js" (+ expectValue),
+ *   clearWebStorageOnly, setNativeState {key: {value, savedAt}},
+ *   setRewardGranted, setAdsEnabled, setHoldAds, setOwnedPurchases [...],
+ *   setPurchaseOutcome ('ok' | 'unverified' | 'cancelled'),
+ *   expectSelector / expectNoSelector, expectText / expectNoText,
+ *   expectCall / expectNoCall / expectCallCount, expectStorage,
+ *   expectBackHandled, dump.
  *
  * `--dump` prints a DOM/state summary, which is what you want when the game's
  * internals are still unknown.
@@ -26,6 +44,10 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WEB_ROOT = path.join(ROOT, 'app', 'src', 'main', 'assets', 'web');
 const ENTRY = path.join(WEB_ROOT, 'index.html');
+// The container injects its compatibility layer (polyfills + rendering policy)
+// into every HTML document it serves; the harness runs the same file, in the
+// same position (end of <head>, before the module bundle).
+const COMPAT_SCRIPT = path.join(WEB_ROOT, '..', 'native', 'compat.js');
 
 const SETTLE_MS = 600;
 const results = [];
@@ -48,6 +70,12 @@ function installBridge(window) {
     billingConnected: true,
     removeAdsOwned: false,
     purchases: [],
+    /** 'ok' | 'unverified' | 'cancelled' – what the next purchase returns. */
+    purchaseOutcome: 'ok',
+    /** When true show* returns true but the ad is never settled by the stub. */
+    holdAds: false,
+    /** Native mirror of saved-state blobs (WebAppStateStore): key -> {value, savedAt}. */
+    nativeState: {},
     state() {
       return {
         calls: this.calls.slice(),
@@ -57,7 +85,19 @@ function installBridge(window) {
         ratingCalls: this.calls.filter(c => c.startsWith('CafeBazaar.openRatingPage'))
       };
     },
-    reset() { this.calls.length = 0; }
+    reset() {
+      this.calls.length = 0;
+      // Every scenario starts from the same "device": ads served, rewards
+      // granted, billing connected, nothing owned.
+      this.adsEnabled = true;
+      this.rewardGranted = true;
+      this.billingConnected = true;
+      this.removeAdsOwned = false;
+      this.purchases = [];
+      this.purchaseOutcome = 'ok';
+      this.holdAds = false;
+      this.nativeState = {};
+    }
   };
 
   const record = name => window.__harness.calls.push(name);
@@ -65,11 +105,22 @@ function installBridge(window) {
     window.setTimeout(() => window.dispatchEvent(new window.CustomEvent(event, { detail })), delay);
   const sink = (fn, payload, delay = 100) =>
     window.setTimeout(() => { const b = window.CafeBazaarBridge; if (b && b[fn]) b[fn](JSON.stringify(payload)); }, delay);
+  // Ad events travel exactly like WebAppBridge.onAdEvent delivers them: the
+  // envelope goes to NativeAds.onEvent(json) *and* out as a `nativeads:event`
+  // DOM event, in the same tick – a facade must cope with both.
+  const adEvent = (type, data, delay = 100) => window.setTimeout(() => {
+    const envelope = { type, data: Object.assign({ provider: 'tapsell' }, data) };
+    const json = JSON.stringify(envelope);
+    const ads = window.NativeAds;
+    if (ads && typeof ads.onEvent === 'function') { try { ads.onEvent(json); } catch (e) { console.error(e); } }
+    window.dispatchEvent(new window.CustomEvent('nativeads:event', { detail: JSON.parse(json) }));
+  }, delay);
+  window.__harness.adEvent = adEvent;
 
   window.AndroidBridge = {
     isNativeApp: () => true,
     isProduction: () => true,
-    getPackageName: () => 'com.emochi.quickgames',
+    getPackageName: () => 'com.labzband.balochafzar',
     getInfo: () => JSON.stringify({
       platform: 'android', sdkInt: 30, appVersion: '2.0.0', versionCode: 2,
       debug: false, serverPort: 7331, adsReady: true, pushEnabled: true
@@ -78,23 +129,51 @@ function installBridge(window) {
     appLoaded: () => true,
     reportError: m => record('NativeApp.reportError:' + m),
     navigateBack: () => { record('NativeApp.navigateBack'); return true; },
+    openEmail: address => { record('NativeApp.openEmail:' + address); return true; },
+    // Saved-state mirror – same contract as WebAppBridge.saveState/loadState.
+    saveState: (key, value, savedAt) => {
+      record('NativeApp.saveState:' + key);
+      if (typeof key !== 'string' || typeof value !== 'string') return false;
+      window.__harness.nativeState[key] = { value, savedAt: Number(savedAt) || Date.now() };
+      return true;
+    },
+    loadState: key => {
+      record('NativeApp.loadState:' + key);
+      const entry = window.__harness.nativeState[key];
+      return entry ? JSON.stringify({ key, value: entry.value, savedAt: entry.savedAt }) : null;
+    },
+    clearState: key => { record('NativeApp.clearState:' + key); delete window.__harness.nativeState[key]; return true; },
     getStartupRoute: () => window.__harness.startupRoute || '',
     consumeStartupRoute: () => { window.__harness.startupRoute = ''; },
 
     isAdsAvailable: () => window.__harness.adsEnabled,
     isAdReady: () => window.__harness.adsEnabled,
+    isRemoveAdsOwned: () => window.__harness.removeAdsOwned,
+    getDeviceProfile: () => JSON.stringify({ tier: 'mid', suggestedPixelRatio: 1.5, cpuCores: 8, totalRamMb: 4096 }),
+    getRenderPixelRatio: () => 1.5,
     prepareAds: () => record('NativeAds.prepare'),
     showInterstitial: () => {
       record('NativeAds.showInterstitial');
-      emit('nativeads:event', { type: 'interstitial_closed', data: { adType: 'interstitial' } });
+      if (!window.__harness.adsEnabled) {
+        adEvent('ad_error', { adType: 'interstitial', error: 'INTERSTITIAL_NOT_CONFIGURED' }, 20);
+        return false;
+      }
+      if (window.__harness.holdAds) return true;   // the scenario settles it later
+      adEvent('interstitial_shown', { adType: 'interstitial' }, 60);
+      adEvent('interstitial_closed', { adType: 'interstitial', shownCount: 1 }, 160);
       return true;
     },
     showRewarded: () => {
       record('NativeAds.showRewarded');
-      emit('nativeads:event', {
-        type: window.__harness.rewardGranted ? 'rewarded' : 'ad_error',
-        data: { adType: 'rewarded', rewardGranted: window.__harness.rewardGranted, error: 'NO_FILL' }
-      });
+      if (!window.__harness.adsEnabled) {
+        adEvent('ad_error', { adType: 'rewarded', error: 'REWARDED_NOT_CONFIGURED' }, 20);
+        return false;
+      }
+      if (window.__harness.holdAds) return true;   // the scenario settles it later
+      const granted = window.__harness.rewardGranted;
+      adEvent('rewarded_shown', { adType: 'rewarded' }, 60);
+      if (granted) adEvent('rewarded_completed', { adType: 'rewarded', rewardGranted: true, rewarded: true, shownCount: 1 }, 120);
+      adEvent('rewarded_closed', { adType: 'rewarded', rewardGranted: granted }, 180);
       return true;
     },
     showNative: () => { record('NativeAds.showNative'); return true; },
@@ -109,10 +188,20 @@ function installBridge(window) {
     },
     buyProduct: id => {
       record('CafeBazaar.buyProduct:' + id);
+      const outcome = window.__harness.purchaseOutcome;
+      if (outcome === 'cancelled') {
+        sink('onPurchaseResult', {
+          success: false, verified: false, productId: id, message: 'Purchase cancelled by user', errorCode: 'CANCELLED'
+        });
+        return;
+      }
       window.__harness.purchases.push(id);
       if (id === 'remove_ads') window.__harness.removeAdsOwned = true;
+      // Exactly what PurchaseResult.toJson() emits; `verified` is false when
+      // the RSA key is not configured (Poolakey SecurityCheck disabled).
       sink('onPurchaseResult', {
-        success: true, productId: id, purchaseToken: 'token-' + id, orderId: 'order-' + id
+        success: true, verified: outcome !== 'unverified', productId: id, purchaseToken: 'token-' + id,
+        orderId: 'order-' + id, purchaseTime: Date.now(), message: 'Purchase completed successfully'
       });
     },
     buyProductWithPayload: (id) => window.AndroidBridge.buyProduct(id),
@@ -122,10 +211,13 @@ function installBridge(window) {
     },
     getPurchases: () => {
       record('CafeBazaar.getPurchases');
-      const purchases = window.__harness.removeAdsOwned
-        ? [{ productId: 'remove_ads', purchaseToken: 'token-remove_ads', purchaseState: 'PURCHASED' }]
-        : [];
-      sink('onPurchasesQueryResult', { success: true, purchases }, 60);
+      // Mirrors QueryPurchasesResult.toJson(): every active purchase is a
+      // PurchaseResult (success/verified/productId/purchaseToken/...).
+      const purchases = window.__harness.purchases.map(id => ({
+        success: true, verified: true, productId: id, purchaseToken: 'token-' + id,
+        orderId: 'order-' + id, purchaseTime: Date.now(), message: 'Active purchase'
+      }));
+      sink('onPurchasesQueryResult', { success: true, purchases, message: `Found ${purchases.length}` }, 60);
     },
     openRatingPage: () => { record('CafeBazaar.openRatingPage'); return true; },
     openStorePage: () => { record('CafeBazaar.openStorePage'); return true; },
@@ -133,10 +225,58 @@ function installBridge(window) {
   };
 }
 
+/**
+ * Browser APIs a Node-built game touches at boot that jsdom does not provide.
+ * They are stubbed – not emulated – so the game boots the same way it does in
+ * the WebView; anything visual (canvas, audio, workers) simply does nothing.
+ */
+function installBrowserShims(window) {
+  if (typeof window.matchMedia !== 'function') {
+    window.matchMedia = query => ({
+      matches: false, media: String(query), onchange: null,
+      addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {},
+      dispatchEvent() { return false; }
+    });
+  }
+  if (typeof window.fetch !== 'function') {
+    // Vite's modulepreload polyfill prefetches chunks with fetch(); the chunks
+    // are already bundled, so a resolved promise is the right answer.
+    window.fetch = () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('') });
+  }
+  if (typeof window.scrollTo !== 'function' || /not implemented/i.test(String(window.scrollTo))) {
+    window.scrollTo = () => {};
+  }
+  if (window.HTMLElement && !('scrollIntoView' in window.HTMLElement.prototype)) {
+    window.HTMLElement.prototype.scrollIntoView = () => {};
+  }
+  if (!window.ResizeObserver) {
+    window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+  }
+  if (!window.IntersectionObserver) {
+    window.IntersectionObserver = class {
+      constructor() {}
+      observe() {} unobserve() {} disconnect() {} takeRecords() { return []; }
+    };
+  }
+  if (window.HTMLCanvasElement) {
+    // jsdom logs "not implemented" for getContext; a null context is what a
+    // browser returns when 2D/WebGL is unavailable, and every engine copes.
+    window.HTMLCanvasElement.prototype.getContext = () => null;
+  }
+  if (window.HTMLMediaElement) {
+    window.HTMLMediaElement.prototype.play = () => Promise.resolve();
+    window.HTMLMediaElement.prototype.pause = () => {};
+    window.HTMLMediaElement.prototype.load = () => {};
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Bundle loading
 // ---------------------------------------------------------------------------
-function readEntry() {
+let entryCache = null;
+
+async function readEntry() {
+  if (entryCache) return entryCache;
   const html = fs.readFileSync(ENTRY, 'utf8');
   const classic = [];
   const modules = [];
@@ -150,19 +290,57 @@ function readEntry() {
     if (srcMatch) {
       const file = path.join(WEB_ROOT, srcMatch[1].replace(/^\.?\//, '').split('?')[0]);
       if (!fs.existsSync(file)) throw new Error(`entry document references a missing script: ${srcMatch[1]}`);
-      (isModule ? modules : classic).push({ src: srcMatch[1], code: fs.readFileSync(file, 'utf8') });
+      if (isModule) {
+        modules.push({ src: srcMatch[1], code: await bundleModule(file, srcMatch[1]) });
+      } else {
+        classic.push({ src: srcMatch[1], code: fs.readFileSync(file, 'utf8') });
+      }
     } else if (inline.trim()) {
-      (isModule ? modules : classic).push({ src: '(inline)', code: inline });
+      (isModule ? modules : classic).push({ src: '(inline)', code: isModule ? toClassic(inline, '(inline module)') : inline });
     }
   }
-  return { html, classic, modules };
+  entryCache = { html, classic, modules };
+  return entryCache;
 }
 
 /**
- * Makes an ES module runnable inside jsdom, which cannot execute
- * `<script type="module">`. A production bundle is a single self-contained
- * chunk, so removing the (empty) export statements is enough; anything that
- * still needs import resolution is reported instead of being silently broken.
+ * jsdom cannot execute `<script type="module">`. A Node-built game (Vite,
+ * webpack) ships a code-split module graph – an entry chunk that imports the
+ * framework chunk and lazy-loads the app, levels and dictionary chunks – so
+ * the graph is bundled into one classic IIFE script with esbuild, exactly what
+ * the browser ends up executing. Dynamic `import()` calls are inlined, which is
+ * fine here: the harness tests game logic, not loading behaviour.
+ */
+async function bundleModule(file, label) {
+  let esbuild;
+  try {
+    esbuild = await import('esbuild');
+  } catch {
+    console.log(`WARN  ${label}: esbuild is not installed – falling back to a textual module rewrite ` +
+      '(run: npm install --no-save esbuild)');
+    return toClassic(fs.readFileSync(file, 'utf8'), label);
+  }
+  const result = await esbuild.build({
+    entryPoints: [file],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: ['es2020'],
+    write: false,
+    minify: false,
+    sourcemap: false,
+    logLevel: 'silent',
+    absWorkingDir: WEB_ROOT,
+    define: { 'import.meta.url': JSON.stringify('http://127.0.0.1:7331' + label) }
+  });
+  const out = result.outputFiles.find(f => f.path.endsWith('.js')) || result.outputFiles[0];
+  return out.text;
+}
+
+/**
+ * Textual fallback for a single self-contained module chunk: removes the
+ * (empty) export statements; anything that still needs import resolution is
+ * reported instead of being silently broken.
  */
 function toClassic(code, label) {
   const importRe = /^\s*import\s+[^;]*?from\s*["'][^"']+["'];?\s*$/gm;
@@ -189,8 +367,10 @@ function toClassic(code, label) {
  * WebApp would never render again. Building a new JSDOM instance is the closest
  * equivalent to reloading the page in the WebView.
  */
-async function boot() {
-  const { html, classic, modules } = readEntry();
+const HARNESS_KNOBS = ['adsEnabled', 'rewardGranted', 'billingConnected', 'removeAdsOwned', 'purchases', 'purchaseOutcome', 'holdAds', 'nativeState'];
+
+async function boot(initialStorage = {}, harnessKnobs = {}) {
+  const { html, classic, modules } = await readEntry();
   const virtualConsole = new VirtualConsole();
   const log = [];
   virtualConsole.on('log', (...a) => log.push('log: ' + a.map(String).join(' ')));
@@ -212,9 +392,27 @@ async function boot() {
   const { window } = dom;
 
   installBridge(window);
+  installBrowserShims(window);
+  // A reload keeps the "device state" of the stub (owned purchases, ad
+  // availability, ...) – only the page is new.
+  for (const key of HARNESS_KNOBS) {
+    if (harnessKnobs[key] !== undefined) {
+      window.__harness[key] = Array.isArray(harnessKnobs[key]) ? harnessKnobs[key].slice() : harnessKnobs[key];
+    }
+  }
+  // Seed localStorage *before* the game boots – a reload keeps the saved
+  // progress, and the game reads it synchronously during start-up.
+  for (const [key, value] of Object.entries(initialStorage)) {
+    try { window.localStorage.setItem(key, value); } catch (e) { /* ignore */ }
+  }
 
-  // The container injects nothing: every script comes from the entry document,
-  // exactly like in the WebView.
+  // Same order as the WebView: the container's compat script (end of <head>),
+  // then the document's own classic scripts, then the module bundle.
+  if (fs.existsSync(COMPAT_SCRIPT)) {
+    const el = window.document.createElement('script');
+    el.textContent = fs.readFileSync(COMPAT_SCRIPT, 'utf8');
+    window.document.head.appendChild(el);
+  }
   for (const script of classic) {
     const el = window.document.createElement('script');
     el.textContent = script.code;
@@ -242,13 +440,20 @@ function findClickable(window, text) {
   const nodes = Array.from(window.document.querySelectorAll(
     'button, a, [role="button"], input[type="button"], input[type="submit"], [class*="btn"], [class*="button"]'
   ));
+  // jsdom has no layout, so "visible" means: not disabled, not hidden by an
+  // attribute / inline style, and not inside a closed dialog or hidden subtree.
   const visible = n => {
-    const style = window.getComputedStyle ? null : null;
-    return n && (n.offsetParent !== undefined);
+    for (let node = n; node && node.nodeType === 1; node = node.parentElement) {
+      if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false;
+      const style = (node.getAttribute('style') || '').replace(/\s+/g, '');
+      if (style.includes('display:none') || style.includes('visibility:hidden')) return false;
+    }
+    return !n.disabled;
   };
-  return nodes.find(n => visible(n) && (n.textContent || '').includes(text))
-    || nodes.find(n => (n.textContent || '').includes(text))
-    || null;
+  const matches = nodes.filter(n => (n.textContent || '').includes(text));
+  // Prefer the most specific (innermost) visible match, then any match.
+  const innermost = list => list.find(n => !list.some(o => o !== n && n.contains(o)));
+  return innermost(matches.filter(visible)) || innermost(matches) || null;
 }
 
 function clickText(window, text) {
@@ -298,6 +503,26 @@ function loadScenarios() {
   if (idx >= 0 && process.argv[idx + 1]) {
     return JSON.parse(fs.readFileSync(process.argv[idx + 1], 'utf8'));
   }
+  // Auto-detect chistan bundle: if the packaged game contains chistansara, use chistan scenarios
+  try {
+    const webAssets = path.join(ROOT, 'app', 'src', 'main', 'assets', 'web', 'assets');
+    if (fs.existsSync(webAssets)) {
+      const files = fs.readdirSync(webAssets);
+      for (const f of files) {
+        if (f.endsWith('.js')) {
+          const content = fs.readFileSync(path.join(webAssets, f), 'utf8');
+          if (content.includes('chistansara') || content.includes('چیستان‌سرا') || content.includes('چیستان')) {
+            const chistanFile = path.join(ROOT, 'tools', 'game-tests', 'chistan_scenarios.json');
+            if (fs.existsSync(chistanFile)) {
+              console.log('Detected ChistanSara bundle – using chistan_scenarios.json');
+              return JSON.parse(fs.readFileSync(chistanFile, 'utf8'));
+            }
+          }
+          break;
+        }
+      }
+    }
+  } catch {}
   const defaultFile = path.join(ROOT, 'tools', 'game-tests', 'scenarios.json');
   return fs.existsSync(defaultFile) ? JSON.parse(fs.readFileSync(defaultFile, 'utf8')) : [];
 }
@@ -338,9 +563,71 @@ async function runScenario(state, scenario) {
         window.__harness.purchases = step.setOwnedPurchases.slice();
         window.__harness.removeAdsOwned = step.setOwnedPurchases.includes('remove_ads');
       }
+      if (step.setPurchaseOutcome) window.__harness.purchaseOutcome = step.setPurchaseOutcome;
+      if (step.setAdsEnabled !== undefined) window.__harness.adsEnabled = step.setAdsEnabled;
+      if (step.setHoldAds !== undefined) window.__harness.holdAds = step.setHoldAds;
+      if (step.adEvent) {
+        // Deliver a container ad event by hand (used with setHoldAds to model
+        // the activity switch of a real full-screen ad).
+        const { type, data } = step.adEvent;
+        window.__harness.adEvent(type, data || { adType: type.split('_')[0] }, 0);
+        await settle(step.wait || SETTLE_MS);
+      }
+      if (step.clickUntil) {
+        // Repeatedly click a control until a selector appears (e.g. buy hints
+        // until the level-complete overlay shows up).
+        const { selector, until, max = 40, every = 120 } = step.clickUntil;
+        let clicks = 0;
+        while (!window.document.querySelector(until) && clicks < max) {
+          const target = window.document.querySelector(selector);
+          if (!target) break;
+          target.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+          clicks++;
+          await settle(every);
+        }
+        await settle(step.wait || SETTLE_MS);
+        const reached = !!window.document.querySelector(until);
+        console.log(`      clicked ${selector} ${clicks}x -> ${until} ${reached ? 'appeared' : 'MISSING'}`);
+        check(`[${scenario.name}] ${until} appears after clicking ${selector}`, reached,
+          reached ? '' : JSON.stringify(domSummary(window)).slice(0, 600));
+      }
+      if (step.evaluate) {
+        // Runs JavaScript in the page (debugging aid; `expectValue` asserts on
+        // the JSON-serialised result).
+        let value;
+        try { value = window.eval(step.evaluate); } catch (e) { value = 'ERROR: ' + e.message; }
+        if (value && typeof value.then === 'function') value = await value;
+        console.log(`      evaluate -> ${JSON.stringify(value)}`);
+        if (step.expectValue !== undefined) {
+          check(`[${scenario.name}] evaluate == ${JSON.stringify(step.expectValue)}`,
+            JSON.stringify(value) === JSON.stringify(step.expectValue), JSON.stringify(value));
+        }
+        await settle(step.wait || 50);
+      }
+      if (step.expectSelector) {
+        const ok = !!window.document.querySelector(step.expectSelector);
+        check(`[${scenario.name}] renders ${step.expectSelector}`, ok, ok ? '' : JSON.stringify(domSummary(window)).slice(0, 400));
+      }
+      if (step.expectNoSelector) {
+        const ok = !window.document.querySelector(step.expectNoSelector);
+        check(`[${scenario.name}] does not render ${step.expectNoSelector}`, ok);
+      }
       if (step.clearStorage) {
+        // A fresh device: web storage *and* the native mirror.
+        window.localStorage.clear();
+        window.__harness.nativeState = {};
+        await settle(100);
+      }
+      if (step.clearWebStorageOnly) {
+        // A lost origin / wiped WebView store: the native mirror survives.
         window.localStorage.clear();
         await settle(100);
+      }
+      if (step.setNativeState) {
+        for (const [key, entry] of Object.entries(step.setNativeState)) {
+          const value = typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value);
+          window.__harness.nativeState[key] = { value, savedAt: Number(entry.savedAt) || 0 };
+        }
       }
       if (step.storage) {
         for (const [key, value] of Object.entries(step.storage)) {
@@ -349,12 +636,18 @@ async function runScenario(state, scenario) {
         await settle(100);
       }
       if (step.reload) {
-        const previousStorage = { ...storageDump(window) };
-        const fresh = await boot();
-        // localStorage survives a real reload: carry the keys over.
-        for (const [key, value] of Object.entries(previousStorage)) {
-          try { fresh.window.localStorage.setItem(key, value); } catch (e) { /* ignore */ }
-        }
+        // localStorage survives a real reload: carry the raw strings over
+        // (never the parsed objects – "[object Object]" is not valid JSON).
+        const previousStorage = {};
+        try {
+          for (let i = 0; i < window.localStorage.length; i++) {
+            const key = window.localStorage.key(i);
+            previousStorage[key] = window.localStorage.getItem(key);
+          }
+        } catch (e) { /* ignore */ }
+        const knobs = {};
+        for (const key of HARNESS_KNOBS) knobs[key] = window.__harness[key];
+        const fresh = await boot(previousStorage, knobs);
         window = fresh.window;
         await settle(step.wait || 900);
       }

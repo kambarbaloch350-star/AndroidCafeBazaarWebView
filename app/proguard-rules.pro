@@ -17,16 +17,17 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 
--keep class com.emochi.quickgames.WebAppBridge { *; }
--keep class com.emochi.quickgames.App { *; }
--keep class com.emochi.quickgames.MainActivity { *; }
+-keep class com.labzband.balochafzar.WebAppBridge { *; }
+-keep class com.labzband.balochafzar.App { *; }
+-keep class com.labzband.balochafzar.MainActivity { *; }
+-keep class com.labzband.balochafzar.PushfaManager { *; }
 
 # Bridge payloads are serialised/deserialised by reflection-free JSON code, but
 # their public shape is part of the JS contract – keep them verbatim.
--keep class com.emochi.quickgames.PurchaseResult { *; }
--keep class com.emochi.quickgames.ConsumeResult { *; }
--keep class com.emochi.quickgames.ConnectionResult { *; }
--keep class com.emochi.quickgames.QueryPurchasesResult { *; }
+-keep class com.labzband.balochafzar.PurchaseResult { *; }
+-keep class com.labzband.balochafzar.ConsumeResult { *; }
+-keep class com.labzband.balochafzar.ConnectionResult { *; }
+-keep class com.labzband.balochafzar.QueryPurchasesResult { *; }
 
 # -----------------------------------------------------------------------------
 # CafeBazaar Poolakey (in-app billing over AIDL)
@@ -59,11 +60,20 @@
 }
 
 # -----------------------------------------------------------------------------
-# Najva push notification SDK + Firebase Messaging
+# Pushfa push notification SDK + Firebase Messaging
+# (the SDK ships consumer rules for its service / click activity / worker;
+#  the public API surface is kept as well so reflection-free callbacks and
+#  the persisted PushfaConfig never lose members)
 # -----------------------------------------------------------------------------
--keep class com.najva.sdk.** { *; }
--keep interface com.najva.sdk.** { *; }
--dontwarn com.najva.sdk.**
+-keep class com.pushfa.sdk.** { *; }
+-keep interface com.pushfa.sdk.** { *; }
+-dontwarn com.pushfa.sdk.**
+
+# WorkManager (used by the Pushfa SDK for delivery / click reports).
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-dontwarn androidx.work.**
 
 -keep class com.google.firebase.** { *; }
 -keep interface com.google.firebase.** { *; }

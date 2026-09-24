@@ -32,10 +32,14 @@ fi
 
 # Only the most informative frames are published: one comment set per picture,
 # and the whole timeline stays in the `emulator-screenshots` artifact.
-WANTED="03-boot 05-boot 07-running 08-webapp 09-deeplink 10-autotest 11-landscape 12-backdialog 13-longpress 14-splash-night"
+# `PICTURES` overrides the selection (space separated base names, globs
+# allowed) – the ad lab publishes its own frames from another directory.
+WANTED="${PICTURES:-03-boot 05-boot 07-running 08-webapp 09-deeplink 10-autotest 11-landscape 12-backdialog 13-longpress 14-splash-night 15-after-activity-switch}"
 pictures=()
 for name in $WANTED; do
-  [ -f "$OUT/$name.png" ] && pictures+=("$OUT/$name.png")
+  for file in "$OUT"/$name.png; do
+    [ -f "$file" ] && pictures+=("$file")
+  done
 done
 if [ "${#pictures[@]}" -eq 0 ]; then
   echo "[publish] no screenshots found"

@@ -11,6 +11,8 @@ jobs:
   build:
     name: Build Debug & Release APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # commits generated branding (see "Apply branding")
 
     steps:
       - name: Checkout repository
@@ -65,33 +67,77 @@ jobs:
           touch "$DIST_DIR/fallback/fallback.ok"
           ./gradlew --version --no-daemon
 
-      # Native-only configuration (Tapsell / Najva / Firebase). Values are taken
-      # from repository secrets when present; otherwise the container builds with
-      # advertising and push disabled instead of failing.
+      # Native-only configuration (Tapsell / Pushfa / Firebase). The production
+      # identifiers are committed defaults in gradle.properties; repository
+      # secrets override them when present (local.properties wins over
+      # gradle.properties). app/google-services.json (Firebase project that Pushfa
+      # delivers through) is committed; the GOOGLE_SERVICES_JSON secret, when set,
+      # overrides it with the full file content.
       - name: Inject native configuration
         env:
           TAPSELL_APP_KEY: ${{ secrets.TAPSELL_APP_KEY }}
           TAPSELL_ZONE_INTERSTITIAL: ${{ secrets.TAPSELL_ZONE_INTERSTITIAL }}
           TAPSELL_ZONE_REWARDED: ${{ secrets.TAPSELL_ZONE_REWARDED }}
           TAPSELL_ZONE_NATIVE: ${{ secrets.TAPSELL_ZONE_NATIVE }}
-          NAJVA_API_KEY: ${{ secrets.NAJVA_API_KEY }}
-          NAJVA_WEBSITE_ID: ${{ secrets.NAJVA_WEBSITE_ID }}
+          PUSHFA_API_PUBLIC_KEY: ${{ secrets.PUSHFA_API_PUBLIC_KEY }}
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           FIREBASE_SENDER_ID: ${{ secrets.FIREBASE_SENDER_ID }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           add() { [ -n "$2" ] && echo "$1=$2" >> local.properties || true; }
           add TAPSELL_APP_KEY "$TAPSELL_APP_KEY"
           add TAPSELL_ZONE_INTERSTITIAL "$TAPSELL_ZONE_INTERSTITIAL"
           add TAPSELL_ZONE_REWARDED "$TAPSELL_ZONE_REWARDED"
           add TAPSELL_ZONE_NATIVE "$TAPSELL_ZONE_NATIVE"
-          add NAJVA_API_KEY "$NAJVA_API_KEY"
-          add NAJVA_WEBSITE_ID "$NAJVA_WEBSITE_ID"
+          add PUSHFA_API_PUBLIC_KEY "$PUSHFA_API_PUBLIC_KEY"
           add FIREBASE_APP_ID "$FIREBASE_APP_ID"
           add FIREBASE_API_KEY "$FIREBASE_API_KEY"
           add FIREBASE_PROJECT_ID "$FIREBASE_PROJECT_ID"
           add FIREBASE_SENDER_ID "$FIREBASE_SENDER_ID"
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            python3 -c "import json,sys; json.load(open('app/google-services.json'))" \
+              && echo "google-services.json installed (Firebase project enabled)"
+          elif [ -f app/google-services.json ]; then
+            echo "using the committed app/google-services.json"
+          else
+            echo "no google-services.json: building without Firebase (push disabled)"
+          fi
+
+      # Branding: drop the logo at branding/logo-source.png (GitHub -> Add
+      # file -> Upload files works) and this step renders every launcher icon,
+      # the loading plate, the game's logo.png and the manifest icons, applies
+      # the game patches that switch the menu/About tiles to it, and commits
+      # the result back to the branch. branding/logo-source.sha256 records the
+      # applied source, so the step is a no-op until the PNG changes. The APK
+      # built below already contains the new branding.
+      - name: Apply branding (branding/logo-source.png)
+        if: github.event_name == 'push'
+        run: |
+          set -e
+          SRC=branding/logo-source.png
+          [ -f "$SRC" ] || { echo "no $SRC – branding unchanged"; exit 0; }
+          SUM=$(sha256sum "$SRC" | cut -c1-64)
+          if [ "$(cat branding/logo-source.sha256 2>/dev/null)" = "$SUM" ]; then
+            echo "branding already applied for $SUM"; exit 0
+          fi
+          command -v convert >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick; }
+          python3 tools/branding/apply_logo.py --source "$SRC"
+          python3 tools/game-patches/apply_patches.py
+          echo "$SUM" > branding/logo-source.sha256
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
+          git commit -m "Branding: apply branding/logo-source.png (launcher icons, loading plate, game logo)"
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then echo "branding committed"; exit 0; fi
+            git pull --rebase origin "${GITHUB_REF_NAME}" || true
+            sleep 5
+          done
+          echo "::warning::could not push the generated branding – the APK of this run has it, the branch does not"
 
       # Pre-flight: the repository-level invariants (no removed advertising SDK,
       # every resource reference resolves, bridge contract present).
@@ -106,14 +152,14 @@ jobs:
           set -o pipefail
           ./gradlew testDebugUnitTest --stacktrace --no-daemon 2>&1 | tee build.log
 
-      # WebApp contract: boots the packaged bundle in jsdom with a scripted
-      # AndroidBridge and drives it like a player (readiness handshake, back
-      # navigation, ads, billing, rating). Scenarios that need the real game
-      # bundle are reported as SKIP while the placeholder demo is packaged.
+      # WebApp contract: bundles the packaged game with esbuild, boots it in
+      # jsdom against a scripted AndroidBridge (the exact TapsellManager /
+      # Poolakey event protocol) and plays it: menu, spin wheel, coin packs,
+      # two levels -> interstitial -> third level, ad time-outs, back button.
       - name: WebApp bridge contract (jsdom)
         run: |
           set -o pipefail
-          npm install --no-save --no-audit --no-fund jsdom@30 2>&1 | tail -2
+          npm install --no-save --no-audit --no-fund jsdom@30 esbuild@0.25 2>&1 | tail -2
           node tools/game-tests/run.mjs 2>&1 | tee -a build.log
 
       # Compiler/test diagnostics are re-printed as GitHub annotations. They are
@@ -156,22 +202,34 @@ jobs:
           APK=app/build/outputs/apk/debug/app-debug.apk
           ls -lh "$APK"
           echo "--- packaged WebApp bundle ---"
-          unzip -l "$APK" | grep -E 'assets/web/' | head -20
+          unzip -l "$APK" | grep -E 'assets/web/' | head -20 || true
           echo "--- fonts / native resources ---"
           unzip -l "$APK" | grep -E 'res/font/vazirmatn' || echo "::error::Vazirmatn fonts missing"
           unzip -l "$APK" | grep -cE 'resources.arsc|classes.dex'
           rm -rf /tmp/apk-inspect && mkdir -p /tmp/apk-inspect
           (cd /tmp/apk-inspect && unzip -q "$GITHUB_WORKSPACE/$APK")
           test -f /tmp/apk-inspect/assets/web/index.html
-          test -f /tmp/apk-inspect/assets/web/js/native-bridge.js
+          if [ -f /tmp/apk-inspect/assets/web/native-bridge.js ] || [ -f /tmp/apk-inspect/assets/web/js/native-bridge.js ]; then
+            echo "native-bridge.js present"
+          else
+            echo "::error::native-bridge.js missing (expected assets/web/native-bridge.js or assets/web/js/native-bridge.js)"
+            ls -R /tmp/apk-inspect/assets/web | head -30 || true
+            exit 1
+          fi
           echo "--- advertising SDK scan ---"
-          if grep -ril 'adivery' /tmp/apk-inspect | head -5 | grep .; then
+          if grep -ril 'adivery' /tmp/apk-inspect 2>/dev/null | head -5 | grep -q .; then
             echo "::error::Removed advertising SDK is still packaged"
+            grep -ril 'adivery' /tmp/apk-inspect | head -5 || true
             exit 1
           fi
           echo "clean: no trace of the removed advertising SDK"
-          echo "--- Tapsell / Najva / Poolakey presence ---"
-          for needle in ir/tapsell com/najva ir/cafebazaar; do
+          echo "--- removed push SDK scan ---"
+          if grep -rql 'com/najva' /tmp/apk-inspect/classes*.dex; then
+            echo "::error::Removed push SDK (Najva) is still packaged"
+            exit 1
+          fi
+          echo "--- Tapsell / Pushfa / Poolakey / app package presence ---"
+          for needle in ir/tapsell com/pushfa/sdk ir/cafebazaar com/chistan/quickgames; do
             if grep -rql "$needle" /tmp/apk-inspect/classes*.dex; then
               echo "present: $needle"
             else
@@ -182,6 +240,14 @@ jobs:
           echo "--- bridge + readiness contract ---"
           grep -rq 'appReady' /tmp/apk-inspect/classes*.dex && echo "appReady exported"
           grep -rq 'AndroidBridge' /tmp/apk-inspect/classes*.dex && echo "AndroidBridge exported"
+
+      # What the advertising SDK does to *our* process is not documented:
+      # the merged manifest shows its Activities (orientation, theme, config
+      # handling) and a constant-pool scan of its classes shows whether it
+      # touches process-wide WebView state (pauseTimers), the orientation or
+      # the window – the things that can break the game after an ad closes.
+      - name: Inspect the ad SDK (manifest + WebView / orientation usage)
+        run: python3 tools/inspect_ad_sdk.py
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -241,8 +307,21 @@ jobs:
           done
           exit 1
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon
+      # The contract test runs against a key-less build: with the production
+      # Tapsell / Pushfa identifiers the emulator would fire real ad requests
+      # from a US data-centre IP and a served interstitial takes the screen
+      # (and the back button) away from the WebApp – exactly what the test
+      # must not depend on. The SDKs themselves are still packaged and their
+      # presence is verified by the `build` job above.
+      - name: Build debug APK (ads / push identifiers blanked)
+        run: ./gradlew assembleDebug --no-daemon -PSMOKE_TEST_BUILD=true
+
+      # The play-through (tools/game-tests/emulator_play.mjs) talks to the
+      # WebView over the DevTools protocol; `ws` is only needed on Node < 22.
+      - name: Node helpers for the DevTools play-through
+        run: |
+          node --version
+          npm install --no-save --no-audit --no-fund ws@8 2>&1 | tail -2
 
       - name: Enable KVM
         run: |
@@ -274,4 +353,90 @@ jobs:
         with:
           name: emulator-screenshots
           path: ci-artifacts/**
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Ad lab: the game through a REAL Tapsell (test) interstitial. The SDK runs
+  # with its official test app key / zones, on a newer system image whose
+  # WebView renders the Tailwind v4 bundle faithfully (oklch colours need
+  # Chromium 111+). Records the container's lifecycle, the page's events and
+  # the frames right after the ad closes; fails only when the round trip
+  # happened and the game came back broken.
+  # ---------------------------------------------------------------------------
+  adlab:
+    name: Emulator ad lab (real Tapsell test interstitial)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write # posts the report/screenshots as commit comments
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-disabled: true
+
+      - name: Ensure Gradle wrapper
+        run: |
+          chmod +x gradlew || true
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+      - name: Provision Gradle distribution
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew --version --no-daemon; then exit 0; fi
+            rm -rf "$HOME/.gradle/wrapper/dists"/*/gradle-8.5-bin.zip.lck || true
+            sleep 15
+          done
+          exit 1
+
+      - name: Build debug APK (Tapsell test keys, push blanked)
+        run: ./gradlew assembleDebug --no-daemon -PSMOKE_TEST_BUILD=true -PSMOKE_TEST_ADS=true
+
+      - name: Node helpers for the DevTools session
+        run: |
+          node --version
+          npm install --no-save --no-audit --no-fund ws@8 2>&1 | tail -2
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Ad lab on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: bash tools/emulator_ad_lab.sh
+
+      - name: Publish ad lab results
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUT_DIR: ci-artifacts-adlab
+          PICTURES: "30-adlab-* 32-adlab-* 33-adlab-01 34-adlab-* 35-adlab-* 39-adlab-*"
+        run: bash tools/publish_smoke_report.sh
+
+      - name: Upload ad lab artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-ad-lab
+          path: ci-artifacts-adlab/**
           if-no-files-found: warn
