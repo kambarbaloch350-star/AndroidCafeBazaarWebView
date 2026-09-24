@@ -173,7 +173,7 @@ def main():
 
     print(f"logo applied under {out}")
     if os.path.abspath(out) == os.path.abspath(ROOT):
-        print("next: python3 tools/game-patches/apply_patches.py  (switches the game's tiles to /logo.png)")
+        print("next: python3 tools/game-patches/apply_chistan_patches.py  (validates/refreshes the packaged game chunk)")
     return 0
 
 

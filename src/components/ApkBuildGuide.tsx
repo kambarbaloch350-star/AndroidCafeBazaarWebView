@@ -18,7 +18,7 @@ export function ApkBuildGuide({
     {
       title: '۱. دریافت پروژه',
       body: 'روی «Export ZIP» بزنید یا مخزن را clone کنید. پوشه app/src/main/assets/web همان WebApp شماست.',
-      code: 'unzip Labzband-Android-Container.zip && cd AndroidCafeBazaarWebView'
+      code: 'unzip ChistanSara-Android-Container.zip && cd AndroidCafeBazaarWebView'
     },
     {
       title: '۲. تنظیم شناسه‌های بومی',
@@ -49,18 +49,23 @@ NativeApp.appReady();`
     },
     {
       title: '۴. ساخت APK',
-      body: 'ساخت دیباگ و ریلیز (R8 و shrinkResources فعال). CI گیت‌هاب هر دو را می‌سازد و artifact می‌دهد.',
-      code: `./gradlew assembleDebug
+      body:
+        'فقط نسخه ریلیز ساخته می‌شود (R8 و shrinkResources فعال، امضا با keystore خودتان). CI گیت‌هاب همان APK ریلیز را می‌سازد و مستقیم به تلگرام می‌فرستد؛ فقط اگر TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID تنظیم نشده باشند artifact ذخیره می‌شود.',
+      code: `# local.properties (یا متغیرهای محیطی RELEASE_KEYSTORE_*)
+RELEASE_KEYSTORE_PATH=/path/to/release.jks
+RELEASE_KEYSTORE_PASSWORD=...
+RELEASE_KEY_ALIAS=...
+RELEASE_KEY_PASSWORD=...
+
 ./gradlew assembleRelease      # R8 + resource shrinking
-# خروجی‌ها:
-# app/build/outputs/apk/debug/app-debug.apk
-# app/build/outputs/apk/release/app-release-unsigned.apk`
+# خروجی: app/build/outputs/apk/release/app-release.apk
+# بدون keystore، بیلد با کلید دیباگ امضا می‌شود تا نصب‌شدنی بماند.`
     },
     {
       title: '۵. اجرا و پایش',
       body: 'نصب روی دستگاه و پیگیری زنجیره بوت، تبلیغات و پوش.',
-      code: `adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb logcat -s MainActivity WebAppBridge LocalWebServer TapsellManager PushfaManager`
+      code: `adb install -r app/build/outputs/apk/release/app-release.apk
+adb logcat -s MainActivity WebAppBridge LocalWebServer TapsellManager PushfaManager CafeBazaarBilling`
     }
   ];
 
@@ -155,11 +160,12 @@ adb logcat -s MainActivity WebAppBridge LocalWebServer TapsellManager PushfaMana
         </h3>
         <ul className="text-[11px] text-slate-300 flex flex-col gap-2">
           {[
-            'کلید امضای ریلیز و keystore خودتان را تنظیم کنید (signingConfigs).',
+            'کلید امضای ریلیز (RELEASE_KEYSTORE_*) را تنظیم کنید؛ نسخه بدون آن با کلید دیباگ امضا می‌شود.',
             'شناسه‌های Tapsell (App Key + سه Zone) را در پنل تپسل بسازید.',
-            'اپلیکیشن را در پنل نجوا با همان package name ثبت کنید و API Key/Website ID را بگیرید.',
-            'اعتبارنامه‌های Firebase (FCM) را برای ارسال پوش نجوا تنظیم کنید.',
-            'محصولات CafeBazaar (coin_pack_*) را با همان شناسه‌ها بسازید.',
+            'کلید عمومی Pushfa را در gradle.properties / local.properties بگذارید (پوش کاملاً بومی است).',
+            'اعتبارنامه‌های Firebase (FCM) را برای پوش تنظیم کنید (اختیاری: بدون google-services.json پوش غیرفعال می‌شود).',
+            'محصولات CafeBazaar را با همان شناسه‌ها بسازید: pack_starter … pack_vault و remove_ads (۲۰٬۰۰۰ تومان، غیر مصرفی).',
+            'رازهای تحویل در GitHub: TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID (و در صورت نیاز TELEGRAM_MESSAGE_THREAD_ID).',
             'assets/web را با بیلد نهایی برنامه خود جایگزین و NativeApp.appReady() را صدا بزنید.'
           ].map(item => (
             <li key={item} className="flex items-start gap-2">

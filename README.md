@@ -1,8 +1,8 @@
 # چیستان‌سرا (ChistanSara) — Android WebApp Container
 
-`com.labzband.balochafzar` · app name **چیستان‌سرا** · ۱۳۴۷ چیستان فارسی · previously **لبزبند**
+`com.chistan.quickgames` · app name **چیستان‌سرا** · ۱۳۴۷ چیستان فارسی
 
-> This branch packages **ChistanSara** (چیستان‌سرا) – 1347 Persian riddles, fair economy (1 coin = 50 tomans), interstitial every 3 levels, Persian loading screen, no "A Game By" credit. The container still uses package `com.labzband.balochafzar` for store continuity.
+> This branch packages **ChistanSara** (چیستان‌سرا) – 1347 Persian riddles, fair economy (1 coin = 50 tomans), interstitial every 3 levels, Persian loading screen, no "A Game By" credit. The container is published as package `com.chistan.quickgames`.
 
 A production-ready **Android container for heavy local WebApps**.
 
@@ -104,28 +104,45 @@ as the entry document. At the end of your initialization call:
 NativeApp.appReady();       // hides the native loading plate (no arbitrary delay)
 ```
 
-Available namespaces (thin facade in `assets/web/js/native-bridge.js`):
+`app/src/main/assets/web/native-bridge.js` is the **only** consumer of the container's
+`window.AndroidBridge` object; everything else talks to the facade, which turns the callback /
+event protocol into promises:
 
 ```js
-NativeApp.appReady()                 // readiness handshake
-NativeApp.getInfo()                  // { platform, sdkInt, appVersion, serverPort, device, ... }
-NativeApp.getDeviceProfile()         // { tier, suggestedPixelRatio, totalRamMb, cpuCores, refreshRate, ... }
-NativeApp.getRenderPixelRatio()      // DPR a heavy Canvas/WebGL game should render at
-NativeApp.getStartupRoute()          // deep-link route that opened the app
-NativeApp.reportError(message)       // show the native error/retry plate
-NativeApp.navigateBack()             // native back navigation
-NativeApp.on('deeplink' | 'pause' | 'resume' | 'memorywarning' | 'resize', handler)
-NativeApp.onBackPressed = () => true // let the WebApp consume the hardware back first
+NativeApp.appReady()                  // readiness handshake (hides the native loading plate)
+NativeApp.isNative() / isProduction() / getPackageName()
+NativeApp.getInfo()                   // { platform, sdkInt, appVersion, serverPort, device, ... }
+NativeApp.getDeviceProfile()          // { tier, suggestedPixelRatio, totalRamMb, cpuCores, refreshRate, ... }
+NativeApp.getRenderPixelRatio()       // DPR a heavy Canvas/WebGL game should render at
+NativeApp.getStartupRoute()           // deep-link route that opened the app (consumed once)
+NativeApp.reportError(message)        // native error/retry plate
+NativeApp.navigateBack() / setBackHandler(fn) / onBackPressed()
+NativeApp.openEmail(address, subject) / composeEmail() / openRatingPage() / openStorePage()
+NativeApp.saveState(key, value, savedAt) / loadState(key) / clearState(key)
+NativeApp.on('ready' | 'deeplink' | 'pause' | 'resume' | 'memorywarning' | 'resize' | 'event' | 'ownedproducts', handler)
 
-NativeAds.showInterstitial()         // Promise, always settles: { ok, reason, type }
-NativeAds.showRewarded()             // { ok, rewardGranted, reason }
-NativeAds.showNative()               // native ad plate inside the app view
-NativeAds.showNativeAt(x, y, w, h)   // positioned in CSS pixels
-NativeAds.hideNative()
-NativeAds.isReady() / prepare() / isAvailable()
+NativeAds.showInterstitial()          // Promise, always settles: { ok, type, reason, success }
+NativeAds.showRewarded()              // { ok, rewardGranted, reason } – credit only when rewardGranted === true
+NativeAds.showNative() / showNativeAt(x, y, w, h) / hideNative()
+NativeAds.isReady(type) / isAvailable() / prepare()
 
-CafeBazaar.buyProduct(id) / consumePurchase(token) / getPurchases() / isAvailable()
+CafeBazaar.connect() / connectAsync() / isAvailable() / isRemoveAdsOwned()
+CafeBazaar.purchase(sku)              // Promise -> { success, verified, productId, purchaseToken, ... }
+CafeBazaar.consume(token)             // consumable packs only – never the permanent remove_ads unlock
+CafeBazaar.getPurchases()
+CafeBazaarBridge.onPurchaseResult(v) / onConsumeResult(v) / onConnectionResult(v)
+CafeBazaarBridge.onPurchasesQueryResult(v) / onOwnedProductsChanged(v)
+
+ChistanBridge.getEconomy()            // the fair economy (reward 30/level, hints 60/100/150/150)
+ChistanBridge.purchaseCoins(sku, coins) / purchaseRemoveAds()
+ChistanBridge.showInterstitialIfNeeded() / addCoins(coins)
 ```
+
+**The container never mints coins**: a purchase is credited only when
+`success === true && verified === true` (Poolakey validated the signature), and only
+`remove_ads` is a permanent unlock. The interstitial cadence (every 3 completed levels, skipped
+for `remove_ads` owners, one request per level count) lives in the facade and is driven by the
+save mirror – the WebApp must not request ads itself.
 
 **No advertising or push identifier is ever exposed to the WebApp**: Tapsell app key/zone ids and
 the Pushfa public key live only in the native layer.
@@ -135,7 +152,7 @@ the Pushfa public key live only in the native layer.
 ## 3. Native configuration
 
 Identifiers are resolved (in order) from Gradle CLI properties (`-P`), `local.properties`,
-environment variables, then `gradle.properties`. The production identifiers of لبزبند are the
+environment variables, then `gradle.properties`. The production identifiers of چیستان‌سرا are the
 committed defaults in `gradle.properties`:
 
 ```properties
@@ -161,7 +178,7 @@ FIREBASE_SENDER_ID=1234567890
 ```
 
 Missing keys are **not** fatal: ads report `NOT_AVAILABLE`, push logs one actionable line and the
-container keeps working (`./gradlew assembleDebug` succeeds with an empty configuration).
+container keeps working (`./gradlew assembleRelease` succeeds with an empty configuration).
 
 ### CafeBazaar billing – release checklist
 
@@ -177,7 +194,7 @@ container keeps working (`./gradlew assembleDebug` succeeds with an empty config
   itself after crediting); **`remove_ads` as a non-consumable at 20,000 tomans** – the store row
   and the level-complete "حذف تبلیغات" button sell it (`docs/GAME_PATCHES.md`).
 * Test with a Bazaar test account before release – the emulator has no Bazaar client, the
-  jsdom harness covers the game side of the flow (`tools/game-tests/scenarios.json`).
+  jsdom harness covers the game side of the flow (`tools/game-tests/chistan_scenarios.json`).
 
 ### Push (Pushfa) – Firebase project
 
@@ -185,11 +202,11 @@ Pushfa delivers through Firebase Cloud Messaging, so the app needs the Firebase 
 **Service Account** is pasted into the Pushfa panel (Android service → Firebase).
 
 * `app/google-services.json` is committed: Firebase project **`ninemanhills`**
-  (`930784178753`), Android app `com.labzband.balochafzar`. The Google Services plugin is applied
+  (`930784178753`), Android app `com.chistan.quickgames`. The Google Services plugin is applied
   automatically because the file exists; `python3 tools/static_checks.py` verifies that the file
   still contains a client for this package.
 * To move to another Firebase project, replace the file (Firebase console → project settings →
-  Android app `com.labzband.balochafzar` → download) **and** upload that project's Service Account
+  Android app `com.chistan.quickgames` → download) **and** upload that project's Service Account
   in the Pushfa panel – both sides must be the same project or tokens cannot be delivered.
 * Without the file `App.kt` falls back to the `FIREBASE_*` values, and without those the app runs
   with push disabled (`GOOGLE_SERVICES_JSON` CI secret, when set, overrides the committed file).
@@ -203,26 +220,53 @@ Pushfa delivers through Firebase Cloud Messaging, so the app needs the Firebase 
 
 ```bash
 ./gradlew testDebugUnitTest    # JVM tests: HTTP server, compat injection, MIME table, ranges, SPA routing
-./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
-./gradlew assembleRelease      # R8 + resource shrinking
+./gradlew assembleRelease      # the only shipped variant: R8 + resource shrinking + signing
 python3 tools/static_checks.py # repository invariants (no removed SDK, resources resolve, ...)
+node tools/game-tests/run.mjs  # WebApp bridge contract (jsdom; needs jsdom + esbuild)
 ```
 
-Product changes made to the **packaged game bundle** (coin prices, remove-ads product, contact
-e-mail button, shuffled quiz answers, wording, logo, native progress mirror) are applied by `tools/game-patches/apply_patches.py` and
-the branding by `tools/branding/apply_logo.py` – re-run both after copying a new game build
-into `assets/web/` (see `docs/GAME_PATCHES.md`).
+Product changes made to the **packaged game chunk** (fair economy, toman store, CafeBazaar
+billing, the ad cadence, the coin credits) are applied by
+`tools/game-patches/apply_chistan_patches.py`, the branding by
+`tools/branding/apply_logo.py` – re-run both after copying a new game build into
+`assets/web/` (see `docs/GAME_PATCHES.md`). The patcher is idempotent; `--check` is the CI
+guard.
+
+### Telegram delivery (repository secrets)
+
+Every push builds **one** variant (release) and delivers that APK to your Telegram chat
+instead of publishing an artifact. Add these repository secrets
+(*Settings → Secrets and variables → Actions*):
+
+| Secret | Purpose |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | bot token from [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_CHAT_ID` | your chat / group id (write to the bot first, then `getUpdates`) |
+| `TELEGRAM_MESSAGE_THREAD_ID` | *optional* – topic id for a forum group |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 release.jks` – the release signing key |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore password |
+| `ANDROID_KEY_ALIAS` | key alias inside the keystore |
+| `ANDROID_KEY_PASSWORD` | *optional* – key password when it differs from the store password |
+
+The release APK goes to Telegram and nowhere else – **it is never uploaded as a build
+artifact**, not even when the send fails (a failed send fails the job; re-run it to rebuild and
+send again). Without the Telegram secrets the send step is skipped with a `::warning::` – that
+is the case for pull requests from forks, where repository secrets are not exposed. Without the
+keystore secrets the release APK is signed with the Android debug key – installable, but not the
+key CafeBazaar accepts.
+`tools/send_apk_telegram.sh` can also be run locally:
+`TELEGRAM_BOT_TOKEN=… TELEGRAM_CHAT_ID=… bash tools/send_apk_telegram.sh app/build/outputs/apk/release/app-release.apk`.
 
 CI (`.github/workflows/build-apk.yml`) runs on every push:
 
 1. `Static architecture checks` + `Unit tests` — the tests boot the **real** `LocalWebServer`
    against the shipped `assets/web` bundle, so a broken bundle fails the build.
-2. `assembleDebug` + `assembleRelease`, then `Verify APK contents` asserts that
+2. `assembleRelease`, then `Verify APK contents` asserts that
    `assets/web/**` and the Vazirmatn fonts are packaged and that the removed advertising SDK is
-   absent from every dex.
+   absent from every dex. The APK is then sent to Telegram (see above).
 3. `WebApp bridge contract (jsdom)` — `tools/game-tests/run.mjs` bundles the packaged game
    with esbuild, boots it in jsdom against a scripted `AndroidBridge` that speaks the exact
-   TapsellManager / Poolakey event protocol and plays `tools/game-tests/scenarios.json`: menu,
+   TapsellManager / Poolakey event protocol and plays `tools/game-tests/chistan_scenarios.json`: menu,
    spin wheel (reward granted / denied / ad error), coin packs (verified, unverified,
    cancelled, restored), remove-ads (store row, level-complete button, cancelled, unverified,
    restored at boot → no interstitial), About → contact e-mail, two levels → interstitial →

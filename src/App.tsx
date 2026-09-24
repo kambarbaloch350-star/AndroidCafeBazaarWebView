@@ -264,7 +264,7 @@ export default function App() {
             <div className="flex items-center gap-2">
               <h1 className="text-base font-bold text-white tracking-tight">WebApp Container</h1>
               <span className="px-2 py-0.5 text-[11px] font-mono rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/40">
-                com.labzband.balochafzar
+                com.chistan.quickgames
               </span>
             </div>
             <p className="text-xs text-slate-400">
@@ -470,7 +470,7 @@ export default function App() {
                         className="py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold flex items-center justify-center gap-2 cursor-pointer"
                       >
                         <Bell className="w-3.5 h-3.5" />
-                        شبیه‌سازی اعلان نجوا
+                        شبیه‌سازی اعلان Pushfa
                       </button>
                       <button
                         onClick={restartBoot}
@@ -537,7 +537,7 @@ export default function App() {
                       </div>
                     </div>
                     <div className="text-center" dir="rtl">
-                      <div className="text-xl font-extrabold text-emerald-900">لبزبند</div>
+                      <div className="text-xl font-extrabold text-emerald-900">چیستان‌سرا</div>
                       <div className="mt-1.5 text-[15px] font-semibold text-teal-700">
                         در حال بارگذاری...
                       </div>
@@ -620,7 +620,7 @@ export default function App() {
                       </div>
                       <div className="flex-1">
                         <div className="text-[11px] font-bold text-white">
-                          لبزبند • اعلان سیستمی اندروید
+                          چیستان‌سرا • اعلان سیستمی اندروید
                         </div>
                         <div className="text-[10px] text-slate-400">
                           تست قابلیت‌ها را ببین — برای ادامه لمس کنید

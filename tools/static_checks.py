@@ -661,12 +661,18 @@ def check_game_patches_and_contact() -> None:
                 warnings.append("chistan store still shows free packs without toman prices – run tools/game-patches/apply_chistan_patches.py")
             for needle, what in (
                     ("remove_ads", "the remove_ads store product"),
-                    ("showInterstitial", "interstitial ad integration (every 3 levels)"),
                     ("CafeBazaar.purchase", "CafeBazaar billing integration"),
-                    ("NativeApp.appReady", "NativeApp.appReady handshake")):
+                    ("NativeApp.appReady", "NativeApp.appReady handshake"),
+                    ("window.CafeBazaar.consume", "purchase-token consumption")):
                 if needle not in bundle:
-                    if needle in ("showInterstitial", "CafeBazaar.purchase"):
-                        warnings.append(f"packaged game (chistan): {what} is missing – run tools/game-patches/apply_chistan_patches.py")
+                    warnings.append(f"packaged game (chistan): {what} is missing – run tools/game-patches/apply_chistan_patches.py")
+            # The interstitial cadence belongs to the facade: it fires from the
+            # save mirror, respects remove_ads and de-dupes the completed-level
+            # count, so the WebApp must not request ads itself (that fired two or
+            # three requests per level – see docs/GAME_PATCHES.md).
+            if "showInterstitial" in bundle:
+                warnings.append("packaged game (chistan): the WebApp requests interstitials itself – "
+                                "the cadence lives in native-bridge.js (run tools/game-patches/apply_chistan_patches.py)")
     else:
         warnings.append(f"expected one game bundle chunk, found {len(chunks)} (looked for App-*.js and index-*.js)")
 
@@ -692,6 +698,14 @@ def check_game_patches_and_contact() -> None:
     facade = open(os.path.join(web, "native-bridge.js"), encoding="utf-8").read()
     if "saveState" not in facade or "loadState" not in facade:
         errors.append("native-bridge.js must expose NativeApp.saveState/loadState")
+    # `native-bridge.js` is the only place that talks to the `AndroidBridge`
+    # object, and it owns the interstitial cadence (every 3 completed levels,
+    # never for owners of remove_ads, one request per level count).
+    if "showInterstitialIfNeeded" not in facade or "interstitialEvery" not in facade:
+        errors.append("native-bridge.js must own the interstitial cadence "
+                      "(ChistanBridge.showInterstitialIfNeeded + interstitialEvery)")
+    if "AndroidBridge" not in facade:
+        errors.append("native-bridge.js must be the single AndroidBridge consumer")
     smoke = open(os.path.join(ROOT, "tools", "emulator_smoke.sh"), encoding="utf-8").read()
     if "emulator_persist.mjs" not in smoke:
         errors.append("emulator_smoke.sh must run the force-stop persistence check (emulator_persist.mjs)")

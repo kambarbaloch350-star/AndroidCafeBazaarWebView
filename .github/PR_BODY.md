@@ -1,109 +1,116 @@
 ## What this PR does
 
-Turns the app into a production-ready **native WebApp container** and adds the
-native behaviour the game needs: an animated branded loading screen, in-game
-back navigation, an exit confirmation that pushes the CafeBazaar rating, plus a
-hardened billing/ad layer.
+1. **CI delivers the APK to Telegram instead of publishing it as an artifact.**
+2. **The debug build is gone** – one release variant is built, verified and shipped.
+3. **The packaged game uses the JS bridge correctly** – the facade, the game chunk
+   and the native billing manager were all wrong in the same places, and the
+   jsdom contract tests now pin the behaviour.
+4. The rest of the repository was reviewed against those three changes (package
+   name, proguard keeps, generated files, docs, showcase text).
 
-Architecture (fixed, as requested): **Android App → local HTTP server → WebView
-→ `assets/web/index.html`**. No advertising SDK identifier ever crosses the JS
-bridge; Adivery is gone, Tapsell and Pushfa are 100% native.
+### 1. Telegram delivery (`tools/send_apk_telegram.sh` + workflow)
 
-### 1. Loading screen — white canvas, green artwork, ~3 s
+* New `Send release APK to Telegram` step (`sendDocument`, caption with the commit,
+  size and `sha256[:16]`), driven by the repository secrets
+  **`TELEGRAM_BOT_TOKEN`**, **`TELEGRAM_CHAT_ID`** and the optional
+  `TELEGRAM_MESSAGE_THREAD_ID`.
+* `Telegram delivery configured?` decides at runtime: without the secrets the send
+  is skipped with a `::warning::` (fork PRs). The send step is a **required**
+  step – `continue-on-error` and the `Upload release APK (fallback)` step are
+  gone: the release APK is never uploaded as a build artifact, so a failed send
+  fails the job and the run is simply repeated.
+* `tools/send_apk_telegram.sh` can be run locally; it validates the token with
+  `getMe`, refuses files above Telegram's 50 MB bot limit and exits `0`/`1`/`2`/`3`
+  (delivered / API error / unconfigured / too large).
 
-| | |
-|---|---|
-| White background | `loading_background_*`, `plate_surface*`, `system_bar` → `#FFFFFF` |
-| Logo | `drawable-nodpi/logo_labzband.png` (small, centred, 86dp) |
-| Title | **لبزبند** |
-| Tagline | **بلوچی مئے وتی شہد ایں زبان ایں** |
-| Loading line | **لیب لوڈ بوھگ ءَ ایں۔** |
-| Credit (bottom) | **A Game By BalochAfzar** |
+### 2. No debug build
 
-* Animation: logo pop-in with overshoot, slow float + breathing scale, a
-  **shimmer sweep across the title** (`ShimmerTextView`), a sliding gradient
-  progress line (`LoadingBarView`), staggered copy reveal, and a lifted
-  cross-fade out. **No circles and no spinning ring anywhere.**
-* System bars are white in both themes with **dark icons** (light icons on a
-  white bar were invisible – fixed).
-* `MIN_LOADING_VISIBLE_MS = 3000` is a **floor**, not an extra delay: the overlay
-  is dismissed when the WebApp is ready *and* the floor elapsed. Verified on the
-  emulator: `Loading screen visible for 1496 ms … keeps the stage 1504 ms longer`.
-* Every glyph of the three Balochi/Persian lines was checked against the bundled
-  Vazirmatn; RTL is forced in the layout.
-* Boot failure still switches to the error/retry state, and retry replays the
-  whole choreography.
+* `Build debug APK`, `Upload debug APK` and the debug half of `Verify APK contents`
+  are removed; `assembleDebug` is not built anywhere in the workflow.
+* The release APK is the only output that is verified (release path, Vazirmatn
+  fonts counted instead of matched by directory – aapt2 shortens paths in
+  release) and it is delivered to Telegram only.
+* The emulator jobs are unchanged: they build their **own** debug variant with
+  `-PSMOKE_TEST_BUILD=true` (ads/push blanked, or Tapsell test keys), which is what
+  their DevTools-driven checks need.
+* Release signing: `signingConfigs.release` is created when
+  `RELEASE_KEYSTORE_PATH` exists (store/key password, alias from
+  `local.properties` or `-P`); the workflow decodes `ANDROID_KEYSTORE_BASE64` into
+  `$RUNNER_TEMP`, appends the four `RELEASE_*` keys and validates the keystore with
+  `keytool`. Without a keystore the release variant is signed with the Android
+  debug key so the delivered APK stays installable (with a warning).
 
-### 2. Back button → previous page (not exit)
+### 3. Bridge usage
 
-Back **never** leaves the app on its own – not even while the WebApp is still
-booting. It asks the page first:
+**`app/src/main/assets/web/native-bridge.js`** is now the only consumer of the
+container's `window.AndroidBridge` object (previously the game and the facade both
+called into it, with two different result shapes):
 
-1. `window.NativeApp.onBackPressed()` (registered through
-   `NativeApp.setBackHandler(fn)`) → returning `true` stops the chain;
-2. a cancelable `nativeapp:back` DOM event (`event.preventDefault()` counts);
-3. `history.back()` when the page pushed history entries.
+* every container call becomes a promise that *always* settles, with per-call
+  timeouts and a single pending slot (`BUSY` for a concurrent request);
+* the event envelopes (`NativeAds.onEvent` + the `nativeads:*` DOM events) are
+  de-duplicated;
+* the state store is mirrored natively on every save (`NativeApp.saveState`) and
+  the newer copy is restored at boot;
+* `NativeApp.appReady()` is forwarded, with a 3 s auto-ready safety net.
 
-Only when nothing handled it does the **exit confirmation** appear. During boot,
-back leaves the app (nothing to go back to); while the exit sheet is open, back
-cancels it.
+**The packaged game chunk** (`tools/game-patches/apply_chistan_patches.py`, now
+with `--check` as a CI guard, `None`-target removals and a fresh content hash after
+patching) is corrected where it used the bridge wrongly:
 
-`docs/WEBAPP_INTEGRATION.md` documents the full JS contract (readiness, back,
-ads, billing, rating, deep links) so the game's `index.html` can adopt it — a
-working reference handler is implemented in the bundled demo.
+* `interstitial-cadence-in-facade` – the level-complete handler requested an
+  interstitial **and** called `ChistanBridge.showInterstitialIfNeeded()`: two
+  requests in one tick for a single level, plus a third once the save was mirrored.
+  The whole in-game trigger is deleted; the cadence (every 3 completed levels,
+  never for `remove_ads` owners, one request per level count) lives in the facade
+  and fires from the save mirror.
+* `store-remove-ads-not-consumed` – the store consumed the purchase token of
+  `remove_ads`, a **permanent** product: consuming it erases the entitlement and
+  lets the same user be charged again. `CafeBazaarBillingManager` additionally
+  protects the tokens of non-consumables (`NON_CONSUMABLE` refusal) and still
+  auto-consumes coin packs on connect and after each purchase.
+* `triple-coins-state` / `coin-event-listener` – the ×3 bonus wrote coins straight
+  into `localStorage` (overwritten by the game's own save effect, so the bonus was
+  lost) and dispatched `chistan:coins` that nothing listened to. The wallet write
+  is gone; the listener credits the bonus through the game's own coin updater.
+* `free-coins-credit` – the rewarded row promised «+۱۵۰ سکه رایگان» but credited
+  nothing; it now credits after `rewardGranted === true`.
 
-### 3. Exit confirmation (light green, animated, RTL)
+### 4. Repository consistency
 
-`ExitConfirmationDialog` + `dialog_exit.xml`:
-
-* brand badge with a breathing halo, floating while open;
-* **می‌خواهید از بازی خارج شوید؟**
-* **امتیاز دادن به لبزبند کمک زیادی به ما می‌کند.**
-* three staggered actions, all Vazirmatn:
-  * **امتیاز بده** → CafeBazaar rating intent (`ACTION_EDIT` +
-    `bazaar://details?id=<package>`, package `com.farsitel.bazaar`), degrading to
-    a toast when Bazaar is absent;
-  * **انصراف** → close and stay;
-  * **خروج** → the only path that leaves the app.
-* window pop-in/out animations (`@anim/dialog_enter|dialog_exit`), press
-  feedback, dim behind, back/tap-outside = cancel, all animators cancelled on
-  dismissal so nothing leaks.
-
-### 4. Billing & ads hardening
-
-* `remove_ads` is now remembered (`SharedPreferences`) and **natively suppresses
-  interstitials** (`interstitial_skipped` event); rewarded video stays opt-in.
-* Prices are 2× the base rate; `CafeBazaarConfig.permanentUnlocks()` + 7 unit
-  tests pin SKU rules, prices and graceful fallbacks.
-* Bridge additions: `isRemoveAdsOwned()`, `getInfo().removeAdsOwned`,
-  `CafeBazaarBridge.onOwnedProductsChanged` + `nativeapp:ownedproducts`.
+* `app/proguard-rules.pro` kept the old `com.labzband.balochafzar.*` classes – the
+  app is `com.chistan.quickgames`, so R8 would have stripped the JS bridge, the
+  billing payloads and the launcher classes from the release build.
+* CI branding now calls the patcher that matches the packaged chunk (the labzband
+  `apply_patches.py` targets `App-*.js`, which this bundle no longer contains, so
+  the step used to fail whenever the logo changed).
+* `tools/static_checks.py`: the interstitial requirement moved to the facade (the
+  chunk must *not* request ads itself) and the facade must stay the single
+  `AndroidBridge` consumer.
+* `src/data/projectFiles.ts` / `exportFiles.ts` regenerated from the real
+  repository (42 files; the old data pointed at deleted labzband sources and the
+  pre-hash chunk), and the showcase copy follows the new reality
+  (`com.chistan.quickgames`, release-only build, Telegram secrets).
+* `README.md` §4 documents the delivery/signing secrets (the CI warning links
+  there) and `docs/GAME_PATCHES.md` lists the current patch set.
 
 ### Verification
 
-* `tools/static_checks.py` — architecture checks (no removed SDK, every resource
-  reference resolves, bridge contract present, missing-import detector).
-* JVM unit tests for the embedded HTTP server + MIME table and the billing rules.
-* **jsdom WebApp contract** (`tools/game-tests/run.mjs`) now runs in CI: boots the
-  packaged bundle with a scripted bridge and drives it (readiness, back
-  navigation, ads, billing, rating). Game-only scenarios are reported as `SKIP`
-  until the real game bundle is packaged.
-* **Emulator smoke test** presses BACK and asserts both halves: in-page
-  navigation when history exists, and the exit dialog on a fresh launch (then
-  cancels it). Screenshots and the report are published as commit comments.
-* CI run for `09d8cf8`: **Build Debug & Release APK ✅, Emulator smoke test ✅**.
-
-### Review notes
-
-* The bundled WebApp is still the placeholder demo (the game's own `index.html`,
-  JS and CSS are supplied by the product owner). The demo implements the same
-  contract, which is what the harness and the emulator run against.
-* Tapsell/Pushfa keys are injected from repository secrets at build time and are
-  never logged, shipped to JS, or embedded in the repo.
+* `python3 tools/static_checks.py` – clean.
+* `python3 tools/game-patches/apply_chistan_patches.py --check` – `bundle is up to
+  date (12 patches, 18 invariants)`.
+* `node tools/game-tests/run.mjs` – **97/97 checks**: exactly one interstitial per
+  3 completed levels, none for `remove_ads` owners, `remove_ads` bought but never
+  consumed, verified-only crediting, the rewarded 150 coins, the ×3 bonus reaching
+  the save, the full lifecycle/bridge contract.
+* CI additionally runs the JVM unit tests, the emulator smoke test (install,
+  boot, back-navigation, force-stop persistence) and the ad lab.
 
 ### Test plan
 
 1. `python3 tools/static_checks.py`
-2. `./gradlew testDebugUnitTest assembleDebug`
-3. `node tools/game-tests/run.mjs` (jsdom contract)
-4. `tools/emulator_smoke.sh` → look at `03-boot.png` (splash) and
-   `12-backdialog.png` (exit sheet)
+2. `python3 tools/game-patches/apply_chistan_patches.py --check`
+3. `python3 tools/game-tests/run.mjs` (needs `npm install --no-save jsdom@30 esbuild@0.25`)
+4. `./gradlew testDebugUnitTest assembleRelease`
+5. Add `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (and optionally the
+   `ANDROID_KEYSTORE_*` secrets), push, and check that the APK arrives in the chat.

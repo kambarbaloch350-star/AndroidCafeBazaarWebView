@@ -4,11 +4,13 @@ Everything the game's `index.html` needs to talk to the Android container.
 The container loads the bundle from `assets/web/index.html` through a local HTTP
 server and exposes exactly one JavaScript object: **`window.AndroidBridge`**.
 
-`app/src/main/assets/web/js/native-bridge.js` is a thin, optional convenience
-layer on top of it (`NativeApp`, `NativeAds`, `CafeBazaar`). Copy it into your
-bundle or call `AndroidBridge` directly — both are supported, and every method
-is safe to call when the page runs in a normal browser (`AndroidBridge` is simply
-`undefined`).
+`app/src/main/assets/web/native-bridge.js` (loaded by `index.html`) is the
+facade the WebApp talks to: it wraps `AndroidBridge` into promises
+(`NativeApp`, `NativeAds`, `CafeBazaar`, `ChistanBridge`) and is the **only**
+consumer of the raw interface, so a page never has to deal with the container's
+callback/event protocol. Every method is safe to call when the page runs in a
+normal browser (the facade detects the missing `AndroidBridge` and answers
+`false` / a settled promise).
 
 ```js
 const native = !!window.AndroidBridge;
@@ -49,7 +51,7 @@ Register a handler that walks your own screen stack and returns `true` whenever
 it moved one page back:
 
 ```js
-// Option A – the helper (needs js/native-bridge.js)
+// Option A – the helper (native-bridge.js is already loaded by index.html)
 NativeApp.setBackHandler(() => {
   if (closeTopModal()) return true;            // modal/overlay closed
   if (screen === 'level')    { go('chapters'); return true; }
@@ -268,7 +270,7 @@ intent, so the in-game rating button should simply call `openRatingPage()`.
 
 ```js
 NativeApp.openEmail('balochappps@gmail.com');              // -> true when accepted
-AndroidBridge.composeEmail('balochappps@gmail.com', 'لبزبند'); // with a subject
+NativeApp.composeEmail('balochappps@gmail.com', 'چیستان‌سرا'); // with a subject
 ```
 
 The container composes the message natively: `ACTION_SENDTO` with a `mailto:`
@@ -293,7 +295,7 @@ window.addEventListener('nativeapp:deeplink', e => go(e.detail.route));
 
 In the Pushfa panel (or the send API) use a **relative** link such as
 `/level/12` – it reaches the WebApp as the route `level/12`. Full
-`labzband://level/12` links work too, and absolute `https://` links open the
+`chistan://level/12` links work too, and absolute `https://` links open the
 browser instead of the game.
 
 ---
@@ -413,7 +415,7 @@ Two container features cover them:
 So mirror every save natively and restore the newer copy at boot:
 
 ```js
-const KEY = 'labzband_progress_v4';
+const KEY = 'chistansara_game_save_v2';   // the game's save key (alt: labzband_progress_v4)
 
 function save(state) {
   const json = JSON.stringify(state), at = Date.now();
@@ -472,7 +474,7 @@ img, a { -webkit-user-drag: none; }
 |------|---------|
 | `AndroidBridge.appReady()` | boot finished – hide the loading screen |
 | `NativeApp.setBackHandler(fn)` | hardware back → previous page |
-| `NativeAds.showInterstitial()` | full-screen ad (every 2 levels) |
+| `NativeAds.showInterstitial()` | full-screen ad – the *facade* fires it every 3 completed levels (never for `remove_ads` owners), so the WebApp does not request it itself |
 | `NativeAds.showRewarded()` | rewarded video (spin wheel) |
 | `CafeBazaar.purchase(sku)` | coin pack / remove-ads |
 | `CafeBazaar.getPurchases()` | restore permanent unlocks |

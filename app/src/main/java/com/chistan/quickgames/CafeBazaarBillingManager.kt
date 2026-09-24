@@ -13,9 +13,14 @@ import ir.cafebazaar.poolakey.request.PurchaseRequest
 import java.lang.ref.WeakReference
 
 /**
- * Manages CafeBazaar In-App Billing using Poolakey SDK.
- * Package: com.labzband.balochafzar
- * Automatic token consumption is enabled for all coin packs.
+ * Manages CafeBazaar In-App Billing using Poolakey SDK
+ * (package `com.chistan.quickgames`).
+ *
+ * Coin packs (`isConsumable`) are consumed automatically so they can be bought
+ * again; permanent unlocks (`remove_ads`, `isNonConsumable`) are remembered in
+ * `SharedPreferences` and are **never** consumed – a WebApp that calls
+ * `consumePurchase()` on such a token gets a `NON_CONSUMABLE` failure instead of
+ * silently losing the player's purchase.
  */
 class CafeBazaarBillingManager(activity: ComponentActivity) {
     companion object {
@@ -26,6 +31,9 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
 
         /** Key holding the owned non-consumable product IDs. */
         private const val KEY_OWNED_PRODUCTS = "owned_non_consumables"
+
+        /** Key holding the purchase tokens that belong to those permanent products. */
+        private const val KEY_PROTECTED_TOKENS = "non_consumable_tokens"
     }
 
     private val activityRef = WeakReference(activity)
@@ -39,6 +47,14 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
      * temporarily unreachable.
      */
     private val ownedProducts: MutableSet<String> = loadOwnedProducts()
+
+    /**
+     * Tokens seen for a non-consumable product. Consuming one of them would
+     * erase the permanent purchase (CafeBazaar delivers it again until it is
+     * consumed), so `consumePurchase()` refuses them; the tokens are persisted
+     * so a WebApp cannot do it after a restart either.
+     */
+    private val protectedTokens: MutableSet<String> = loadProtectedTokens()
 
     private var payment: Payment? = null
     private var paymentConnection: Connection? = null
@@ -127,6 +143,23 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     private fun markOwned(productId: String) {
         if (!CafeBazaarConfig.isNonConsumable(productId)) return
         if (ownedProducts.add(productId)) persistOwnedProducts()
+    }
+
+    /** Remembers the token of a permanent purchase so it can never be consumed. */
+    private fun protectToken(token: String?) {
+        val value = token?.takeIf { it.isNotBlank() } ?: return
+        if (protectedTokens.add(value)) {
+            runCatching {
+                prefs().edit().putStringSet(KEY_PROTECTED_TOKENS, HashSet(protectedTokens)).apply()
+            }.onFailure { Log.w(TAG, "Could not persist protected tokens: ${it.message}") }
+        }
+    }
+
+    private fun loadProtectedTokens(): MutableSet<String> {
+        val stored = runCatching {
+            prefs().getStringSet(KEY_PROTECTED_TOKENS, emptySet()) ?: emptySet()
+        }.getOrDefault(emptySet())
+        return HashSet(stored)
     }
 
     private fun syncOwnedProducts(purchased: List<String>) {
@@ -231,6 +264,9 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
                     // Permanent unlocks are remembered locally so interstitials
                     // stay off even before the next store query.
                     markOwned(purchaseInfo.productId)
+                    if (CafeBazaarConfig.isNonConsumable(purchaseInfo.productId)) {
+                        protectToken(purchaseInfo.purchaseToken)
+                    }
                     // Purchase succeeded: Notify web layer
                     notifyPurchaseResult(
                         PurchaseResult(
@@ -285,6 +321,18 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     }
 
     fun consumePurchase(purchaseToken: String) {
+        if (protectedTokens.contains(purchaseToken)) {
+            Log.w(TAG, "Refusing to consume the token of a permanent (non-consumable) purchase")
+            notifyConsumeResult(
+                ConsumeResult(
+                    false,
+                    purchaseToken,
+                    "Non-consumable products are never consumed",
+                    "NON_CONSUMABLE"
+                )
+            )
+            return
+        }
         val paymentInstance = payment ?: run {
             notifyConsumeResult(ConsumeResult(false, purchaseToken, "Payment not initialized", "NOT_INITIALIZED"))
             return
@@ -333,6 +381,8 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
             paymentInstance.getPurchasedProducts {
                 querySucceed { purchases: List<PurchaseInfo> ->
                     syncOwnedProducts(purchases.map { it.productId })
+                    purchases.filter { CafeBazaarConfig.isNonConsumable(it.productId) }
+                        .forEach { protectToken(it.purchaseToken) }
                     val resultList = purchases.map { p ->
                         PurchaseResult(
                             success = true,
@@ -371,6 +421,8 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         payment?.getPurchasedProducts {
             querySucceed { purchases ->
                 syncOwnedProducts(purchases.map { it.productId })
+                purchases.filter { CafeBazaarConfig.isNonConsumable(it.productId) }
+                    .forEach { protectToken(it.purchaseToken) }
                 for (p in purchases) {
                     if (CafeBazaarConfig.isConsumable(p.productId)) {
                         consumePurchase(p.purchaseToken)
