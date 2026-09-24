@@ -9,6 +9,35 @@
   'use strict';
 
   // ------------------------------------------------------------------ core
+  // Keep every Web Audio context under lifecycle control. WebView.onPause()
+  // does not reliably suspend a page-created AudioContext on all Android
+  // WebView versions, so background music must be stopped explicitly.
+  var nativeAudioContexts = [];
+  function trackAudioContext(Ctor) {
+    if (!Ctor || Ctor.__nativeTracked) return;
+    var Original = Ctor;
+    function TrackedAudioContext() {
+      var ctx = Reflect.construct(Original, Array.prototype.slice.call(arguments), TrackedAudioContext);
+      nativeAudioContexts.push(ctx);
+      return ctx;
+    }
+    TrackedAudioContext.prototype = Original.prototype;
+    TrackedAudioContext.__nativeTracked = true;
+    try { window[Original.name || 'AudioContext'] = TrackedAudioContext; } catch (_) {}
+  }
+  trackAudioContext(window.AudioContext);
+  trackAudioContext(window.webkitAudioContext);
+  function pauseWebAudio() {
+    nativeAudioContexts.forEach(function (ctx) { try { ctx.suspend(); } catch (_) {} });
+    try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (_) {}
+    try { document.querySelectorAll('audio,video').forEach(function (media) { media.pause(); }); } catch (_) {}
+  }
+  function resumeWebAudio() {
+    nativeAudioContexts.forEach(function (ctx) { try { ctx.resume(); } catch (_) {} });
+  }
+  window.addEventListener('nativeapp:pause', pauseWebAudio);
+  window.addEventListener('nativeapp:resume', resumeWebAudio);
+
   var adPending = null, purchasePending = null, queryPending = null;
   var consumePending = Object.create(null), listeners = Object.create(null);
   var ready = false, backHandler = null;
@@ -50,7 +79,11 @@
   }
   function show(kind, method, args) {
     if (adPending) return Promise.resolve(fail('BUSY'));
-    var entry = request(180000);
+    // Keep the WebApp-side timeout aligned with the native contract. Native
+    // requests are bounded to six seconds for interstitial/native and eighteen
+    // seconds for rewarded; the JS facade must not leave a game waiting for
+    // three minutes when a bridge callback is lost.
+    var entry = request(kind === 'rewarded' ? 18000 : 6000);
     entry.kind = kind; entry.reward = false; adPending = entry;
     var accepted = call.apply(null, [method, false].concat(args || []));
     if (accepted !== true) { adPending = null; entry.finish(fail('NOT_AVAILABLE')); }
@@ -121,7 +154,10 @@
   // --------------------------------------------------------------- NativeAds
   window.NativeAds = {
     showInterstitial: function () { return show('interstitial', 'showInterstitial'); },
-    showRewarded: function () { return show('rewarded', 'showRewarded'); },
+    // Rewarded ads must never mint currency. Coin packs are CafeBazaar-only;
+    // callers receive a settled failure instead of a reward that can be
+    // converted into coins by the game bundle.
+    showRewarded: function () { return Promise.resolve(fail('REWARDED_DISABLED')); },
     showNative: function () { return show('native', 'showNative'); },
     showNativeAt: function (x, y, w, h) { return show('native', 'showNativeAt', [x|0,y|0,w|0,h|0]); },
     hideNative: function () { return call('hideNative', false) === true; },
