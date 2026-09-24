@@ -270,9 +270,14 @@ CI (`.github/workflows/build-apk.yml`) runs on every push:
    spin wheel (reward granted / denied / ad error), coin packs (verified, unverified,
    cancelled, restored), remove-ads (store row, level-complete button, cancelled, unverified,
    restored at boot → no interstitial), About → contact e-mail, two levels → interstitial →
-   third level, ad time-outs, duplicate event delivery, back button.
+   third level, ad time-outs, duplicate event delivery, back button. It also boots the page
+   **without the game's scripts** and asserts the facade keeps the container contract alive on
+   its own (readiness handshake, native save mirror, ads/billing) – the container must survive a
+   game that cannot boot. **101 checks.**
 4. `Emulator smoke test` — installs the APK on an API 30 emulator (Chromium 83 WebView – the
-   compat layer is exercised for real), boots it and verifies the runtime contract (server up
+   compat layer and the syntax baseline are exercised for real: the packaged chunk must be
+   parseable by it, `tools/static_checks.py` fails the build otherwise), boots it and verifies the
+   runtime contract (server up
    → WebView on `127.0.0.1` → readiness handshake → no crash, no bridge thread violation, exit
    dialog, copy protection, night mode, rotation, activity switch, **progress survives a
    force stop** – stable loopback origin + native state mirror), then
@@ -290,6 +295,10 @@ CI (`.github/workflows/build-apk.yml`) runs on every push:
    back broken; no fill from the CI network is reported as *inconclusive*. The `build` job
    additionally prints `tools/inspect_ad_sdk.py`: the ad SDK's Activities in the merged
    manifest and a scan of its classes for `pauseTimers` / orientation / window calls.
+
+The emulator report publishes the page console (the container mirrors it to logcat with the tag
+`WebApp`, including uncaught JS errors) plus the WebView's parse/URL errors, so a red run says
+*why* the WebView refused to run the bundle instead of only timing out.
 
 Field diagnosis on a real phone (no debug build needed):
 

@@ -110,6 +110,35 @@
     emit(name, data);
   }
 
+  // ------------------------------------------------------ readiness handshake
+  // `AndroidBridge.appReady()` is what hides the container's native loading
+  // plate and marks the boot as successful; the container gives up after 30 s
+  // and shows its error plate instead. The handshake may therefore never wait
+  // for the game's own (heavy, asynchronous) start-up, and it must survive a
+  // failure anywhere below: it is registered before every object in this file is
+  // built. `appReady()` is idempotent, so the game's own call and this one share
+  // the single native handshake.
+  var booted = false, readyAttempts = 0;
+  function announceReady() {
+    if (booted) return;
+    try {
+      var app = window.NativeApp;
+      if (app && typeof app.appReady === 'function' && app.appReady() === true) { booted = true; return; }
+    } catch (e) { warn('[NativeBridge] readiness handshake failed', e); }
+    // The bridge can still be unreachable for a moment (WebView restored from a
+    // killed process, interface re-attached): retry, bounded, so a single miss
+    // cannot cost the whole boot.
+    if (readyAttempts++ < 20) setTimeout(announceReady, 400);
+  }
+  function scheduleReady(delay) { setTimeout(announceReady, delay); }
+  // Earliest safe moment: the document is there, the container's plate is up and
+  // the container holds it for at least 3 s – announcing early costs nothing,
+  // announcing late leaves the player on a blank screen until the watchdog.
+  scheduleReady(1000);
+  if (document.readyState === 'complete' || document.readyState === 'interactive') scheduleReady(0);
+  else window.addEventListener('DOMContentLoaded', function () { announceReady(); });
+  window.addEventListener('load', function () { announceReady(); });
+
   var listeners = Object.create(null);
   var lastEmit = Object.create(null);
 
@@ -692,7 +721,8 @@
 
     // Boot: the newer *valid* copy of the save wins (native mirror vs. web).
     [SAVE_KEY, SAVE_KEY_ALT].forEach(function (key) {
-      var mirror = window.NativeApp.loadState(key);
+      var mirror = null;
+      try { mirror = window.NativeApp.loadState(key); } catch (_) { return; }
       if (!mirror || !mirror.value) return;
       var webRaw = null, webAt = 0;
       try {
@@ -712,22 +742,23 @@
     lastCompletedCount = getCompletedCount();
   })();
 
-  // ------------------------------------------------------------- boot hooks
-  var booted = false;
-  function autoReady() {
-    if (booted) return;
-    booted = true;
-    window.NativeApp.appReady();
-    window.NativeAds.prepare();
-    window.CafeBazaar.connect();
-    window.CafeBazaar.getPurchases().catch(function () {});
+  // ------------------------------------------------------------- boot support
+  // Peripheral boot work that needs the objects above: warm the ad pipeline and
+  // restore the billing connection plus the owned purchases. The readiness
+  // handshake is registered at the top of this file and does not depend on any
+  // of it (nor on it succeeding).
+  var supportStarted = false;
+  function startSupport() {
+    if (supportStarted) return;
+    supportStarted = true;
+    try { window.NativeAds.prepare(); } catch (_) {}
+    try { window.CafeBazaar.connect(); } catch (_) {}
+    try { window.CafeBazaar.getPurchases().catch(function () {}); } catch (_) {}
   }
-  // Safety net only: the WebApp performs the real handshake once it finished
-  // booting. These fire well after a normal boot and still before the
-  // container's own 6 s watchdog, so a WebApp that never calls appReady() does
-  // not leave the loading plate on screen.
-  function scheduleAutoReady() { setTimeout(autoReady, 3000); }
-  if (document.readyState === 'complete' || document.readyState === 'interactive') scheduleAutoReady();
-  else window.addEventListener('DOMContentLoaded', scheduleAutoReady);
-  window.addEventListener('load', scheduleAutoReady);
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', function () { setTimeout(startSupport, 800); });
+  } else {
+    setTimeout(startSupport, 800);
+  }
+  window.addEventListener('load', startSupport);
 })(window);

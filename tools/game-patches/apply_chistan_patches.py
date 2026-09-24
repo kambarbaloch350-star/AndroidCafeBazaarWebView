@@ -36,6 +36,13 @@ a new game build changes the code it targets. `--check` is a CI guard: it exits
 non-zero when a patch is neither applied nor applicable, or when one of the
 invariants below does not hold.
 
+Syntax floor (new): the WebView baseline is Chromium 83 – the CI emulator runs it
+on purpose and `assets/native/compat.js` polyfills that generation's *runtime*
+APIs. Syntax cannot be polyfilled, so the ES2021 logical assignments emitted by
+Vite/React 19 (`a ??= b`, `a ||= b`, `a &&= b`, Chrome 85) are rewritten to their
+ES2019 equivalents; on the baseline the untouched bundle does not even parse,
+which leaves the page empty and the readiness handshake unanswered.
+
 Because `index-*.js` is content-hashed and served with `Cache-Control: immutable`,
 a patched chunk is renamed to a fresh hash and `index.html` is rewritten, so a
 WebView that cached the previous build loads the change on the next start.
@@ -156,6 +163,78 @@ FREE_COINS_DONE_PAID = (
 )
 
 # ---------------------------------------------------------------------------
+# ES2019 syntax floor – Chromium 83 WebView baseline
+# ---------------------------------------------------------------------------
+# A WebView that cannot *parse* the bundle never runs it: the page stays empty,
+# the game never boots and the readiness handshake never reaches the container
+# (exactly what the emulator jobs report). `??=` / `||=` / `&&=` ship in Chrome
+# 85, the container's baseline is Chromium 83, so every occurrence in the shipped
+# chunk is rewritten to the equivalent ES2019 expression:
+#
+#     a ??= b   ->   a ?? (a = b)
+#     a ||= b   ->   a || (a = b)
+#     a &&= b   ->   a && (a = b)
+#
+# The two forms differ only in how often the *reference* on the left is
+# evaluated; every site below is a plain identifier or member access on an
+# ordinary object (`e`, `t`, `oe`, `e.title`, `this.musicTimer`, …), so the
+# rewrite is transparent. `TRANSFORMS` applies all sites as one unit and the
+# bundle must contain no logical-assignment operator afterwards.
+LOGICAL_ASSIGNMENT_SITES = [
+    # React's forwardRef displayName fallback.
+    ("e||=(e=t.displayName||t.name||``,e===``?`ForwardRef`:`ForwardRef(`+e+`)`)",
+     "e||(e=(e=t.displayName||t.name||``,e===``?`ForwardRef`:`ForwardRef(`+e+`)`))"),
+    # React resource cache (`hoistableStyles` / `hoistableScripts`).
+    ("return t||=e[It]={hoistableStyles:new Map,hoistableScripts:new Map},t}",
+     "return t||(t=e[It]={hoistableStyles:new Map,hoistableScripts:new Map}),t}"),
+    # React DOM property hydration (defaultChecked/defaultValue).
+    ("r??=i,r=typeof r!=`function`",
+     "r??(r=i),r=typeof r!=`function`"),
+    ("}n??=``,t=n}",
+     "}n??(n=``),t=n}"),
+    # React's activeElement helper (`Zr`).
+    ("if(e||=typeof document<`u`?document:void 0,e===void 0)",
+     "if(e||(e=typeof document<`u`?document:void 0),e===void 0)"),
+    # React's `memoCache`.
+    ("if(t??={data:[],index:0},n===null",
+     "if(t??(t={data:[],index:0}),n===null"),
+    # React's event-priority helpers.
+    ("r||=(ka(e,t,n,!1),(n&t.childLanes)!==0),i){",
+     "r||(r=(ka(e,t,n,!1),(n&t.childLanes)!==0)),i){"),
+    ("}else r=null}r||={start:0,end:0}}else r=null;",
+     "}else r=null}r||(r={start:0,end:0})}else r=null;"),
+    ("for(i&&=!!(t.subtreeFlags&10256)||!1,t=t.child;",
+     "for(i&&(i=!!(t.subtreeFlags&10256)||!1),t=t.child;"),
+    ("if(_&&=_(e,r)){Mr(s,_,n,i);break a}",
+     "if(_&&(_=_(e,r))){Mr(s,_,n,i);break a}"),
+    ("e.reactFragments??=new Set,e.reactFragments.add(t)}",
+     "e.reactFragments??(e.reactFragments=new Set),e.reactFragments.add(t)}"),
+    ("t||=`default`;var o=i.get(a);",
+     "t||(t=`default`);var o=i.get(a);"),
+    # React's <link rel="modulepreload"> preload keys.
+    ("function Hm(e,t){e.crossOrigin??=t.crossOrigin,e.referrerPolicy??=t.referrerPolicy,e.title??=t.title}",
+     "function Hm(e,t){e.crossOrigin??(e.crossOrigin=t.crossOrigin),e.referrerPolicy??(e.referrerPolicy=t.referrerPolicy),e.title??(e.title=t.title)}"),
+    ("function Um(e,t){e.crossOrigin??=t.crossOrigin,e.referrerPolicy??=t.referrerPolicy,e.integrity??=t.integrity}",
+     "function Um(e,t){e.crossOrigin??(e.crossOrigin=t.crossOrigin),e.referrerPolicy??(e.referrerPolicy=t.referrerPolicy),e.integrity??(e.integrity=t.integrity)}"),
+    # The game's own audio manager timer.
+    ("this.musicTimer&&=(clearTimeout(this.musicTimer),null)",
+     "this.musicTimer&&(this.musicTimer=(clearTimeout(this.musicTimer),null))"),
+    # canvas-confetti's lazily created worker.
+    ("return oe||=ae(null,{useWorker:!0,resize:!0}),oe}",
+     "return oe||(oe=ae(null,{useWorker:!0,resize:!0})),oe}"),
+]
+
+# ---------------------------------------------------------------------------
+# Transforms: (id, [(text that must be replaced, replacement), …])
+# ---------------------------------------------------------------------------
+TRANSFORMS = [
+    ("es2019-syntax-floor", LOGICAL_ASSIGNMENT_SITES),
+]
+
+# Every operator must be gone once the transforms ran.
+LOGICAL_ASSIGNMENT_OPS = ("??=", "||=", "&&=")
+
+# ---------------------------------------------------------------------------
 # Patches: (id, target, [source variants the target may replace])
 # ---------------------------------------------------------------------------
 PATCHES = [
@@ -231,6 +310,8 @@ INVARIANTS = [
     ("×3 bonus calls the bridge helper", "window.ChistanBridge.addCoins(tripleCoins)", True),
     ("rewarded free coins credit 150", "try{n(150)}catch(e){}", True),
     ("readiness handshake present", "window.NativeApp.appReady()", True),
+    ("bundle runs on the Chromium 83 baseline",
+     "function Hm(e,t){e.crossOrigin??(e.crossOrigin=t.crossOrigin)", True),
 ]
 
 # ---------------------------------------------------------------------------
@@ -274,6 +355,28 @@ def single(pattern: str) -> str:
     return matches[0]
 
 
+def apply_transforms(text: str, check_only: bool):
+    """All-or-nothing rewrites (the syntax floor). """
+    applied, skipped, failed = [], [], []
+    for tid, pairs in TRANSFORMS:
+        pending = [(old, new) for old, new in pairs if old in text]
+        if not pending:
+            skipped.append(tid)
+            continue
+        if len(pending) != len(pairs):
+            failed.append((tid, f"partially applied ({len(pending)}/{len(pairs)} sites)"))
+            continue
+        ambiguous = [old for old, _ in pending if text.count(old) != 1]
+        if ambiguous:
+            failed.append((tid, f"ambiguous anchor: {ambiguous[0][:60]}"))
+            continue
+        if not check_only:
+            for old, new in pending:
+                text = text.replace(old, new)
+        applied.append((tid, False))
+    return text, applied, skipped, failed
+
+
 def apply_patches(text: str, check_only: bool):
     applied, skipped, failed = [], [], []
     for pid, target, sources in PATCHES:
@@ -295,11 +398,21 @@ def apply_patches(text: str, check_only: bool):
             failed.append((pid, {src[:40] + '…': text.count(src) for src in sources}))
         else:
             failed.append((pid, "ambiguous: several source variants present"))
-    return text, applied, skipped, failed
+    text, t_applied, t_skipped, t_failed = apply_transforms(text, check_only)
+    return text, applied + t_applied, skipped + t_skipped, failed + t_failed
 
 
 def verify(text: str):
     problems = []
+    # Syntax floor: no ES2021 logical assignment may survive – a single one makes
+    # the whole module unparseable on the container's Chromium 83 baseline.
+    for op in LOGICAL_ASSIGNMENT_OPS:
+        if op in text:
+            first = text.index(op)
+            problems.append(
+                f"still present: {op} cannot be parsed by the Chromium 83 baseline "
+                f"({text[max(0, first - 40):first + 40]!r})"
+            )
     for description, needle, must_be_present in INVARIANTS:
         present = needle in text
         if present != must_be_present:
@@ -335,7 +448,9 @@ def main() -> int:
         if applied:
             print(f"{len(applied)} patch(es) pending – run the script without --check", file=sys.stderr)
             return 1
-        print(f"bundle is up to date ({len(PATCHES)} patches, {len(INVARIANTS)} invariants)")
+        sites = sum(len(pairs) for _, pairs in TRANSFORMS)
+        print(f"bundle is up to date ({len(PATCHES)} patches, {len(TRANSFORMS)} syntax floor "
+              f"({sites} sites), {len(INVARIANTS)} invariants)")
         return 0
     if text == original:
         print("nothing to do")

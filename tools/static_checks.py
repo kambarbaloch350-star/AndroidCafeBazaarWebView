@@ -619,6 +619,65 @@ def check_ad_resilience() -> None:
             errors.append(f"{name} is missing")
 
 
+# The container ships to whatever WebView the device has, and the CI emulator
+# runs the oldest one the project supports on purpose: Chromium 83 (API 30).
+# `assets/native/compat.js` polyfills that generation's *runtime* APIs, but
+# syntax cannot be polyfilled – a single ES2021 operator makes the whole module
+# fail to parse, the page stays empty and the WebApp never announces readiness
+# (the game then hangs on the container's loading plate). Caught by hand once
+# (the emulator jobs went red); these checks keep it from happening again.
+BASELINE_SYNTAX = (
+    ("??=", "nullish assignment `a ??= b` (ES2021, Chrome 85)"),
+    ("||=", "logical OR assignment `a ||= b` (ES2021, Chrome 85)"),
+    ("&&=", "logical AND assignment `a &&= b` (ES2021, Chrome 85)"),
+    ("**=", "exponentiation assignment `a **= b` (ES2016, Chrome 52)"),
+)
+BASELINE_SYNTAX_PATTERNS = (
+    (re.compile(r"static\s*\{"), "class static block (ES2022, Chrome 94)"),
+    (re.compile(r"this\s*\.\s*#"), "private class member access (Chrome 84+)"),
+    (re.compile(r"\.\s*#\w+\s+in\s"), "private-in operator `#x in obj` (ES2022, Chrome 91)"),
+)
+# Post-83 runtime APIs. Everything the container's compat layer already covers is
+# listed there (Object.hasOwn, Array/String.at, replaceAll, structuredClone,
+# Promise.any/allSettled, crypto.randomUUID, Element.replaceChildren, …), so only
+# APIs that are *not* polyfilled are reported.
+BASELINE_RUNTIME_APIS = (
+    (".toSorted(", "Array.prototype.toSorted"), (".toReversed(", "Array.prototype.toReversed"),
+    (".toSpliced(", "Array.prototype.toSpliced"), (".with(", "Array.prototype.with"),
+    (".groupBy(", "Object.groupBy / Map.groupBy"), (".union(", "Set.prototype.union"),
+    (".intersection(", "Set.prototype.intersection"), (".difference(", "Set.prototype.difference"),
+    ("Array.fromAsync(", "Array.fromAsync"), ("Promise.withResolvers(", "Promise.withResolvers"),
+    ("new WeakRef(", "WeakRef"), ("new FinalizationRegistry(", "FinalizationRegistry"),
+    ("Iterator.", "Iterator helpers"), ("RegExp.escape(", "RegExp.escape"),
+    (".findLast(", "Array.prototype.findLast (compat.js covers it – check the polyfill is packaged)"),
+)
+
+
+def check_webview_baseline() -> None:
+    """The packaged WebApp must run on the container's Chromium 83 baseline."""
+    web = os.path.join(ROOT, "app", "src", "main", "assets", "web")
+    targets = [os.path.join(web, "native-bridge.js"), os.path.join(web, "js", "native-bridge.js")]
+    targets += sorted(glob.glob(os.path.join(web, "assets", "index-*.js")))
+    targets += sorted(glob.glob(os.path.join(web, "assets", "App-*.js")))
+    for path in targets:
+        if not os.path.isfile(path):
+            continue
+        text = open(path, encoding="utf-8", errors="ignore").read()
+        for needle, what in BASELINE_SYNTAX:
+            if needle in text:
+                errors.append(f"{rel(path)}: {what} cannot be parsed by the Chromium 83 WebView "
+                              f"baseline – run python3 tools/game-patches/apply_chistan_patches.py")
+        for pattern, what in BASELINE_SYNTAX_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                errors.append(f"{rel(path)}: {what} cannot be parsed by the Chromium 83 WebView "
+                              f"baseline (near {text[max(0, match.start() - 20):match.end() + 20]!r})")
+        for needle, what in BASELINE_RUNTIME_APIS:
+            if needle in text:
+                warnings.append(f"{rel(path)}: {what} is newer than the Chromium 83 baseline and "
+                                "needs a compat.js polyfill")
+
+
 def check_game_patches_and_contact() -> None:
     """Product changes that live in the packaged game and the container.
 
@@ -761,6 +820,7 @@ def main() -> int:
     check_google_services()
     check_ad_resilience()
     check_game_patches_and_contact()
+    check_webview_baseline()
 
     for warning in warnings:
         print(f"WARN  {warning}")

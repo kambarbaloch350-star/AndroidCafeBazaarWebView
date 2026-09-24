@@ -32,9 +32,20 @@ window.AndroidBridge.appReady();   // or: window.NativeApp.appReady()
 ```
 
 If it never arrives the container shows its error/retry state instead of
-revealing a half-drawn game. There is a safety net (a finished page that stays
-silent for 6 s is treated as ready with a warning), but the explicit call is what
-you want.
+revealing a half-drawn game. The call is idempotent and the bundled
+`native-bridge.js` **already announces readiness on its own** – about a second
+after the document is ready, again on `DOMContentLoaded`/`load`, with bounded
+retries while the bridge is unreachable – because the container's plate and its
+watchdogs (page load 30 s, `APP_READY_TIMEOUT_MS` 45 s) must not depend on the game's start-up: a bundle the WebView cannot
+parse, or one that hangs, must still lift the plate. Your own call stays useful
+(it can arrive earlier than the safety net on a fast boot) and costs nothing.
+
+The packaged bundle must also be **parseable by the container's WebView baseline
+(Chromium 83)**: `compat.js` polyfills that generation's runtime APIs, but
+post-ES2019 syntax (e.g. the `a ??= b` logical assignment React 19 emits) cannot
+be polyfilled – the module then never executes at all. `tools/static_checks.py`
+fails the build on such syntax; `tools/game-patches/apply_chistan_patches.py`
+rewrites it for the shipped chunk.
 
 ---
 

@@ -85,8 +85,42 @@ patching) is corrected where it used the bridge wrongly:
   `apply_patches.py` targets `App-*.js`, which this bundle no longer contains, so
   the step used to fail whenever the logo changed).
 * `tools/static_checks.py`: the interstitial requirement moved to the facade (the
-  chunk must *not* request ads itself) and the facade must stay the single
-  `AndroidBridge` consumer.
+  chunk must *not* request ads itself), the facade must stay the single
+  `AndroidBridge` consumer, and the packaged WebApp must be parseable by the
+  container's WebView baseline (`check_webview_baseline`).
+
+### WebView baseline – what the first CI run on this branch exposed
+
+The build job went green and the APK reached Telegram on the first run, but both
+emulator jobs failed with `the WebApp never reported readiness` and the smoke
+report showed an empty page (only the container's own `<div id="root">`), with
+`SyntaxError: Unexpected token '='` in the page:
+
+* The packaged Vite/React 19 chunk contains **ES2021 logical assignment**
+  (`a ??= b`, `a ||= b`, `a &&= b` – Chrome 85). The container's baseline is
+  **Chromium 83** (the API 30 emulator, and older WebViews on real Android 7-10
+  phones): the module cannot be parsed at all, so the game never boots and nothing
+  ever calls `appReady()`. New patch `es2019-syntax-floor` rewrites all 16 sites
+  (20 operators) to `a ?? (a = b)` / `a || (a = b)` / `a && (a = b)` – all
+  left-hand sides are plain identifiers/member accesses, where both forms are
+  indistinguishable – and `verify()` plus `static_checks.py` now fail on any
+  logical assignment, class static block or private-in expression in the packaged
+  assets.
+* The readiness handshake used to be tied to the game's start-up (a 3 s timer
+  after the load event, i.e. after the game's own bundle executed). It now lives at
+  the **top** of `native-bridge.js`, is registered before any namespace of the
+  facade is built, fires ~1 s after the document is ready (`DOMContentLoaded` and
+  `load` as well) and retries with a bounded backoff – so an unparseable or hanging
+  game can no longer leave the container on its plate until the watchdog. The
+  facade-only path is covered by four new harness checks that boot the page
+  **without the game's scripts** (readiness, native save mirror, ads/billing
+  startup, no page errors).
+* The emulator report no longer hides the cause: the smoke script prints the page
+  console the container mirrors into logcat (`WebApp` tag, including uncaught JS
+  errors) and the WebView's parse/URL errors, and tells the reader what a
+  `SyntaxError` means; the ad lab prints the same on its readiness timeout. The
+  pre-existing `grep: ci-artifacts/logcat.txt: No such file` warnings are gone
+  (logcat is captured before those greps).
 * `src/data/projectFiles.ts` / `exportFiles.ts` regenerated from the real
   repository (42 files; the old data pointed at deleted labzband sources and the
   pre-hash chunk), and the showcase copy follows the new reality
@@ -98,11 +132,12 @@ patching) is corrected where it used the bridge wrongly:
 
 * `python3 tools/static_checks.py` – clean.
 * `python3 tools/game-patches/apply_chistan_patches.py --check` – `bundle is up to
-  date (12 patches, 18 invariants)`.
-* `node tools/game-tests/run.mjs` – **97/97 checks**: exactly one interstitial per
+  date (12 patches, 1 syntax floor (16 sites), 19 invariants)`.
+* `node tools/game-tests/run.mjs` – **101/101 checks**: exactly one interstitial per
   3 completed levels, none for `remove_ads` owners, `remove_ads` bought but never
   consumed, verified-only crediting, the rewarded 150 coins, the ×3 bonus reaching
-  the save, the full lifecycle/bridge contract.
+  the save, the full lifecycle/bridge contract, and the facade-only boot contract
+  (readiness + save mirror + ads/billing without the game).
 * CI additionally runs the JVM unit tests, the emulator smoke test (install,
   boot, back-navigation, force-stop persistence) and the ad lab.
 

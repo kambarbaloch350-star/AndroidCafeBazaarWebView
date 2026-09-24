@@ -19,6 +19,10 @@ python3 tools/static_checks.py
 node tools/game-tests/run.mjs                           # boots the chunk in jsdom (21 scenarios)
 ```
 
+The script holds **12 product patches + the ES2019 syntax floor** (16 rewritten
+sites, see below) and verifies 19 invariants over the result; a run without
+`--check` re-hashes the chunk and rewrites `index.html` when anything changed.
+
 The patched chunk gets a **new content hash** and `index.html` is rewritten
 because the local server serves hashed chunks with `Cache-Control: immutable`: a
 WebView that cached the previous build must see new file names.
@@ -130,6 +134,48 @@ container's `window.AndroidBridge` object; the game talks to the facade:
 * The `localStorage.setItem` hook defines the property on the instance **and** on
   `Storage.prototype` (jsdom-safe).
 
+### WebView baseline – the ES2019 syntax floor (`es2019-syntax-floor`)
+
+* The app runs on whatever WebView the device has (minSdk 24, Android 7+); the CI
+  emulator deliberately runs the old one every job installs on: **Chromium 83**
+  (API 30). `app/src/main/assets/native/compat.js` polyfills that generation's
+  *runtime* APIs (`Object.hasOwn`, `Array.prototype.at`, `String.replaceAll`,
+  `structuredClone`, `Promise.any/allSettled`, `crypto.randomUUID`, …) – but syntax
+  cannot be polyfilled.
+* Vite/React 19 ship ES2021 **logical assignment** (`a ??= b`, `a ||= b`,
+  `a &&= b`, Chrome 85). On Chromium 83 the module does not even parse: the page
+  stays empty, the game never boots and `appReady()` never arrives, so the
+  container shows its error plate instead (page-load watchdog 30 s, `APP_READY_TIMEOUT_MS` 45 s). That is exactly what
+  the emulator jobs reported (empty `#root`, `FAIL the WebApp never reported
+  readiness`, `SyntaxError: Unexpected token '='`).
+* The `es2019-syntax-floor` transform rewrites all 16 sites (20 operators) to the
+  ES2019 equivalent – `a ??= b` → `a ?? (a = b)`, `a ||= b` → `a || (a = b)`,
+  `a &&= b` → `a && (a = b)` – as one all-or-nothing unit: a partially applied
+  state fails loudly. Every left-hand side is a plain identifier or member access
+  on an ordinary object (`e`, `t`, `oe`, `e.title`, `this.musicTimer`, …), where
+  the two forms are indistinguishable.
+* `tools/static_checks.py` (`check_webview_baseline`) and the patcher's `verify()`
+  both fail when a logical assignment, a class static block or a private-in
+  expression is packaged, and warn about post-baseline APIs that `compat.js` does
+  not cover – so a refreshed game build cannot silently break old devices again.
+
+### Readiness handshake – who lifts the loading plate
+
+* The container keeps its native plate on screen until `AndroidBridge.appReady()`
+  arrives (minimum 3 s) and falls back to its error plate when it stays silent
+  (`PAGE_LOAD_TIMEOUT_MS` 30 s, `APP_READY_TIMEOUT_MS` 45 s), so the
+  handshake may not depend on the game finishing its own start-up.
+* `native-bridge.js` registers it at the **top** of the file, before any of its
+  namespaces are built: ~1 s after the document is ready, again on
+  `DOMContentLoaded`/`load`, and retried (bounded, 400 ms) while the bridge stays
+  unreachable. `NativeApp.appReady()` itself is idempotent, so the game's own call
+  (`window.NativeApp.appReady()` right after its settings hydrate) shares it.
+* Peripheral boot work (ad pipeline warm-up, billing connect, purchase restore)
+  runs separately and cannot delay or break the handshake.
+* `tools/game-tests/run.mjs` boots the page **without the game's scripts** and
+  asserts the facade still announces readiness, installs the save mirror and keeps
+  ads/billing running – the regression test for the failure above.
+
 ### Tests
 
 * `tools/game-tests/chistan_scenarios.json` – 21 scenarios: boot, fair prices
@@ -138,10 +184,12 @@ container's `window.AndroidBridge` object; the game talks to the facade:
   `remove_ads` owners, `remove_ads` bought but never consumed, coin purchase flow
   (success / cancelled / unverified / no free exploit / balance after refresh),
   the rewarded 150 coins, the ×3 bonus reaching the save, the progress mirror and
-  the Persian loading screen. 97 checks, all green.
+  the Persian loading screen – plus four facade-only boot checks (readiness without
+  the game, the native save mirror, ads/billing support, no page errors).
+  **101 checks, all green.**
 * `tools/game-tests/run.mjs` auto-detects the bundle and selects that scenario file;
   `tools/static_checks.py` warns when the chunk requests interstitials itself or
-  when a patch is pending.
+  when a patch is pending, and fails on post-ES2019 syntax in the packaged assets.
 
 ---
 

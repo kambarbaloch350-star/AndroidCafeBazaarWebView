@@ -369,7 +369,7 @@ function toClassic(code, label) {
  */
 const HARNESS_KNOBS = ['adsEnabled', 'rewardGranted', 'billingConnected', 'removeAdsOwned', 'purchases', 'purchaseOutcome', 'holdAds', 'nativeState'];
 
-async function boot(initialStorage = {}, harnessKnobs = {}) {
+async function boot(initialStorage = {}, harnessKnobs = {}, options = {}) {
   const { html, classic, modules } = await readEntry();
   const virtualConsole = new VirtualConsole();
   const log = [];
@@ -418,10 +418,16 @@ async function boot(initialStorage = {}, harnessKnobs = {}) {
     el.textContent = script.code;
     window.document.head.appendChild(el);
   }
-  for (const script of modules) {
-    const el = window.document.createElement('script');
-    el.textContent = toClassic(script.code, script.src);
-    window.document.body.appendChild(el);
+  // `skipGame` boots the page without the game's own scripts: that is the
+  // container contract test for "the WebApp never finishes booting" (old
+  // WebView, broken/hanging game start-up) – the facade must still announce
+  // readiness and keep the native save mirror alive.
+  if (!options.skipGame) {
+    for (const script of modules) {
+      const el = window.document.createElement('script');
+      el.textContent = toClassic(script.code, script.src);
+      window.document.body.appendChild(el);
+    }
   }
 
   await settle(900);
@@ -768,6 +774,33 @@ check('no uncaught page errors',
 check('no unhandled console errors',
   !log.some(l => l.startsWith('error:')),
   log.filter(l => l.startsWith('error:')).slice(0, 2).join(' | '));
+
+// Container contract: the native loading plate is lifted by
+// `AndroidBridge.appReady()`, and the container gives up (error plate) when it
+// never arrives. The game may not be the one who sends it – its own start-up can
+// be slow, can hang or cannot even parse on the WebView the app ships to (that
+// is exactly what broke the emulator jobs: an ES2021 operator in the bundle on
+// the Chromium 83 baseline). So the facade owns the handshake: it must announce
+// readiness on its own and mirror saves natively even when the game never boots.
+{
+  const facadeOnly = await boot({}, {}, { skipGame: true });
+  await settle(1200);   // the handshake fires ~1 s after the document is ready
+  const calls = () => facadeOnly.window.__harness.state().calls;
+  check('the facade announces readiness even when the game never boots',
+    calls().some(c => c.startsWith('NativeApp.appReady')), calls().join(', ') || '(no bridge call)');
+  check('the facade installs the native save mirror',
+    (() => {
+      facadeOnly.window.localStorage.setItem('chistansara_game_save_v2',
+        JSON.stringify({ coins: 1, completedLevels: { 1: true }, savedAt: Date.now() }));
+      return calls().includes('NativeApp.saveState:chistansara_game_save_v2');
+    })(), calls().join(', ') || '(no bridge call)');
+  check('the facade keeps working without the game (ads and billing booted)',
+    calls().includes('NativeAds.prepare') && calls().includes('CafeBazaar.connect'),
+    calls().join(', ') || '(no bridge call)');
+  check('the facade without the game throws nothing',
+    !facadeOnly.log.some(l => l.startsWith('jsdomError')),
+    facadeOnly.log.filter(l => l.startsWith('jsdomError')).slice(0, 2).join(' | '));
+}
 
 if (process.argv.includes('--dump') || loadScenarios().length === 0) {
   console.log('\n--- DOM summary ---');

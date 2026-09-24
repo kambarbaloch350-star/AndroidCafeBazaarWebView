@@ -42,6 +42,14 @@ FAILURES=0
 exec > >(tee "$OUT/console.log") 2>&1
 
 note() { echo "[smoke] $*"; }
+# Page console + engine errors: the container mirrors everything the page logs
+# (and every uncaught exception) into logcat with the tag `WebApp`
+# (MainActivity.onConsoleMessage), so this is the only way to see *why* a WebView
+# refused to run the WebApp – an unparseable bundle on an old Chromium, a bridge
+# call that threw, a failed asset.
+webapp_console() {
+  adb logcat -d -s WebApp:V 2>/dev/null | sed -n 's/^\(.*WebApp[^:]*: \)//p' | tail -"${1:-25}"
+}
 fail() { echo "[smoke][FAIL] $*"; FAILURES=$((FAILURES + 1)); }
 
 adb start-server >/dev/null 2>&1 || true
@@ -89,6 +97,19 @@ if [ "$READY" = "1" ]; then
   note "WebApp reported readiness (NativeApp.appReady reached the container)"
 else
   fail "the WebApp never reported readiness within 40s"
+  # Diagnose it here: the usual cause is the page not running at all.
+  PAGE_ERRORS=$(webapp_console 10)
+  if [ -n "$PAGE_ERRORS" ]; then
+    note "page console / uncaught errors:"
+    echo "$PAGE_ERRORS"
+  else
+    note "the page logged nothing – the bundle may not have been served at all"
+  fi
+  if echo "$PAGE_ERRORS" | grep -qE "SyntaxError"; then
+    note "a SyntaxError means the bundle cannot be parsed by this WebView (Chromium 83 here):"
+    note "keep app/src/main/assets/web/assets/index-*.js free of post-ES2019 syntax"
+    note "(tools/game-patches/apply_chistan_patches.py --check, tools/static_checks.py)"
+  fi
 fi
 
 if adb logcat -d -s LocalWebServer:I | grep -q "Local HTTP server ready at http://127.0.0.1"; then
@@ -106,6 +127,7 @@ fi
 # The bridge runs on the WebView's JavaBridge thread: any WebView call made from
 # there throws "A WebView method was called on thread 'JavaBridge'" and silently
 # disables the JS API. Catch it here instead of in production.
+adb logcat -d > "$OUT/logcat.txt" 2>/dev/null || true
 if grep -q "was called on thread 'JavaBridge'" "$OUT/logcat.txt"; then
   fail "bridge methods touched WebView APIs off the main thread"
   grep -n "was called on thread" "$OUT/logcat.txt" | head -3
@@ -418,9 +440,14 @@ fi
   adb logcat -d | grep -E "LocalWebServer|WebAppBridge|MainActivity|TapsellManager|PushfaManager|App:" | tail -45
   echo '```'
   echo
-  echo "WebApp console (bridge handshake):"
+  echo "WebApp console (page log + uncaught errors, container tag WebApp):"
   echo '```'
-  adb logcat -d -s WebApp:D | grep -E "webapp\]|AUTOTEST" | tail -25
+  webapp_console 25
+  echo '```'
+  echo
+  echo "Parse / URL errors reported by the WebView:"
+  echo '```'
+  adb logcat -d 2>/dev/null | grep -iE "SyntaxError|Uncaught|net::ERR|ERR_FILE" | tail -15
   echo '```'
   echo
   echo "Smoke script console:"
