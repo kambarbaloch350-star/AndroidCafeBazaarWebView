@@ -218,6 +218,16 @@ container keeps working (`./gradlew assembleRelease` succeeds with an empty conf
   The consumable packs are consumed by the app after crediting (so they can be bought again);
   `remove_ads` is never consumed – the store row and the level-complete "حذف تبلیغات" button sell
   it, and the container remembers the entitlement.
+
+  Those nine are the **only** SKUs the shipped game requests (`window.CafeBazaar.purchase(sku)`)
+  and the only ones that must exist in the panel. `CafeBazaarConfig.SUPPORTED_PRODUCTS` also
+  carries older identifiers from the previous apps (`coin_pack_250/750/2000/5000/10000/25000`,
+  `pack_starter/popular/super/royal/vault` are shared, `chistan_pack_200`, `chistan_pack_10000`,
+  `coins_50/150/300/600/1200/2500`): a purchase that arrives with one of them is still consumed so
+  it can be bought again, and `getCoinsForSku`/`getPriceTomans` know its coin count and price
+  (`pack_1`…`pack_4` are mapping fallbacks only – they are *not* consumable, so they must not be
+  created). Nothing in this build sells them: **do not create them in the panel** – an unused SKU
+  in the console is one more product to keep in sync with a price the game never shows.
 * Test with a Bazaar test account before release – the emulator has no Bazaar client, the
   jsdom harness covers the game side of the flow (`tools/game-tests/chistan_scenarios.json`).
 
