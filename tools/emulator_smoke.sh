@@ -492,6 +492,17 @@ fi
   adb logcat -d 2>/dev/null | grep -iE "SyntaxError|Uncaught|net::ERR|ERR_FILE" | tail -15
   echo '```'
   echo
+  echo "Play-through / persistence self test:"
+  echo '```'
+  for f in play.log persist.log; do
+    [ -f "$OUT/$f" ] || continue
+    echo "--- $f"
+    grep -E "FAIL|checks passed|aborted" "$OUT/$f" | tail -12 || true
+    echo "    (last lines)"
+    tail -3 "$OUT/$f" | sed 's/^/    /' || true
+  done
+  echo '```'
+  echo
   echo "Smoke script console:"
   echo '```'
   tail -60 "$OUT/console.log" 2>/dev/null || true
