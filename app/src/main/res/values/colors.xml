@@ -1,49 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ==================== Green plate palette ==================== -->
-    <!-- Light green / green plate theme used by the native loading screen -->
-    <color name="green_50">#F1FBF4</color>
-    <color name="green_100">#DCF3E4</color>
-    <color name="green_200">#B8E7CC</color>
-    <color name="green_300">#7FE3B0</color>
-    <color name="green_400">#34D399</color>
-    <color name="green_500">#10B981</color>
-    <color name="green_600">#059669</color>
-    <color name="green_700">#047857</color>
-    <color name="green_800">#065F46</color>
-    <color name="green_900">#064E3B</color>
+    <!-- ==================== Game palette (چیستان) ==================== -->
+    <!-- Warm amber / yellow theme matching the WebApp #FFFDF7 background -->
+    <color name="green_50">#FFFBEB</color>
+    <color name="green_100">#FEF3C6</color>
+    <color name="green_200">#FDE68A</color>
+    <color name="green_300">#FCD34D</color>
+    <color name="green_400">#FBBF24</color>
+    <color name="green_500">#F59E0B</color>
+    <color name="green_600">#D97706</color>
+    <color name="green_700">#B45309</color>
+    <color name="green_800">#92400E</color>
+    <color name="green_900">#78350F</color>
 
     <color name="white">#FFFFFFFF</color>
     <color name="black">#FF000000</color>
 
-    <!-- Loading screen surfaces -->
-    <color name="loading_background_top">#FFFFFFFF</color>
-    <color name="loading_background_bottom">#FFFFFFFF</color>
+    <!-- Loading screen surfaces – game palette -->
+    <color name="loading_background_top">#FFFFFDF7</color>
+    <color name="loading_background_bottom">#FFFEF3C6</color>
     <color name="plate_surface">#FFFFFFFF</color>
-    <color name="plate_surface_end">#FFFFFFFF</color>
-    <color name="plate_ring">#34D399</color>
-    <color name="plate_inner_ring">#DCF3E4</color>
-    <color name="plate_shadow">#1A047857</color>
+    <color name="plate_surface_end">#FFFFFBEB</color>
+    <color name="plate_ring">#FBBF24</color>
+    <color name="plate_inner_ring">#FEF3C6</color>
+    <color name="plate_shadow">#1A92400E</color>
 
-    <color name="loading_title">#0B7A57</color>
-    <color name="loading_message">#0F766E</color>
-    <color name="loading_stage">#4B7F6C</color>
-    <color name="loading_spinner">#10B981</color>
-    <color name="loading_spinner_track">#B8E7CC</color>
+    <color name="loading_title">#451A03</color>
+    <color name="loading_message">#92400E</color>
+    <color name="loading_stage">#B45309</color>
+    <color name="loading_spinner">#F59E0B</color>
+    <color name="loading_spinner_track">#FDE68A</color>
 
-    <!-- Exit confirmation dialog (light green) -->
-    <color name="exit_scrim">#5C064E3B</color>
-    <color name="exit_surface">#F3FCF6</color>
-    <color name="exit_surface_end">#E1F6E9</color>
-    <color name="exit_border">#B8E7CC</color>
-    <color name="exit_title">#0B7A57</color>
-    <color name="exit_message">#3F6F5D</color>
-    <color name="exit_rate_bg">#10B981</color>
-    <color name="exit_rate_bg_pressed">#059669</color>
-    <color name="exit_rate_text">#FFFFFF</color>
+    <!-- Exit confirmation dialog (amber) -->
+    <color name="exit_scrim">#5C451A03</color>
+    <color name="exit_surface">#FFFFFDF7</color>
+    <color name="exit_surface_end">#FFFEF3C6</color>
+    <color name="exit_border">#FCD34D</color>
+    <color name="exit_title">#451A03</color>
+    <color name="exit_message">#78350F</color>
+    <color name="exit_rate_bg">#F59E0B</color>
+    <color name="exit_rate_bg_pressed">#D97706</color>
+    <color name="exit_rate_text">#451A03</color>
     <color name="exit_neutral_bg">#FFFFFF</color>
-    <color name="exit_neutral_border">#CBEBD8</color>
-    <color name="exit_cancel_text">#0F766E</color>
+    <color name="exit_neutral_border">#FDE68A</color>
+    <color name="exit_cancel_text">#92400E</color>
     <color name="exit_quit_bg">#FEE2E2</color>
     <color name="exit_quit_bg_pressed">#FECACA</color>
     <color name="exit_quit_text">#B91C1C</color>
@@ -53,22 +53,22 @@
     <color name="error_icon">#B45309</color>
     <color name="error_title">#7C2D12</color>
     <color name="error_message">#78574A</color>
-    <color name="retry_button_bg">#047857</color>
-    <color name="retry_button_bg_pressed">#065F46</color>
+    <color name="retry_button_bg">#D97706</color>
+    <color name="retry_button_bg_pressed">#92400E</color>
     <color name="retry_button_text">#FFFFFF</color>
 
     <!-- System chrome -->
-    <color name="system_bar">#FFFFFFFF</color>
-    <color name="webview_background">#FFFFFFFF</color>
+    <color name="system_bar">#FFFFFDF7</color>
+    <color name="webview_background">#FFFFFDF7</color>
 
     <!-- Native ad plate -->
-    <color name="native_ad_surface">#FFFFFFFF</color>
-    <color name="native_ad_border">#B8E7CC</color>
+    <color name="native_ad_surface">#FFFFFDF7</color>
+    <color name="native_ad_border">#FCD34D</color>
 
-    <!-- App theme colors -->
-    <color name="primary">#0E9F6E</color>
-    <color name="primary_dark">#046C4E</color>
-    <color name="accent">#10B981</color>
-    <color name="background">#0F172A</color>
-    <color name="surface">#1E293B</color>
+    <!-- App theme colors – amber -->
+    <color name="primary">#F59E0B</color>
+    <color name="primary_dark">#D97706</color>
+    <color name="accent">#FBBF24</color>
+    <color name="background">#FFFFFDF7</color>
+    <color name="surface">#FFFFFF</color>
 </resources>

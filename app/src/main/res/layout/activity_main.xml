@@ -6,7 +6,7 @@
               local HTTP server. It is attached from the very first frame so
               Chromium can warm up (RendererPriorityPolicy LOW) while the
               native loading plate is still on screen.
-  Overlay  -> native loading screen (green plate + Vazirmatn + RTL) which is
+  Overlay  -> native loading screen (amber warm #FFFDF7 + Vazirmatn + RTL) which is
               removed only after server + WebView + WebApp readiness.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -80,12 +80,12 @@
         </FrameLayout>
     </com.google.android.material.card.MaterialCardView>
 
-    <!-- Native loading screen: light green / green plate plate theme, RTL. -->
+    <!-- Native loading screen: warm amber #FFFDF7 palette, RTL, matching game -->
     <FrameLayout
         android:id="@+id/loadingOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/white"
+        android:background="@color/loading_background_top"
         android:clickable="true"
         android:focusable="true"
         android:visibility="visible">
@@ -102,7 +102,7 @@
             android:paddingEnd="32dp">
 
             <!-- ================= Animated loading artwork =================
-                 White canvas, green artwork: the logo lands with a soft
+                 Warm #FFFDF7 canvas, amber artwork: the logo lands with a soft
                  overshoot, the title shimmers, and a slim progress line slides
                  under the copy. No circles, no spinning ring. -->
             <ImageView
@@ -114,7 +114,7 @@
                 android:scaleType="fitCenter"
                 android:src="@drawable/logo_labzband" />
 
-            <com.emochi.quickgames.ShimmerTextView
+            <com.chistan.quickgames.ShimmerTextView
                 android:id="@+id/loadingTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -144,7 +144,7 @@
                 android:text="@string/loading_message"
                 android:textAppearance="@style/TextAppearance.LoadingMessage" />
 
-            <com.emochi.quickgames.LoadingBarView
+            <com.chistan.quickgames.LoadingBarView
                 android:id="@+id/loadingBar"
                 android:layout_width="148dp"
                 android:layout_height="4dp"
@@ -152,7 +152,7 @@
 
         </LinearLayout>
 
-        <!-- Credit, pinned to the bottom of the loading canvas -->
+        <!-- Credit removed per product request (previously A Game By BalochAfzar) -->
         <TextView
             android:id="@+id/loadingCredit"
             android:layout_width="match_parent"
@@ -163,7 +163,9 @@
             android:gravity="center"
             android:letterSpacing="0.06"
             android:text="@string/loading_credit"
-            android:textAppearance="@style/TextAppearance.LoadingCredit" />
+            android:textAppearance="@style/TextAppearance.LoadingCredit"
+            android:visibility="gone"
+            tools:visibility="gone" />
 
         <!-- Error / retry state replaces the plate content when booting fails -->
         <LinearLayout

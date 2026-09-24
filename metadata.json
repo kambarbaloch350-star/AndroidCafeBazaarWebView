@@ -1,6 +1,6 @@
 {
-  "name": "QuickGames WebApp Container",
-  "description": "Native Android container for heavy local WebApps: embedded loopback HTTP server -> WebView (assets/web/index.html), Tapsell advertising, Najva push notifications and CafeBazaar in-app billing.",
+  "name": "لبزبند WebApp Container",
+  "description": "Native Android container for heavy local WebApps: embedded loopback HTTP server -> WebView (assets/web/index.html), Tapsell advertising, Pushfa push notifications and CafeBazaar in-app billing.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

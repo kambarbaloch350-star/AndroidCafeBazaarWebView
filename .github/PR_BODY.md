@@ -7,7 +7,7 @@ hardened billing/ad layer.
 
 Architecture (fixed, as requested): **Android App → local HTTP server → WebView
 → `assets/web/index.html`**. No advertising SDK identifier ever crosses the JS
-bridge; Adivery is gone, Tapsell and Najva are 100% native.
+bridge; Adivery is gone, Tapsell and Pushfa are 100% native.
 
 ### 1. Loading screen — white canvas, green artwork, ~3 s
 
@@ -97,7 +97,7 @@ working reference handler is implemented in the bundled demo.
 * The bundled WebApp is still the placeholder demo (the game's own `index.html`,
   JS and CSS are supplied by the product owner). The demo implements the same
   contract, which is what the harness and the emulator run against.
-* Tapsell/Najva keys are injected from repository secrets at build time and are
+* Tapsell/Pushfa keys are injected from repository secrets at build time and are
   never logged, shipped to JS, or embedded in the repo.
 
 ### Test plan

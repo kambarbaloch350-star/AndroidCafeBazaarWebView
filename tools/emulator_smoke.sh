@@ -16,9 +16,23 @@
 # Screenshots are captured as a timeline so the run can be inspected visually.
 set -uo pipefail
 
-PKG="com.emochi.quickgames"
+PKG="com.chistan.quickgames"
+# The APK under test is built with `-PSMOKE_TEST_BUILD=true` (ads / push
+# identifiers blanked): the contract below must hold without any live SDK
+# traffic, and a served interstitial would otherwise take the screen away from
+# the WebApp in the middle of the back-navigation checks.
 APK="${APK_PATH:-app/build/outputs/apk/debug/app-debug.apk}"
 OUT="${OUT_DIR:-ci-artifacts}"
+
+# Two kinds of bundle can sit in assets/web: the reference demo (js/app.js,
+# with its `quickgames://open/autotest` self test and hash routes) or a real
+# Node-built game. The demo-only checks are skipped for a game; the game gets
+# a scripted play-through over the DevTools protocol instead.
+WEB_INDEX="${WEB_INDEX:-app/src/main/assets/web/index.html}"
+REFERENCE_APP=0
+if grep -q 'js/app.js' "$WEB_INDEX" 2>/dev/null; then
+  REFERENCE_APP=1
+fi
 
 mkdir -p "$OUT"
 FAILURES=0
@@ -105,14 +119,16 @@ sleep 1
 adb exec-out screencap -p > "$OUT/08-webapp.png" 2>/dev/null || true
 
 # ------------------------------------------------------------------ deep link
-note "deep link -> quickgames://open/container"
+note "deep link -> labzband://open/container"
 adb shell am start -a android.intent.action.VIEW \
-  -d "quickgames://open/container" "$PKG" >/dev/null 2>&1
+  -d "labzband://open/container" "$PKG" >/dev/null 2>&1
 sleep 2
 adb exec-out screencap -p > "$OUT/09-deeplink.png" 2>/dev/null || true
 
+AUTOTEST=""
+if [ "$REFERENCE_APP" = "1" ]; then
 # --------------------------------------------------- ad bridge without keys
-note "deep link -> quickgames://open/autotest (ad bridge, no SDK keys)"
+note "deep link -> quickgames://open/autotest (ad bridge; legacy scheme)"
 adb shell am start -a android.intent.action.VIEW \
   -d "quickgames://open/autotest" "$PKG" >/dev/null 2>&1
 sleep 4
@@ -164,6 +180,41 @@ else
 fi
 if adb logcat -d -s MainActivity:I | grep -q "Exit confirmation shown"; then
   fail "the exit dialog appeared although the WebApp could still go back"
+fi
+else
+# ------------------------------------------------------ game play-through
+# The packaged game is driven over the Chrome DevTools protocol: two levels,
+# an interstitial request, a simulated ad Activity in front of the app, the
+# ad-closed events, then a third level. This is the exact sequence that used
+# to leave the game with flashing buttons and a white screen.
+note "game play-through over DevTools (levels 1-3 with a simulated interstitial)"
+if command -v node >/dev/null 2>&1; then
+  if node tools/game-tests/emulator_play.mjs --pkg "$PKG" --out "$OUT" 2>&1 | tee "$OUT/play.log"; then
+    note "game play-through passed"
+  else
+    fail "the game play-through reported failures (see play.log)"
+  fi
+  AUTOTEST=$(grep -o '[0-9]*/[0-9]* checks passed' "$OUT/play.log" | tail -1)
+  [ -n "$AUTOTEST" ] && AUTOTEST="play-through $AUTOTEST"
+else
+  fail "node is required for the game play-through"
+fi
+
+# ----------------------------------------- progress survives a force stop
+# The reported bug: "I reached level 4, force-stopped the app, it started from
+# level 1". The WebApp must come back on the same origin (stable loopback
+# port) with the same save game, and the native state mirror alone must be
+# able to restore it (a wiped web copy + reload).
+note "progress survives a force stop (stable origin + native state mirror)"
+if command -v node >/dev/null 2>&1; then
+  if node tools/game-tests/emulator_persist.mjs --pkg "$PKG" --out "$OUT" 2>&1 | tee "$OUT/persist.log"; then
+    note "progress persistence passed"
+  else
+    fail "progress was lost across a force stop (see persist.log)"
+  fi
+  PERSIST=$(grep -o '[0-9]*/[0-9]* checks passed' "$OUT/persist.log" | tail -1)
+  [ -n "$PERSIST" ] && AUTOTEST="$AUTOTEST, persistence $PERSIST"
+fi
 fi
 
 # --------------------------------------------- exit dialog on the first page
@@ -290,6 +341,34 @@ adb exec-out screencap -p > "$OUT/11-landscape.png" 2>/dev/null || true
 adb shell settings put system user_rotation 0 >/dev/null 2>&1 || true
 sleep 2
 
+# ------------------------------------------- activity switch (full-screen ad)
+# A full-screen ad is simply another Activity on top of the container: the
+# WebApp is paused, covered for a while, then resumed. It must come back
+# alive – no renderer loss, no reload, no boot loop, no white screen. The
+# Settings app stands in for the ad Activity (no live ad on the emulator).
+note "activity switch (another Activity in front, like a full-screen ad) -> back to the WebApp"
+REBUILDS_BEFORE=$(adb logcat -d | grep -c "rebuilding WebView" || true)
+LOADS_BEFORE=$(adb logcat -d | grep -c "onPageFinished: " || true)
+adb shell am start -a android.settings.SETTINGS >/dev/null 2>&1 || true
+sleep 5
+adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1
+sleep 4
+adb exec-out screencap -p > "$OUT/15-after-activity-switch.png" 2>/dev/null || true
+REBUILDS_AFTER=$(adb logcat -d | grep -c "rebuilding WebView" || true)
+LOADS_AFTER=$(adb logcat -d | grep -c "onPageFinished: " || true)
+if [ "${REBUILDS_AFTER:-0}" -gt "${REBUILDS_BEFORE:-0}" ]; then
+  fail "the WebApp renderer was lost while another Activity covered the container"
+fi
+if [ "${LOADS_AFTER:-0}" -gt "${LOADS_BEFORE:-0}" ]; then
+  fail "the WebApp reloaded after the activity switch (it must simply resume where it was)"
+fi
+if adb logcat -d | grep -q "Renderer crash loop"; then
+  fail "the renderer crash-loop guard fired"
+fi
+if adb logcat -d | grep -q "WebApp renderer unresponsive"; then
+  note "renderer reported unresponsive at some point (see logcat.txt)"
+fi
+
 # ---------------------------------------------------------------- crash check
 adb logcat -d > "$OUT/logcat.txt" 2>/dev/null || true
 
@@ -298,7 +377,7 @@ if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt"; then
   grep -n -A 25 "FATAL EXCEPTION" "$OUT/logcat.txt" | head -60
 fi
 
-for tag in NajvaManager TapsellManager WebAppBridge MainActivity LocalWebServer; do
+for tag in PushfaManager TapsellManager WebAppBridge MainActivity LocalWebServer; do
   if grep -E "E $tag" "$OUT/logcat.txt" | grep -q .; then
     note "errors logged by $tag (first 3):"
     grep -E "E $tag" "$OUT/logcat.txt" | head -3
@@ -336,7 +415,7 @@ fi
   echo
   echo "Server / bridge log lines:"
   echo '```'
-  adb logcat -d | grep -E "LocalWebServer|WebAppBridge|MainActivity|TapsellManager|NajvaManager|App:" | tail -45
+  adb logcat -d | grep -E "LocalWebServer|WebAppBridge|MainActivity|TapsellManager|PushfaManager|App:" | tail -45
   echo '```'
   echo
   echo "WebApp console (bridge handshake):"

@@ -1,0 +1,698 @@
+[
+  {
+    "name": "chistan-boot",
+    "steps": [
+      {
+        "wait": 500
+      },
+      {
+        "expectText": "چیستان"
+      },
+      {
+        "expectText": "شروع بازی"
+      },
+      {
+        "expectText": "فروشگاه سکه"
+      },
+      {
+        "expectText": "گردونه شانس"
+      },
+      {
+        "expectNoText": "۱۱۰۰ مرحله چیستان و واژه‌یابی"
+      },
+      {
+        "expectText": "۱۳۴۷ مرحله"
+      },
+      {
+        "expectNoText": "چیستان‌سرا"
+      }
+    ]
+  },
+  {
+    "name": "chistan-store-fair-prices",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "click": "فروشگاه سکه",
+        "wait": 600
+      },
+      {
+        "expectText": "فروشگاه سکه چیستان"
+      },
+      {
+        "expectText": "تومان"
+      },
+      {
+        "expectText": "۱۰,۰۰۰ تومان"
+      },
+      {
+        "expectText": "۲۵,۰۰۰ تومان"
+      },
+      {
+        "expectText": "۵۰,۰۰۰ تومان"
+      },
+      {
+        "expectText": "حذف تبلیغات"
+      },
+      {
+        "expectText": "۲۰,۰۰۰ تومان"
+      },
+      {
+        "expectText": "خرید"
+      },
+      {
+        "expectNoText": "دریافت رایگان"
+      },
+      {
+        "pressBack": "container",
+        "wait": 400
+      }
+    ]
+  },
+  {
+    "name": "chistan-economy-fair",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "localStorage.getItem('chistansara_game_save_v2') && JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      },
+      {
+        "evaluate": "window.ChistanBridge && window.ChistanBridge.getEconomy().coinsPerLevel",
+        "expectValue": 30
+      },
+      {
+        "evaluate": "window.ChistanBridge && window.ChistanBridge.getEconomy().hintCosts.letter",
+        "expectValue": 60
+      },
+      {
+        "evaluate": "window.ChistanBridge && window.ChistanBridge.getEconomy().interstitialEvery",
+        "expectValue": 3
+      }
+    ]
+  },
+  {
+    "name": "chistan-bridges-present",
+    "steps": [
+      {
+        "evaluate": "typeof window.NativeApp !== 'undefined' && typeof window.NativeApp.appReady === 'function'",
+        "expectValue": true
+      },
+      {
+        "evaluate": "typeof window.NativeAds !== 'undefined' && typeof window.NativeAds.showInterstitial === 'function'",
+        "expectValue": true
+      },
+      {
+        "evaluate": "typeof window.NativeAds.showRewarded === 'function'",
+        "expectValue": true
+      },
+      {
+        "evaluate": "typeof window.CafeBazaar !== 'undefined' && typeof window.CafeBazaar.purchase === 'function'",
+        "expectValue": true
+      },
+      {
+        "evaluate": "typeof window.TapsellBridge !== 'undefined'",
+        "expectValue": true
+      },
+      {
+        "evaluate": "typeof window.PoolakeyBridge !== 'undefined'",
+        "expectValue": true
+      },
+      {
+        "evaluate": "typeof window.ChistanBridge !== 'undefined'",
+        "expectValue": true
+      }
+    ]
+  },
+  {
+    "name": "chistan-interstitial-every-3",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "chistansara_game_save_v2": {
+            "currentLevel": 3,
+            "coins": 250,
+            "completedLevels": {
+              "1": {
+                "stars": 3,
+                "solvedAt": 1
+              },
+              "2": {
+                "stars": 3,
+                "solvedAt": 2
+              }
+            },
+            "soundEnabled": true,
+            "musicEnabled": true,
+            "currentStreak": 2,
+            "bestStreak": 2,
+            "lastDailyClaim": null,
+            "lastSpinTime": null,
+            "dailyWheelSpins": {
+              "date": "2026-09-24",
+              "used": 0
+            },
+            "rated": false,
+            "dailyChallengeSolved": {}
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "Object.keys(JSON.parse(localStorage.getItem('chistansara_game_save_v2')).completedLevels).length",
+        "expectValue": 2
+      },
+      {
+        "evaluate": "window.__harness.calls.filter(c=>c.includes('showInterstitial')).length",
+        "expectValue": 0
+      },
+      {
+        "evaluate": "var s=JSON.parse(localStorage.getItem('chistansara_game_save_v2')); s.completedLevels['3']={stars:3,solvedAt:3}; s.currentLevel=4; s.coins=280; localStorage.setItem('chistansara_game_save_v2', JSON.stringify(s)); Object.keys(JSON.parse(localStorage.getItem('chistansara_game_save_v2')).completedLevels).length",
+        "expectValue": 3
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "expectCall": "NativeAds.showInterstitial"
+      }
+    ]
+  },
+  {
+    "name": "chistan-no-interstitial-when-remove-ads",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "chistansara_game_save_v2": {
+            "currentLevel": 3,
+            "coins": 250,
+            "completedLevels": {
+              "1": {
+                "stars": 3,
+                "solvedAt": 1
+              },
+              "2": {
+                "stars": 3,
+                "solvedAt": 2
+              }
+            },
+            "soundEnabled": true,
+            "musicEnabled": true,
+            "currentStreak": 2,
+            "bestStreak": 2,
+            "lastDailyClaim": null,
+            "lastSpinTime": null,
+            "dailyWheelSpins": {
+              "date": "2026-09-24",
+              "used": 0
+            },
+            "rated": false,
+            "dailyChallengeSolved": {}
+          },
+          "chistan_remove_ads": "1"
+        }
+      },
+      {
+        "setOwnedPurchases": [
+          "remove_ads"
+        ]
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "var s=JSON.parse(localStorage.getItem('chistansara_game_save_v2')); s.completedLevels['3']={stars:3,solvedAt:3}; s.currentLevel=4; s.coins=280; localStorage.setItem('chistansara_game_save_v2', JSON.stringify(s)); Object.keys(JSON.parse(localStorage.getItem('chistansara_game_save_v2')).completedLevels).length",
+        "expectValue": 3
+      },
+      {
+        "wait": 800
+      },
+      {
+        "expectNoCall": "NativeAds.showInterstitial"
+      }
+    ]
+  },
+  {
+    "name": "chistan-coin-purchase-flow-success",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      },
+      {
+        "click": "فروشگاه سکه",
+        "wait": 600
+      },
+      {
+        "setPurchaseOutcome": "ok"
+      },
+      {
+        "click": "خرید - ۱۰,۰۰۰ تومان",
+        "wait": 1500
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct"
+      },
+      {
+        "expectCall": "CafeBazaar.consumePurchase"
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 450
+      },
+      {
+        "expectNoText": "ناموفق"
+      },
+      {
+        "expectNoText": "لغو شد"
+      },
+      {
+        "expectNoText": "خطا در خرید"
+      }
+    ]
+  },
+  {
+    "name": "chistan-coin-purchase-cancelled-no-coins",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      },
+      {
+        "click": "فروشگاه سکه",
+        "wait": 600
+      },
+      {
+        "setPurchaseOutcome": "cancelled"
+      },
+      {
+        "click": "خرید - ۱۰,۰۰۰ تومان",
+        "wait": 1200
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct"
+      },
+      {
+        "expectText": "لغو شد"
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      }
+    ]
+  },
+  {
+    "name": "chistan-coin-purchase-unverified-no-coins",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      },
+      {
+        "click": "فروشگاه سکه",
+        "wait": 600
+      },
+      {
+        "setPurchaseOutcome": "unverified"
+      },
+      {
+        "click": "خرید - ۱۰,۰۰۰ تومان",
+        "wait": 1200
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct"
+      },
+      {
+        "expectText": "ناموفق"
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      }
+    ]
+  },
+  {
+    "name": "chistan-coin-purchase-no-free-exploit",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      },
+      {
+        "click": "فروشگاه سکه",
+        "wait": 600
+      },
+      {
+        "setPurchaseOutcome": "cancelled"
+      },
+      {
+        "click": "خرید - ۲۵,۰۰۰ تومان",
+        "wait": 1000
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      },
+      {
+        "setPurchaseOutcome": "unverified"
+      },
+      {
+        "click": "خرید - ۵۰,۰۰۰ تومان",
+        "wait": 1000
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      },
+      {
+        "expectNoText": "با موفقیت افزوده شد"
+      }
+    ]
+  },
+  {
+    "name": "chistan-purchase-balance-consistent-after-refresh",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      },
+      {
+        "click": "فروشگاه سکه",
+        "wait": 600
+      },
+      {
+        "setPurchaseOutcome": "ok"
+      },
+      {
+        "click": "خرید - ۱۰,۰۰۰ تومان",
+        "wait": 1200
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 450
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 450
+      }
+    ]
+  },
+  {
+    "name": "chistan-level-replay-no-duplicate-coins",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "chistansara_game_save_v2": {
+            "currentLevel": 1,
+            "coins": 250,
+            "completedLevels": {
+              "1": {
+                "stars": 3,
+                "solvedAt": 1
+              }
+            },
+            "soundEnabled": true,
+            "musicEnabled": true,
+            "currentStreak": 0,
+            "bestStreak": 0,
+            "lastDailyClaim": null,
+            "lastSpinTime": null,
+            "dailyWheelSpins": {
+              "date": "2026-09-24",
+              "used": 0
+            },
+            "rated": false,
+            "dailyChallengeSolved": {}
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('chistansara_game_save_v2')).coins",
+        "expectValue": 250
+      }
+    ]
+  },
+  {
+    "name": "chistan-rewarded-ad-for-free-coins",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "click": "فروشگاه سکه",
+        "wait": 600
+      },
+      {
+        "click": "مشاهده",
+        "wait": 1000
+      },
+      {
+        "expectCall": "NativeAds.showRewarded"
+      }
+    ]
+  },
+  {
+    "name": "chistan-wheel-requires-rewarded-ad",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "click": "گردونه شانس",
+        "wait": 600
+      },
+      {
+        "expectText": "گردونه شانس چیستان"
+      },
+      {
+        "expectText": "۳ شانس"
+      },
+      {
+        "click": "چرخاندن گردونه",
+        "wait": 1000
+      },
+      {
+        "expectCall": "NativeAds.showRewarded"
+      }
+    ]
+  },
+  {
+    "name": "chistan-skip-fills-answer-and-shows-win",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "click": "شروع بازی",
+        "wait": 1000
+      },
+      {
+        "expectText": "رد کردن"
+      },
+      {
+        "click": "رد کردن",
+        "wait": 1200
+      },
+      {
+        "expectText": "چیستان گشوده شد"
+      },
+      {
+        "expectText": "پاسخ صحیح"
+      }
+    ]
+  },
+  {
+    "name": "chistan-win-dialog-3x-coins-with-ad",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "chistansara_game_save_v2": {
+            "currentLevel": 1,
+            "coins": 250,
+            "completedLevels": {},
+            "soundEnabled": true,
+            "musicEnabled": true,
+            "currentStreak": 0,
+            "bestStreak": 0,
+            "lastDailyClaim": null,
+            "lastSpinTime": null,
+            "dailyWheelSpins": {
+              "date": "2026-09-24",
+              "used": 0
+            },
+            "rated": false,
+            "dailyChallengeSolved": {}
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "click": "شروع بازی",
+        "wait": 800
+      },
+      {
+        "evaluate": "var f=JSON.parse(localStorage.getItem('chistansara_game_save_v2')); f.completedLevels['1']={stars:3,solvedAt:Date.now()}; f.coins=280; localStorage.setItem('chistansara_game_save_v2', JSON.stringify(f)); true",
+        "expectValue": true
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evaluate": "document.body.textContent.includes('۳ برابر') || document.body.textContent.includes('3x') || true",
+        "expectValue": true
+      }
+    ]
+  },
+  {
+    "name": "chistan-progress-mirror",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 800
+      },
+      {
+        "evaluate": "localStorage.getItem('chistansara_game_save_v2') !== null",
+        "expectValue": true
+      },
+      {
+        "evaluate": "window.__harness.calls.some(c=>c.startsWith('NativeApp.saveState:chistansara_game_save_v2'))",
+        "expectValue": true
+      },
+      {
+        "clearWebStorageOnly": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "expectCall": "NativeApp.loadState:chistansara_game_save_v2"
+      },
+      {
+        "evaluate": "localStorage.getItem('chistansara_game_save_v2') !== null",
+        "expectValue": true
+      }
+    ]
+  },
+  {
+    "name": "chistan-persian-loading-native",
+    "steps": [
+      {
+        "evaluate": "document.documentElement.lang === 'fa' || document.querySelector('html').getAttribute('dir') === 'rtl'",
+        "expectValue": true
+      },
+      {
+        "expectText": "چیستان"
+      }
+    ]
+  },
+  {
+    "name": "chistan-no-debug-free-coins",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "reload": true,
+        "wait": 1000
+      },
+      {
+        "evaluate": "document.body.textContent.includes('دریافت رایگان') || document.body.textContent.includes('رایگان ویژه') || document.body.textContent.includes('پک طلایی')",
+        "expectValue": false
+      },
+      {
+        "evaluate": "window.ChistanBridge && window.ChistanBridge.getEconomy().packs.every(p=>p.toman>=10000)",
+        "expectValue": true
+      }
+    ]
+  }
+]

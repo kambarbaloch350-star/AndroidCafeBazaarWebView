@@ -6,15 +6,28 @@ plugins {
 }
 
 // ---------------------------------------------------------------------------
+// Firebase (transport used by the Pushfa push SDK).
+//
+// Pushfa delivers through Firebase Cloud Messaging. Drop the `google-services.json`
+// of the Firebase project whose *Service Account* is pasted into the Pushfa panel
+// next to this file and the Google Services plugin wires it in automatically.
+// Without the file the plugin is skipped, the build still succeeds and `App.kt`
+// falls back to the FIREBASE_* values below (or leaves push disabled).
+// ---------------------------------------------------------------------------
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
+// ---------------------------------------------------------------------------
 // Native configuration resolver.
 //
-// Advertising (Tapsell) and push (Najva) identifiers live **only** on the
+// Advertising (Tapsell) and push (Pushfa) identifiers live **only** on the
 // native side. They are resolved, in order of precedence, from:
 //
 //   1. Gradle CLI properties      -> ./gradlew assembleRelease -PTAPSELL_APP_KEY=...
-//   2. gradle.properties          -> TAPSELL_APP_KEY=...
-//   3. local.properties           -> TAPSELL_APP_KEY=...   (never committed)
-//   4. Environment variables      -> TAPSELL_APP_KEY=...
+//   2. local.properties           -> TAPSELL_APP_KEY=...   (never committed; CI writes secrets here)
+//   3. Environment variables      -> TAPSELL_APP_KEY=...
+//   4. gradle.properties          -> TAPSELL_APP_KEY=...   (committed defaults of this app)
 //
 // Nothing is ever shipped to the WebApp: the JavaScript layer only ever sees
 // the generic bridge API (NativeAds.showInterstitial(), ...).
@@ -27,24 +40,60 @@ val localProperties = Properties().apply {
 }
 
 fun cfg(key: String, default: String = ""): String {
-    val fromCli = (project.findProperty(key) as? String)?.trim()?.takeIf { it.isNotEmpty() }
-    val fromLocal = localProperties.getProperty(key)?.trim()?.takeIf { it.isNotEmpty() }
-    val fromEnv = System.getenv(key)?.trim()?.takeIf { it.isNotEmpty() }
-    return fromCli ?: fromLocal ?: fromEnv ?: default
+    fun String?.clean(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
+    val fromCli = gradle.startParameter.projectProperties[key].clean()
+    val fromLocal = localProperties.getProperty(key).clean()
+    val fromEnv = System.getenv(key).clean()
+    val fromGradleProperties = (project.findProperty(key) as? String).clean()
+    return fromCli ?: fromLocal ?: fromEnv ?: fromGradleProperties ?: default
 }
 
 fun quoted(value: String): String = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
+// CI's emulator smoke test verifies the *container contract* (boot, bridge,
+// deep links, back navigation, exit dialog). It must not depend on live ad or
+// push traffic from a foreign data-centre IP, so `-PSMOKE_TEST_BUILD=true`
+// blanks the advertising / push identifiers: the SDKs stay packaged, the
+// bridge answers NOT_CONFIGURED deterministically. Never used for shipping.
+val smokeTestBuild: Boolean =
+    gradle.startParameter.projectProperties["SMOKE_TEST_BUILD"]?.equals("true", ignoreCase = true) == true
+
+// `-PSMOKE_TEST_ADS=true` (only honoured together with SMOKE_TEST_BUILD) keeps
+// Tapsell on its *official test* app key and zones instead of blanking them:
+// the CI "ad lab" job plays the game through a real interstitial round trip
+// on the emulator. Test creatives, no revenue, no production identifiers.
+val smokeTestAds: Boolean = smokeTestBuild &&
+    gradle.startParameter.projectProperties["SMOKE_TEST_ADS"]?.equals("true", ignoreCase = true) == true
+
+val tapsellTestKeys = mapOf(
+    "TAPSELL_APP_KEY" to "alsoatsrtrotpqacegkehkaiieckldhrgsbspqtgqnbrrfccrtbdomgjtahflchkqtqosa",
+    "TAPSELL_ZONE_INTERSTITIAL" to "5cfaa942e8d17f0001ffb292",
+    "TAPSELL_ZONE_REWARDED" to "5cfaa802e8d17f0001ffb28e",
+    "TAPSELL_ZONE_NATIVE" to "5cfaa9deaede570001d5553a"
+)
+
+fun sdkKey(key: String): String = when {
+    smokeTestAds && key in tapsellTestKeys -> tapsellTestKeys.getValue(key)
+    smokeTestBuild -> ""
+    else -> cfg(key)
+}
+
 android {
-    namespace = "com.emochi.quickgames"
-    compileSdk = 34
+    namespace = "com.chistan.quickgames"
+    // Pushfa 2.x (androidx.core 1.15 / WorkManager 2.10 underneath) must be
+    // compiled against API 35. targetSdk deliberately stays at 34: targeting 35
+    // would force edge-to-edge on Android 15 and change the system-bar layout
+    // the container relies on.
+    compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.emochi.quickgames"
+        applicationId = "com.chistan.quickgames"
         minSdk = 24
         targetSdk = 34
+        // First CafeBazaar release of چیستان. Bump versionCode by one for every
+        // upload to the CafeBazaar panel (it must always increase).
         versionCode = 2
-        versionName = "2.0.0"
+        versionName = "2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -53,14 +102,18 @@ android {
         }
 
         // ---- Tapsell (native advertising) - never exposed to the WebApp ----
-        buildConfigField("String", "TAPSELL_APP_KEY", quoted(cfg("TAPSELL_APP_KEY")))
-        buildConfigField("String", "TAPSELL_ZONE_INTERSTITIAL", quoted(cfg("TAPSELL_ZONE_INTERSTITIAL")))
-        buildConfigField("String", "TAPSELL_ZONE_REWARDED", quoted(cfg("TAPSELL_ZONE_REWARDED")))
-        buildConfigField("String", "TAPSELL_ZONE_NATIVE", quoted(cfg("TAPSELL_ZONE_NATIVE")))
+        // True only for the CI emulator builds (blank identifiers / test ads):
+        // UI that would get in the way of an unattended run (the WebView
+        // update advice) is skipped when it is set.
+        buildConfigField("boolean", "SMOKE_TEST_BUILD", smokeTestBuild.toString())
+        buildConfigField("boolean", "SMOKE_TEST_ADS", smokeTestAds.toString())
+        buildConfigField("String", "TAPSELL_APP_KEY", quoted(sdkKey("TAPSELL_APP_KEY")))
+        buildConfigField("String", "TAPSELL_ZONE_INTERSTITIAL", quoted(sdkKey("TAPSELL_ZONE_INTERSTITIAL")))
+        buildConfigField("String", "TAPSELL_ZONE_REWARDED", quoted(sdkKey("TAPSELL_ZONE_REWARDED")))
+        buildConfigField("String", "TAPSELL_ZONE_NATIVE", quoted(sdkKey("TAPSELL_ZONE_NATIVE")))
 
-        // ---- Najva (native push) - never exposed to the WebApp ----
-        manifestPlaceholders["najvaApiKey"] = cfg("NAJVA_API_KEY")
-        manifestPlaceholders["najvaWebsiteId"] = cfg("NAJVA_WEBSITE_ID")
+        // ---- Pushfa (native push) - public key only, never the private one ----
+        buildConfigField("String", "PUSHFA_API_PUBLIC_KEY", quoted(sdkKey("PUSHFA_API_PUBLIC_KEY")))
 
         // ---- Firebase (optional: allows FCM to run without google-services.json) ----
         buildConfigField("String", "FIREBASE_APP_ID", quoted(cfg("FIREBASE_APP_ID")))
@@ -130,7 +183,9 @@ android {
 
 dependencies {
     // Kotlin BOM: keeps every transitive stdlib/coroutines version aligned.
-    implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.1.10"))
+    // 2.2.20 matches the stdlib the Pushfa SDK is compiled against; the 2.1
+    // compiler reads 2.2 library metadata (Kotlin guarantees N+1 compatibility).
+    implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.2.20"))
     implementation("org.jetbrains.kotlin:kotlin-stdlib")
 
     // Official CafeBazaar In-App Billing SDK (Poolakey)
@@ -140,18 +195,21 @@ dependencies {
     // https://docs.tapsell.ir/en/plus-sdk/android/main/
     implementation("ir.tapsell.plus:tapsell-plus-sdk-android:2.3.3")
 
-    // Najva push notification SDK (native system notifications only)
-    // https://central.sonatype.com/artifact/com.najva/sdk
-    implementation("com.najva:sdk:1.8.4")
-    implementation("com.google.firebase:firebase-messaging:23.3.1")
+    // Pushfa push notification SDK (native system notifications only)
+    // https://github.com/pushfa/pushfa-android-sdk – Maven Central artifact.
+    // It declares firebase-messaging as an `api` dependency; the explicit line
+    // below pins the same version so App.kt can bootstrap Firebase itself.
+    implementation("com.pushfa:pushfa-android-sdk:2.0.4")
+    implementation("com.google.firebase:firebase-messaging:24.1.2")
 
     // Tests
     testImplementation("junit:junit:4.13.2")
 
     // AndroidX & UI
-    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.webkit:webkit:1.11.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
 }

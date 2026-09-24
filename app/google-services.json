@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "930784178753",
+    "project_id": "ninemanhills",
+    "storage_bucket": "ninemanhills.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:930784178753:android:f0b025aab54c3da328ccc0",
+        "android_client_info": {
+          "package_name": "com.chistan.quickgames"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYjqanBI8lmzef6_a57okQw6s02eeNTDY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:930784178753:android:a6a38d525cb85fbe28ccc0",
+        "android_client_info": {
+          "package_name": "com.nomohre.quickgames"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYjqanBI8lmzef6_a57okQw6s02eeNTDY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:930784178753:android:f0b025aab54c3da328ccc0",
+        "android_client_info": {
+          "package_name": "com.labzband.balochafzar"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYjqanBI8lmzef6_a57okQw6s02eeNTDY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

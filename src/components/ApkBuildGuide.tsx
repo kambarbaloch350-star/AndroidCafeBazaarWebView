@@ -18,20 +18,19 @@ export function ApkBuildGuide({
     {
       title: '۱. دریافت پروژه',
       body: 'روی «Export ZIP» بزنید یا مخزن را clone کنید. پوشه app/src/main/assets/web همان WebApp شماست.',
-      code: 'unzip QuickGames-Android-Container.zip && cd AndroidCafeBazaarWebView'
+      code: 'unzip Labzband-Android-Container.zip && cd AndroidCafeBazaarWebView'
     },
     {
       title: '۲. تنظیم شناسه‌های بومی',
       body:
-        'شناسه‌های Tapsell و Najva فقط در local.properties قرار می‌گیرند (هرگز داخل کد یا WebApp نمی‌روند).',
+        'شناسه‌های Tapsell و Pushfa در gradle.properties (پیش‌فرض) یا local.properties قرار می‌گیرند و هرگز به WebApp نمی‌رسند.',
       code: `# local.properties
 sdk.dir=/Users/you/Library/Android/sdk
 TAPSELL_APP_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 TAPSELL_ZONE_INTERSTITIAL=xxxxxxxxxxxxxxxxxxxx
 TAPSELL_ZONE_REWARDED=xxxxxxxxxxxxxxxxxxxx
 TAPSELL_ZONE_NATIVE=xxxxxxxxxxxxxxxxxxxx
-NAJVA_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-NAJVA_WEBSITE_ID=12345
+PUSHFA_API_PUBLIC_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 FIREBASE_APP_ID=1:1234567890:android:abcdef
 FIREBASE_API_KEY=AIza...
 FIREBASE_PROJECT_ID=your-project
@@ -61,7 +60,7 @@ NativeApp.appReady();`
       title: '۵. اجرا و پایش',
       body: 'نصب روی دستگاه و پیگیری زنجیره بوت، تبلیغات و پوش.',
       code: `adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb logcat -s MainActivity WebAppBridge LocalWebServer TapsellManager NajvaManager`
+adb logcat -s MainActivity WebAppBridge LocalWebServer TapsellManager PushfaManager`
     }
   ];
 
@@ -74,11 +73,11 @@ adb logcat -s MainActivity WebAppBridge LocalWebServer TapsellManager NajvaManag
           </div>
           <div className="flex-1">
             <h2 className="text-base font-bold text-white">
-              ساخت APK کانتینر (Tapsell + Najva + CafeBazaar)
+              ساخت APK کانتینر (Tapsell + Pushfa + CafeBazaar)
             </h2>
             <p className="text-xs text-slate-300 mt-1.5 leading-relaxed">
               پروژه آماده کامپایل است: Android 14 (API 34)، Gradle 8.5، Kotlin 2.1.10، Poolakey
-              2.2.0، Tapsell Plus 2.3.3 و Najva 1.8.4. تمام شناسه‌های تبلیغات و پوش در لایه بومی
+              2.2.0، Tapsell Plus 2.3.3 و Pushfa 2.0.4. تمام شناسه‌های تبلیغات و پوش در لایه بومی
               تزریق می‌شوند و هیچ‌کدام به WebApp ارسال نمی‌شوند.
             </p>
             <div className="flex flex-wrap gap-2 mt-3">
@@ -120,7 +119,7 @@ adb logcat -s MainActivity WebAppBridge LocalWebServer TapsellManager NajvaManag
           },
           {
             icon: <Bell className="w-4 h-4 text-indigo-400" />,
-            title: 'پوش Najva',
+            title: 'پوش Pushfa',
             body: 'اعلان سیستمی اندروید، مدیریت کانال‌ها و مجوز اندروید ۱۳، مسیر‌یابی عمیق به WebApp.'
           }
         ].map(card => (

@@ -3,62 +3,183 @@
     "name": "boot",
     "steps": [
       {
-        "wait": 800,
-        "dump": true
+        "wait": 300
+      },
+      {
+        "expectSelector": "#btn-game-play-giant"
+      },
+      {
+        "expectSelector": "#btn-mode-store"
+      },
+      {
+        "expectSelector": "#btn-mode-spin"
+      },
+      {
+        "expectSelector": "#btn-mode-settings"
+      },
+      {
+        "expectText": "لبزبند"
       }
     ]
   },
   {
-    "name": "menu-shows-remove-ads-and-spin",
-    "steps": [
-      {
-        "expectText": "حذف تبلیغات"
-      },
-      {
-        "expectText": "چرخین ات"
-      }
-    ],
-    "requiresGameBundle": true
-  },
-  {
-    "name": "spin-requires-a-completed-rewarded-ad",
+    "name": "menu-buttons-open-their-screens-and-close-again",
     "steps": [
       {
         "clearStorage": true
       },
       {
-        "reload": true,
-        "wait": 900
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
       },
       {
-        "click": "چرخین ات",
-        "wait": 600
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-mode-settings",
+        "wait": 500
+      },
+      {
+        "expectSelector": "#settings-modal-overlay"
+      },
+      {
+        "pressBack": "container",
+        "wait": 500
+      },
+      {
+        "expectBackHandled": true
+      },
+      {
+        "expectNoSelector": "#settings-modal-overlay"
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "expectSelector": "#coin-store-modal-overlay"
+      },
+      {
+        "expectSelector": "#btn-buy-pack_starter"
+      },
+      {
+        "pressBack": "container",
+        "wait": 500
+      },
+      {
+        "expectBackHandled": true
+      },
+      {
+        "expectNoSelector": "#coin-store-modal-overlay"
+      }
+    ]
+  },
+  {
+    "name": "spin-wheel-needs-a-completed-rewarded-ad",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-mode-spin",
+        "wait": 500
+      },
+      {
+        "expectSelector": "#spin-wheel-overlay"
+      },
+      {
+        "clickSelector": "#btn-spin-now",
+        "wait": 4500
       },
       {
         "expectCall": "NativeAds.showRewarded"
       },
       {
-        "expectText": "چرخین ات"
+        "expectText": "مبارک"
       }
-    ],
-    "requiresGameBundle": true
+    ]
   },
   {
-    "name": "no-free-spin-when-reward-is-denied",
+    "name": "no-free-spin-when-the-reward-is-denied",
     "steps": [
       {
         "clearStorage": true
       },
       {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
         "reload": true,
-        "wait": 900
+        "wait": 1200
       },
       {
         "setRewardGranted": false
       },
       {
-        "click": "چرخین ات",
-        "wait": 700
+        "clickSelector": "#btn-mode-spin",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-spin-now",
+        "wait": 4500
       },
       {
         "expectCall": "NativeAds.showRewarded"
@@ -66,28 +187,285 @@
       {
         "expectNoText": "مبارک"
       }
-    ],
-    "requiresGameBundle": true
+    ]
   },
   {
-    "name": "remove-ads-goes-through-cafebazaar-bridge",
+    "name": "spin-wheel-survives-an-ad-error",
     "steps": [
       {
         "clearStorage": true
       },
       {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
         "reload": true,
-        "wait": 900
+        "wait": 1200
       },
       {
-        "click": "حذف تبلیغات",
-        "wait": 700
+        "setAdsEnabled": false
       },
       {
-        "expectCall": "CafeBazaar.buyProduct:remove_ads"
+        "clickSelector": "#btn-mode-spin",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-spin-now",
+        "wait": 2500
+      },
+      {
+        "expectCall": "NativeAds.showRewarded"
+      },
+      {
+        "expectNoText": "مبارک"
+      },
+      {
+        "expectSelector": "#btn-spin-now"
+      },
+      {
+        "setAdsEnabled": true
       }
-    ],
-    "requiresGameBundle": true
+    ]
+  },
+  {
+    "name": "verified-coin-pack-purchase-credits-coins-and-consumes",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-buy-pack_starter",
+        "wait": 600
+      },
+      {
+        "clickSelector": "#btn-confirm-bazaar-pay",
+        "wait": 1500
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct:pack_starter"
+      },
+      {
+        "expectCall": "CafeBazaar.consumePurchase"
+      },
+      {
+        "expectStorage": "\"token-pack_starter\""
+      },
+      {
+        "expectStorage": "\"coins\":320"
+      }
+    ]
+  },
+  {
+    "name": "unverified-purchase-is-not-credited",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "setPurchaseOutcome": "unverified"
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-buy-pack_starter",
+        "wait": 600
+      },
+      {
+        "clickSelector": "#btn-confirm-bazaar-pay",
+        "wait": 1500
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct:pack_starter"
+      },
+      {
+        "expectNoCall": "CafeBazaar.consumePurchase"
+      },
+      {
+        "expectStorage": "\"coins\":120"
+      },
+      {
+        "setPurchaseOutcome": "ok"
+      }
+    ]
+  },
+  {
+    "name": "cancelled-purchase-keeps-the-store-usable",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "setPurchaseOutcome": "cancelled"
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-buy-pack_starter",
+        "wait": 600
+      },
+      {
+        "clickSelector": "#btn-confirm-bazaar-pay",
+        "wait": 1500
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct:pack_starter"
+      },
+      {
+        "expectStorage": "\"coins\":120"
+      },
+      {
+        "expectSelector": "#coin-store-modal-overlay"
+      },
+      {
+        "setPurchaseOutcome": "ok"
+      }
+    ]
+  },
+  {
+    "name": "owned-purchase-reported-by-the-store-is-credited-once",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "setOwnedPurchases": [
+          "pack_starter"
+        ]
+      },
+      {
+        "reload": true,
+        "wait": 1500
+      },
+      {
+        "expectCall": "CafeBazaar.getPurchases"
+      },
+      {
+        "expectCall": "CafeBazaar.consumePurchase"
+      },
+      {
+        "expectStorage": "\"coins\":320"
+      },
+      {
+        "setOwnedPurchases": []
+      }
+    ]
   },
   {
     "name": "rating-uses-the-native-cafebazaar-intent",
@@ -96,63 +474,496 @@
         "clearStorage": true
       },
       {
-        "reload": true,
-        "wait": 900
-      },
-      {
-        "click": "امتیاز",
-        "wait": 700
-      },
-      {
-        "expectCall": "CafeBazaar.openRatingPage"
-      }
-    ],
-    "requiresGameBundle": true
-  },
-  {
-    "name": "pending-purchase-is-restored-from-the-store",
-    "steps": [
-      {
-        "clearStorage": true
-      },
-      {
-        "setOwnedPurchases": [
-          "remove_ads"
-        ]
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
       },
       {
         "reload": true,
         "wait": 1200
       },
       {
-        "expectCall": "CafeBazaar.getPurchases"
+        "clickSelector": "#btn-mode-rate-bazaar",
+        "wait": 600
+      },
+      {
+        "expectCall": "CafeBazaar.openRatingPage"
       }
-    ],
-    "requiresGameBundle": true
+    ]
   },
   {
-    "name": "back-goes-to-the-previous-page",
+    "name": "level-1-completes-without-an-interstitial",
     "steps": [
       {
         "clearStorage": true
       },
       {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
         "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "expectSelector": "#word-connect-wheel"
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 800
+      },
+      {
+        "expectNoCall": "NativeAds.showInterstitial"
+      },
+      {
+        "expectSelector": "#btn-next-level"
+      }
+    ]
+  },
+  {
+    "name": "two-levels-then-interstitial-then-play-on",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "setHoldAds": true
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 600
+      },
+      {
+        "clickSelector": "#btn-next-level",
         "wait": 900
       },
       {
-        "clickSelector": "a[href='#/about']",
-        "wait": 400
+        "expectSelector": "#word-connect-wheel"
       },
       {
-        "pressBack": "webapp",
-        "wait": 400
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#btn-level-complete-menu, [role=status], #level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 600
+      },
+      {
+        "expectCall": "NativeAds.showInterstitial"
+      },
+      {
+        "expectNoSelector": "#level-complete-overlay"
+      },
+      {
+        "adEvent": {
+          "type": "interstitial_shown",
+          "data": {
+            "adType": "interstitial"
+          }
+        },
+        "wait": 300
+      },
+      {
+        "adEvent": {
+          "type": "interstitial_closed",
+          "data": {
+            "adType": "interstitial",
+            "shownCount": 1
+          }
+        },
+        "wait": 900
+      },
+      {
+        "expectSelector": "#level-complete-overlay"
+      },
+      {
+        "expectCallCount": {
+          "name": "NativeAds.showInterstitial",
+          "count": 1
+        }
+      },
+      {
+        "setHoldAds": false
+      },
+      {
+        "clickSelector": "#btn-next-level",
+        "wait": 900
+      },
+      {
+        "expectSelector": "#word-connect-wheel"
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 800
+      },
+      {
+        "expectSelector": "#btn-next-level"
+      },
+      {
+        "expectStorage": "\"completions\":3"
+      }
+    ]
+  },
+  {
+    "name": "interstitial-timeout-error-unblocks-the-game",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 2,
+            "unlockedLevels": [
+              1,
+              2
+            ],
+            "levelStars": {},
+            "completed": {
+              "1": true
+            },
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 1,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "setHoldAds": true
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "[role=status], #level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 600
+      },
+      {
+        "expectCall": "NativeAds.showInterstitial"
+      },
+      {
+        "adEvent": {
+          "type": "ad_error",
+          "data": {
+            "adType": "interstitial",
+            "error": "INTERSTITIAL_TIMEOUT",
+            "message": "no ad within 6000 ms"
+          }
+        },
+        "wait": 900
+      },
+      {
+        "expectSelector": "#level-complete-overlay"
+      },
+      {
+        "setHoldAds": false
+      }
+    ]
+  },
+  {
+    "name": "duplicate-ad-event-delivery-does-not-double-resolve",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "setHoldAds": true
+      },
+      {
+        "clickSelector": "#btn-mode-spin",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-spin-now",
+        "wait": 600
+      },
+      {
+        "expectCall": "NativeAds.showRewarded"
+      },
+      {
+        "adEvent": {
+          "type": "rewarded_shown",
+          "data": {
+            "adType": "rewarded"
+          }
+        },
+        "wait": 200
+      },
+      {
+        "adEvent": {
+          "type": "rewarded_completed",
+          "data": {
+            "adType": "rewarded",
+            "rewardGranted": true
+          }
+        },
+        "wait": 200
+      },
+      {
+        "adEvent": {
+          "type": "rewarded_closed",
+          "data": {
+            "adType": "rewarded",
+            "rewardGranted": true
+          }
+        },
+        "wait": 4000
+      },
+      {
+        "expectText": "مبارک"
+      },
+      {
+        "setHoldAds": false
+      }
+    ]
+  },
+  {
+    "name": "no-interstitial-when-remove-ads-is-owned",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 2,
+            "unlockedLevels": [
+              1,
+              2
+            ],
+            "levelStars": {},
+            "completed": {
+              "1": true
+            },
+            "purchaseTokens": {},
+            "adsRemoved": true,
+            "completions": 1,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 800
+      },
+      {
+        "expectNoCall": "NativeAds.showInterstitial"
+      }
+    ]
+  },
+  {
+    "name": "back-in-a-level-returns-to-the-menu",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "expectSelector": "#word-connect-wheel"
+      },
+      {
+        "pressBack": "container",
+        "wait": 700
       },
       {
         "expectBackHandled": true
       },
       {
-        "expectText": "تبلیغات بومی (Tapsell)"
+        "expectSelector": "#btn-game-play-giant"
+      }
+    ]
+  },
+  {
+    "name": "exit-dialog-is-the-container-fallback-on-the-menu",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
       },
       {
         "pressBack": "webapp",
@@ -164,18 +975,1698 @@
     ]
   },
   {
-    "name": "exit-dialog-is-the-container-fallback",
+    "name": "store-has-no-discounts-and-offers-remove-ads",
     "steps": [
       {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
         "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "expectSelector": "#coin-store-modal-overlay"
+      },
+      {
+        "expectNoText": "تخفیف"
+      },
+      {
+        "expectNoText": "٪"
+      },
+      {
+        "expectSelector": "#coin-package-remove_ads"
+      },
+      {
+        "expectSelector": "#btn-buy-remove_ads"
+      },
+      {
+        "expectText": "حذف تبلیغات"
+      },
+      {
+        "expectText": "۲۰,۰۰۰ تومان"
+      },
+      {
+        "expectSelector": "#btn-buy-pack_starter"
+      },
+      {
+        "expectSelector": "#btn-buy-pack_vault"
+      }
+    ]
+  },
+  {
+    "name": "remove-ads-bought-in-the-store-disables-interstitials",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-buy-remove_ads",
+        "wait": 600
+      },
+      {
+        "expectText": "حذف دائمی تبلیغات"
+      },
+      {
+        "expectText": "تأیید و پرداخت ۲۰,۰۰۰ تومان با بازار"
+      },
+      {
+        "clickSelector": "#btn-confirm-bazaar-pay",
+        "wait": 1500
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct:remove_ads"
+      },
+      {
+        "expectNoCall": "CafeBazaar.consumePurchase"
+      },
+      {
+        "expectText": "تبلیغات برای همیشه حذف شد"
+      },
+      {
+        "expectStorage": "\"adsRemoved\":true"
+      },
+      {
+        "pressBack": "container",
+        "wait": 500
+      },
+      {
+        "expectNoSelector": "#coin-store-modal-overlay"
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "expectSelector": "#remove-ads-owned"
+      },
+      {
+        "expectNoSelector": "#btn-buy-remove_ads"
+      },
+      {
+        "pressBack": "container",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 700
+      },
+      {
+        "expectNoSelector": "#btn-remove-ads-level"
+      },
+      {
+        "clickSelector": "#btn-next-level",
         "wait": 900
       },
       {
-        "pressBack": "webapp",
+        "expectSelector": "#word-connect-wheel"
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 700
+      },
+      {
+        "expectNoCall": "NativeAds.showInterstitial"
+      },
+      {
+        "expectSelector": "#level-complete-overlay"
+      }
+    ]
+  },
+  {
+    "name": "remove-ads-button-on-the-level-complete-page",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 700
+      },
+      {
+        "expectSelector": "#btn-remove-ads-level"
+      },
+      {
+        "expectText": "۲۰,۰۰۰"
+      },
+      {
+        "clickSelector": "#btn-remove-ads-level",
+        "wait": 1200
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct:remove_ads"
+      },
+      {
+        "expectNoCall": "CafeBazaar.consumePurchase"
+      },
+      {
+        "expectStorage": "\"adsRemoved\":true"
+      },
+      {
+        "expectSelector": "#level-complete-overlay"
+      },
+      {
+        "expectNoSelector": "#btn-remove-ads-level"
+      },
+      {
+        "clickSelector": "#btn-next-level",
+        "wait": 900
+      },
+      {
+        "expectSelector": "#word-connect-wheel"
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 700
+      },
+      {
+        "expectNoCall": "NativeAds.showInterstitial"
+      },
+      {
+        "expectStorage": "\"completions\":2"
+      }
+    ]
+  },
+  {
+    "name": "cancelled-remove-ads-purchase-keeps-the-offer",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "setPurchaseOutcome": "cancelled"
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 700
+      },
+      {
+        "clickSelector": "#btn-remove-ads-level",
+        "wait": 1200
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct:remove_ads"
+      },
+      {
+        "expectStorage": "\"adsRemoved\":false"
+      },
+      {
+        "expectSelector": "#btn-remove-ads-level"
+      },
+      {
+        "expectNoText": "خدمت در دسترس نیست"
+      },
+      {
+        "clickSelector": "#btn-next-level",
+        "wait": 900
+      },
+      {
+        "expectSelector": "#word-connect-wheel"
+      }
+    ]
+  },
+  {
+    "name": "unverified-remove-ads-purchase-is-not-saved-but-native-ownership-is-honoured",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "setPurchaseOutcome": "unverified"
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-buy-remove_ads",
+        "wait": 600
+      },
+      {
+        "clickSelector": "#btn-confirm-bazaar-pay",
+        "wait": 1500
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct:remove_ads"
+      },
+      {
+        "expectStorage": "\"adsRemoved\":false"
+      },
+      {
+        "pressBack": "container",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "expectSelector": "#remove-ads-owned"
+      },
+      {
+        "pressBack": "container",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 700
+      },
+      {
+        "expectNoSelector": "#btn-remove-ads-level"
+      }
+    ]
+  },
+  {
+    "name": "remove-ads-owned-in-the-store-account-is-restored-at-boot",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "setOwnedPurchases": [
+          "remove_ads"
+        ]
+      },
+      {
+        "reload": true,
+        "wait": 1500
+      },
+      {
+        "expectCall": "CafeBazaar.getPurchases"
+      },
+      {
+        "expectNoCall": "CafeBazaar.consumePurchase"
+      },
+      {
+        "expectStorage": "\"adsRemoved\":true"
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "expectSelector": "#remove-ads-owned"
+      }
+    ]
+  },
+  {
+    "name": "about-contact-button-opens-the-support-email",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-mode-about",
+        "wait": 500
+      },
+      {
+        "expectSelector": "#btn-about-contact"
+      },
+      {
+        "expectText": "رابطہ کنگ"
+      },
+      {
+        "expectText": "balochappps@gmail.com"
+      },
+      {
+        "clickSelector": "#btn-about-contact",
         "wait": 300
       },
       {
-        "expectBackHandled": false
+        "expectCall": "NativeApp.openEmail:balochappps@gmail.com"
+      },
+      {
+        "pressBack": "container",
+        "wait": 500
+      },
+      {
+        "expectBackHandled": true
+      },
+      {
+        "expectSelector": "#btn-game-play-giant"
+      }
+    ]
+  },
+  {
+    "name": "store-coin-packs-cost-50-tomans-per-coin-without-bonus-or-discount",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "expectSelector": "#coin-store-modal-overlay"
+      },
+      {
+        "evaluate": "document.querySelectorAll('[id^=coin-package-pack_]').length",
+        "expectValue": 5
+      },
+      {
+        "expectText": "۱۰,۰۰۰ تومان"
+      },
+      {
+        "expectText": "۵۰,۰۰۰ تومان"
+      },
+      {
+        "expectText": "۱۲۵,۰۰۰ تومان"
+      },
+      {
+        "expectText": "۲۵۰,۰۰۰ تومان"
+      },
+      {
+        "expectText": "۵۰۰,۰۰۰ تومان"
+      },
+      {
+        "expectNoText": "۴۰,۰۰۰ تومان"
+      },
+      {
+        "expectNoText": "۹۰,۰۰۰ تومان"
+      },
+      {
+        "expectNoText": "۱۹۰,۰۰۰ تومان"
+      },
+      {
+        "expectNoText": "هدیه"
+      },
+      {
+        "expectNoText": "تخفیف"
+      },
+      {
+        "expectNoText": "ارزش عالی"
+      },
+      {
+        "expectText": "سِکہ بہ گر ات و سوج کارمرز کن ات"
+      },
+      {
+        "expectNoText": "کمک"
+      },
+      {
+        "clickSelector": "#btn-buy-pack_popular",
+        "wait": 600
+      },
+      {
+        "expectText": "تأیید و پرداخت ۵۰,۰۰۰ تومان با بازار"
+      },
+      {
+        "clickSelector": "#btn-confirm-bazaar-pay",
+        "wait": 1500
+      },
+      {
+        "expectCall": "CafeBazaar.buyProduct:pack_popular"
+      },
+      {
+        "expectCall": "CafeBazaar.consumePurchase"
+      },
+      {
+        "expectStorage": "\"coins\":1120"
+      },
+      {
+        "pressBack": "container",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-mode-store",
+        "wait": 500
+      },
+      {
+        "clickSelector": "#btn-buy-pack_vault",
+        "wait": 600
+      },
+      {
+        "expectText": "تأیید و پرداخت ۵۰۰,۰۰۰ تومان با بازار"
+      },
+      {
+        "clickSelector": "#btn-confirm-bazaar-pay",
+        "wait": 1500
+      },
+      {
+        "expectStorage": "\"coins\":11120"
+      }
+    ]
+  },
+  {
+    "name": "quiz-answers-are-shuffled-and-the-quiz-can-be-finished",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-mode-quiz",
+        "wait": 500
+      },
+      {
+        "expectSelector": "#quiz-modal-overlay"
+      },
+      {
+        "expectText": "بلوچی لبز ءِ فارسی معنا ءَ گچین"
+      },
+      {
+        "expectNoText": "معنی فارسی لوز را انتخاب بکن ات"
+      },
+      {
+        "evaluate": "window.__firstCorrect=0;window.__orders=[];true"
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog .space-y-2 > button",
+        "wait": 60
+      },
+      {
+        "evaluate": "(function(){var b=document.querySelector('#quiz-modal-dialog .space-y-2 > button');window.__orders.push([].map.call(document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button'),function(x){return x.textContent}).join('|'));if(b&&b.className.indexOf('border-teal-500')>=0)window.__firstCorrect++;return window.__firstCorrect})()"
+      },
+      {
+        "clickSelector": "#btn-quiz-next",
+        "wait": 60
+      },
+      {
+        "expectSelector": "#quiz-modal-overlay"
+      },
+      {
+        "expectText": "پدا لئیب کن"
+      },
+      {
+        "expectText": "بند کنی"
+      },
+      {
+        "expectNoText": "بند کن ات"
+      },
+      {
+        "expectNoText": "دوبارہ جہد کن ات"
+      },
+      {
+        "evaluate": "window.__firstCorrect>0&&window.__firstCorrect<50",
+        "expectValue": true
+      },
+      {
+        "evaluate": "window.__orders.length",
+        "expectValue": 50
+      },
+      {
+        "clickSelector": "#quiz-modal-dialog button.flex-1",
+        "wait": 300
+      },
+      {
+        "evaluate": "document.querySelectorAll('#quiz-modal-dialog .space-y-2 > button').length",
+        "expectValue": 4
+      },
+      {
+        "pressBack": "container",
+        "wait": 400
+      },
+      {
+        "expectNoSelector": "#quiz-modal-overlay"
+      }
+    ]
+  },
+  {
+    "name": "balochi-wording-updates",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "expectText": "استال"
+      },
+      {
+        "expectNoText": "استالاں"
+      },
+      {
+        "expectNoText": "کمک"
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "expectSelector": "#btn-wheel-hint"
+      },
+      {
+        "evaluate": "document.querySelector('#btn-wheel-hint').textContent.indexOf('سوج')>=0&&document.querySelector('#btn-wheel-hint').textContent.indexOf('کمک')<0",
+        "expectValue": true
+      },
+      {
+        "evaluate": "(document.querySelector('#btn-wheel-hint').getAttribute('title')||'').indexOf('سوج گرگ')",
+        "expectValue": 0
+      },
+      {
+        "clickSelector": "#btn-wheel-hint",
+        "wait": 400
+      },
+      {
+        "expectText": "سوج کارمرز بوت!"
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 700
+      },
+      {
+        "expectText": "درائیں لبز درگپت انت۔"
+      },
+      {
+        "expectNoText": "درائیں لوز سہی گچین کرت ات"
+      }
+    ]
+  },
+  {
+    "name": "progress-survives-a-lost-origin-through-the-native-mirror",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 10000,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          }
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "clickUntil": {
+          "selector": "#btn-wheel-hint",
+          "until": "#level-complete-overlay",
+          "max": 40,
+          "every": 120
+        },
+        "wait": 700
+      },
+      {
+        "expectStorage": "\"completions\":1"
+      },
+      {
+        "expectCall": "NativeApp.saveState:labzband_progress_v4"
+      },
+      {
+        "evaluate": "window.__harness.nativeState['labzband_progress_v4'] && JSON.parse(window.__harness.nativeState['labzband_progress_v4'].value).completions",
+        "expectValue": 1
+      },
+      {
+        "clearWebStorageOnly": true
+      },
+      {
+        "reload": true,
+        "wait": 1500
+      },
+      {
+        "expectCall": "NativeApp.loadState:labzband_progress_v4"
+      },
+      {
+        "expectSelector": "#btn-game-play-giant"
+      },
+      {
+        "expectStorage": "\"completions\":1"
+      },
+      {
+        "expectStorage": "labzband_progress_v4:savedAt"
+      },
+      {
+        "evaluate": "JSON.parse(localStorage.getItem('labzband_progress_v4')).unlockedLevels.indexOf(2)>=0",
+        "expectValue": true
+      },
+      {
+        "clickSelector": "#btn-game-play-giant",
+        "wait": 800
+      },
+      {
+        "expectSelector": "#word-connect-wheel"
+      }
+    ]
+  },
+  {
+    "name": "a-newer-web-copy-is-not-overridden-by-an-older-mirror",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "setNativeState": {
+          "labzband_progress_v4": {
+            "value": {
+              "version": 4,
+              "coins": 999,
+              "currentLevelNumber": 1,
+              "unlockedLevels": [
+                1,
+                2
+              ],
+              "levelStars": {},
+              "completed": {},
+              "purchaseTokens": {},
+              "adsRemoved": false,
+              "completions": 1,
+              "ratingPrompted": false,
+              "soundEnabled": false,
+              "showRomanized": true
+            },
+            "savedAt": 1000
+          }
+        }
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 777,
+            "currentLevelNumber": 6,
+            "unlockedLevels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 5,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          },
+          "labzband_progress_v4:savedAt": "2000"
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "expectSelector": "#btn-game-play-giant"
+      },
+      {
+        "expectStorage": "\"coins\":777"
+      },
+      {
+        "expectStorage": "\"completions\":5"
+      }
+    ]
+  },
+  {
+    "name": "a-newer-mirror-wins-over-a-stale-web-copy",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "setNativeState": {
+          "labzband_progress_v4": {
+            "value": {
+              "version": 4,
+              "coins": 555,
+              "currentLevelNumber": 3,
+              "unlockedLevels": [
+                1,
+                2,
+                3
+              ],
+              "levelStars": {
+                "1": 3,
+                "2": 3
+              },
+              "completed": {
+                "level:1": true,
+                "level:2": true
+              },
+              "purchaseTokens": {},
+              "adsRemoved": false,
+              "completions": 2,
+              "ratingPrompted": false,
+              "soundEnabled": false,
+              "showRomanized": true
+            },
+            "savedAt": 3000
+          }
+        }
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": {
+            "version": 4,
+            "coins": 120,
+            "currentLevelNumber": 1,
+            "unlockedLevels": [
+              1
+            ],
+            "levelStars": {},
+            "completed": {},
+            "purchaseTokens": {},
+            "adsRemoved": false,
+            "completions": 0,
+            "ratingPrompted": false,
+            "soundEnabled": false,
+            "showRomanized": true
+          },
+          "labzband_progress_v4:savedAt": "1000"
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "expectSelector": "#btn-game-play-giant"
+      },
+      {
+        "expectStorage": "\"coins\":555"
+      },
+      {
+        "expectStorage": "\"completions\":2"
+      },
+      {
+        "evaluate": "localStorage.getItem('labzband_progress_v4:savedAt')",
+        "expectValue": "3000"
+      }
+    ]
+  },
+  {
+    "name": "an-unreadable-web-copy-is-replaced-by-the-mirror-instead-of-crashing",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "setNativeState": {
+          "labzband_progress_v4": {
+            "value": {
+              "version": 4,
+              "coins": 321,
+              "currentLevelNumber": 1,
+              "unlockedLevels": [
+                1,
+                2
+              ],
+              "levelStars": {},
+              "completed": {},
+              "purchaseTokens": {},
+              "adsRemoved": false,
+              "completions": 1,
+              "ratingPrompted": false,
+              "soundEnabled": false,
+              "showRomanized": true
+            },
+            "savedAt": 5
+          }
+        }
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": "{not json"
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "expectSelector": "#btn-game-play-giant"
+      },
+      {
+        "expectStorage": "\"coins\":321"
+      },
+      {
+        "expectStorage": "\"completions\":1"
+      }
+    ]
+  },
+  {
+    "name": "an-unreadable-save-without-a-mirror-starts-fresh-instead-of-crashing",
+    "steps": [
+      {
+        "clearStorage": true
+      },
+      {
+        "storage": {
+          "labzband_progress_v4": "{\"version\":4,\"coins\":\"lots\"}"
+        }
+      },
+      {
+        "reload": true,
+        "wait": 1200
+      },
+      {
+        "expectSelector": "#btn-game-play-giant"
+      },
+      {
+        "expectCall": "NativeApp.reportError"
+      },
+      {
+        "expectStorage": "\"completions\":0"
+      },
+      {
+        "expectCall": "NativeApp.saveState:labzband_progress_v4"
       }
     ]
   }

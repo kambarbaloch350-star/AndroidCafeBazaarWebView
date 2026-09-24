@@ -7,3 +7,9 @@ coverage/
 .env*
 !.env.example
 package-lock.json
+.gradle/
+.idea/
+*.iml
+app/release/
+__pycache__/
+*.pyc

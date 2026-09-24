@@ -8,7 +8,7 @@ export const PROJECT_FILES: ProjectFile[] = [
     name: "build.gradle.kts",
     category: "gradle",
     language: "kotlin",
-    description: "App module: Android 14 SDK, Tapsell + Najva dependencies, native-only configuration injection (no ad ids in code).",
+    description: "App module: compileSdk 35 / target 34, Tapsell + Pushfa dependencies, native-only configuration injection, conditional google-services.",
     content: `import java.util.Properties
 
 plugins {
@@ -17,15 +17,28 @@ plugins {
 }
 
 // ---------------------------------------------------------------------------
+// Firebase (transport used by the Pushfa push SDK).
+//
+// Pushfa delivers through Firebase Cloud Messaging. Drop the \`google-services.json\`
+// of the Firebase project whose *Service Account* is pasted into the Pushfa panel
+// next to this file and the Google Services plugin wires it in automatically.
+// Without the file the plugin is skipped, the build still succeeds and \`App.kt\`
+// falls back to the FIREBASE_* values below (or leaves push disabled).
+// ---------------------------------------------------------------------------
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
+// ---------------------------------------------------------------------------
 // Native configuration resolver.
 //
-// Advertising (Tapsell) and push (Najva) identifiers live **only** on the
+// Advertising (Tapsell) and push (Pushfa) identifiers live **only** on the
 // native side. They are resolved, in order of precedence, from:
 //
 //   1. Gradle CLI properties      -> ./gradlew assembleRelease -PTAPSELL_APP_KEY=...
-//   2. gradle.properties          -> TAPSELL_APP_KEY=...
-//   3. local.properties           -> TAPSELL_APP_KEY=...   (never committed)
-//   4. Environment variables      -> TAPSELL_APP_KEY=...
+//   2. local.properties           -> TAPSELL_APP_KEY=...   (never committed; CI writes secrets here)
+//   3. Environment variables      -> TAPSELL_APP_KEY=...
+//   4. gradle.properties          -> TAPSELL_APP_KEY=...   (committed defaults of this app)
 //
 // Nothing is ever shipped to the WebApp: the JavaScript layer only ever sees
 // the generic bridge API (NativeAds.showInterstitial(), ...).
@@ -38,24 +51,58 @@ val localProperties = Properties().apply {
 }
 
 fun cfg(key: String, default: String = ""): String {
-    val fromCli = (project.findProperty(key) as? String)?.trim()?.takeIf { it.isNotEmpty() }
-    val fromLocal = localProperties.getProperty(key)?.trim()?.takeIf { it.isNotEmpty() }
-    val fromEnv = System.getenv(key)?.trim()?.takeIf { it.isNotEmpty() }
-    return fromCli ?: fromLocal ?: fromEnv ?: default
+    fun String?.clean(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
+    val fromCli = gradle.startParameter.projectProperties[key].clean()
+    val fromLocal = localProperties.getProperty(key).clean()
+    val fromEnv = System.getenv(key).clean()
+    val fromGradleProperties = (project.findProperty(key) as? String).clean()
+    return fromCli ?: fromLocal ?: fromEnv ?: fromGradleProperties ?: default
 }
 
 fun quoted(value: String): String = "\\"\${value.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"")}\\""
 
+// CI's emulator smoke test verifies the *container contract* (boot, bridge,
+// deep links, back navigation, exit dialog). It must not depend on live ad or
+// push traffic from a foreign data-centre IP, so \`-PSMOKE_TEST_BUILD=true\`
+// blanks the advertising / push identifiers: the SDKs stay packaged, the
+// bridge answers NOT_CONFIGURED deterministically. Never used for shipping.
+val smokeTestBuild: Boolean =
+    gradle.startParameter.projectProperties["SMOKE_TEST_BUILD"]?.equals("true", ignoreCase = true) == true
+
+// \`-PSMOKE_TEST_ADS=true\` (only honoured together with SMOKE_TEST_BUILD) keeps
+// Tapsell on its *official test* app key and zones instead of blanking them:
+// the CI "ad lab" job plays the game through a real interstitial round trip
+// on the emulator. Test creatives, no revenue, no production identifiers.
+val smokeTestAds: Boolean = smokeTestBuild &&
+    gradle.startParameter.projectProperties["SMOKE_TEST_ADS"]?.equals("true", ignoreCase = true) == true
+
+val tapsellTestKeys = mapOf(
+    "TAPSELL_APP_KEY" to "alsoatsrtrotpqacegkehkaiieckldhrgsbspqtgqnbrrfccrtbdomgjtahflchkqtqosa",
+    "TAPSELL_ZONE_INTERSTITIAL" to "5cfaa942e8d17f0001ffb292",
+    "TAPSELL_ZONE_REWARDED" to "5cfaa802e8d17f0001ffb28e",
+    "TAPSELL_ZONE_NATIVE" to "5cfaa9deaede570001d5553a"
+)
+
+fun sdkKey(key: String): String = when {
+    smokeTestAds && key in tapsellTestKeys -> tapsellTestKeys.getValue(key)
+    smokeTestBuild -> ""
+    else -> cfg(key)
+}
+
 android {
-    namespace = "com.emochi.quickgames"
-    compileSdk = 34
+    namespace = "com.labzband.balochafzar"
+    // Pushfa 2.x (androidx.core 1.15 / WorkManager 2.10 underneath) must be
+    // compiled against API 35. targetSdk deliberately stays at 34: targeting 35
+    // would force edge-to-edge on Android 15 and change the system-bar layout
+    // the container relies on.
+    compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.emochi.quickgames"
+        applicationId = "com.labzband.balochafzar"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 3
+        versionName = "2.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -64,14 +111,18 @@ android {
         }
 
         // ---- Tapsell (native advertising) - never exposed to the WebApp ----
-        buildConfigField("String", "TAPSELL_APP_KEY", quoted(cfg("TAPSELL_APP_KEY")))
-        buildConfigField("String", "TAPSELL_ZONE_INTERSTITIAL", quoted(cfg("TAPSELL_ZONE_INTERSTITIAL")))
-        buildConfigField("String", "TAPSELL_ZONE_REWARDED", quoted(cfg("TAPSELL_ZONE_REWARDED")))
-        buildConfigField("String", "TAPSELL_ZONE_NATIVE", quoted(cfg("TAPSELL_ZONE_NATIVE")))
+        // True only for the CI emulator builds (blank identifiers / test ads):
+        // UI that would get in the way of an unattended run (the WebView
+        // update advice) is skipped when it is set.
+        buildConfigField("boolean", "SMOKE_TEST_BUILD", smokeTestBuild.toString())
+        buildConfigField("boolean", "SMOKE_TEST_ADS", smokeTestAds.toString())
+        buildConfigField("String", "TAPSELL_APP_KEY", quoted(sdkKey("TAPSELL_APP_KEY")))
+        buildConfigField("String", "TAPSELL_ZONE_INTERSTITIAL", quoted(sdkKey("TAPSELL_ZONE_INTERSTITIAL")))
+        buildConfigField("String", "TAPSELL_ZONE_REWARDED", quoted(sdkKey("TAPSELL_ZONE_REWARDED")))
+        buildConfigField("String", "TAPSELL_ZONE_NATIVE", quoted(sdkKey("TAPSELL_ZONE_NATIVE")))
 
-        // ---- Najva (native push) - never exposed to the WebApp ----
-        manifestPlaceholders["najvaApiKey"] = cfg("NAJVA_API_KEY")
-        manifestPlaceholders["najvaWebsiteId"] = cfg("NAJVA_WEBSITE_ID")
+        // ---- Pushfa (native push) - public key only, never the private one ----
+        buildConfigField("String", "PUSHFA_API_PUBLIC_KEY", quoted(sdkKey("PUSHFA_API_PUBLIC_KEY")))
 
         // ---- Firebase (optional: allows FCM to run without google-services.json) ----
         buildConfigField("String", "FIREBASE_APP_ID", quoted(cfg("FIREBASE_APP_ID")))
@@ -141,7 +192,9 @@ android {
 
 dependencies {
     // Kotlin BOM: keeps every transitive stdlib/coroutines version aligned.
-    implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.1.10"))
+    // 2.2.20 matches the stdlib the Pushfa SDK is compiled against; the 2.1
+    // compiler reads 2.2 library metadata (Kotlin guarantees N+1 compatibility).
+    implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.2.20"))
     implementation("org.jetbrains.kotlin:kotlin-stdlib")
 
     // Official CafeBazaar In-App Billing SDK (Poolakey)
@@ -151,16 +204,18 @@ dependencies {
     // https://docs.tapsell.ir/en/plus-sdk/android/main/
     implementation("ir.tapsell.plus:tapsell-plus-sdk-android:2.3.3")
 
-    // Najva push notification SDK (native system notifications only)
-    // https://central.sonatype.com/artifact/com.najva/sdk
-    implementation("com.najva:sdk:1.8.4")
-    implementation("com.google.firebase:firebase-messaging:23.3.1")
+    // Pushfa push notification SDK (native system notifications only)
+    // https://github.com/pushfa/pushfa-android-sdk – Maven Central artifact.
+    // It declares firebase-messaging as an \`api\` dependency; the explicit line
+    // below pins the same version so App.kt can bootstrap Firebase itself.
+    implementation("com.pushfa:pushfa-android-sdk:2.0.4")
+    implementation("com.google.firebase:firebase-messaging:24.1.2")
 
     // Tests
     testImplementation("junit:junit:4.13.2")
 
     // AndroidX & UI
-    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
@@ -200,7 +255,7 @@ include(":app")
     name: "gradle.properties",
     category: "gradle",
     language: "properties",
-    description: "Build-wide settings plus the native container configuration keys (Tapsell / Najva / Firebase).",
+    description: "Build-wide settings plus the native container configuration keys (Tapsell / Pushfa / Firebase).",
     content: `# ---------------------------------------------------------------------------
 # Gradle / build settings
 # ---------------------------------------------------------------------------
@@ -212,39 +267,43 @@ android.useAndroidX=true
 android.nonTransitiveRClass=true
 android.enableJetifier=false
 kotlin.code.style=official
+# compileSdk 35 is required by the Pushfa SDK (androidx.core 1.15 / WorkManager
+# 2.10); AGP 8.3 only *recommends* 34, so its advisory warning is silenced.
+android.suppressUnsupportedCompileSdk=35
 
 # ---------------------------------------------------------------------------
 # Native container configuration
 #
 # Every value below is consumed by app/build.gradle.kts and injected into the
-# NATIVE layer only (BuildConfig / manifest placeholders). None of them is ever
-# exposed to the WebApp or the JavaScript bridge.
+# NATIVE layer only (BuildConfig). None of them is ever exposed to the WebApp
+# or the JavaScript bridge.
 #
-# Prefer putting secrets in local.properties (which is not committed):
+# Precedence (see app/build.gradle.kts \`cfg()\`):
+#   -P command line  >  local.properties  >  environment  >  this file
 #
-#   TAPSELL_APP_KEY=...
-#   TAPSELL_ZONE_INTERSTITIAL=...
-#   TAPSELL_ZONE_REWARDED=...
-#   TAPSELL_ZONE_NATIVE=...
-#   NAJVA_API_KEY=...
-#   NAJVA_WEBSITE_ID=...
-#   FIREBASE_APP_ID=...
-#   FIREBASE_API_KEY=...
-#   FIREBASE_PROJECT_ID=...
-#   FIREBASE_SENDER_ID=...
+# The values in this file are the production identifiers of this app
+# (لبزبند / com.labzband.balochafzar). They are public-side identifiers only
+# (Tapsell app key + zone ids, Pushfa *public* key); the Pushfa private key
+# and the Firebase service account must never be added here.
 # ---------------------------------------------------------------------------
 
-# Advertising – Tapsell (leave blank to keep advertising disabled)
-TAPSELL_APP_KEY=
-TAPSELL_ZONE_INTERSTITIAL=
-TAPSELL_ZONE_REWARDED=
-TAPSELL_ZONE_NATIVE=
+# Advertising – Tapsell (Tapsell Plus dashboard)
+TAPSELL_APP_KEY=tkonjgrntiepgsjgnkmhkrbassggiekcsafqrbkgqoihkkqdndgqojsldtdnojagjjtddh
+# «بنر آنی» – full-screen interstitial zone (NativeAds.showInterstitial())
+TAPSELL_ZONE_INTERSTITIAL=6ab339cee237e15c69fbab2b
+# Rewarded video zone (NativeAds.showRewarded())
+TAPSELL_ZONE_REWARDED=6ab339c3da860d2c9f00cfa9
+# «بنر همسان» – native banner zone (NativeAds.showNative())
+TAPSELL_ZONE_NATIVE=6ab339d96da4b558f3901bc1
 
-# Push notifications – Najva (leave blank to keep push disabled)
-NAJVA_API_KEY=
-NAJVA_WEBSITE_ID=
+# Push notifications – Pushfa (https://pushfa.com), api_public_key of the
+# Android service in the panel. Leave blank to keep push disabled.
+PUSHFA_API_PUBLIC_KEY=PUZFaFHrOzpOmP0ZCPAbkQdE8R
 
-# Firebase Cloud Messaging (required by Najva push delivery)
+# Firebase Cloud Messaging (Pushfa delivers through FCM).
+# Preferred: put app/google-services.json (same Firebase project as the
+# service account in the Pushfa panel) next to app/build.gradle.kts.
+# Alternative without the JSON file: fill the values below.
 FIREBASE_APP_ID=
 FIREBASE_API_KEY=
 FIREBASE_PROJECT_ID=
@@ -257,7 +316,7 @@ FIREBASE_STORAGE_BUCKET=
     name: "AndroidManifest.xml",
     category: "manifest",
     language: "xml",
-    description: "Permissions, notification permission, loopback-only network security config, Najva metadata placeholders and the deep-link intent filter.",
+    description: "Permissions, notification permission, loopback-only network security config, Pushfa channel/icon metadata and the labzband:// deep-link intent filter.",
     content: `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -266,7 +325,7 @@ FIREBASE_STORAGE_BUCKET=
       Network access is required for:
         * the WebApp's own remote API calls (fetch / XHR / WebSocket),
         * Tapsell ad delivery,
-        * Najva push registration (FCM).
+        * Pushfa push registration (FCM).
       The WebApp bundle itself is served by an in-process loopback HTTP server,
       so no packaged web server, no file:// hacks and no internet round trip is
       needed to open it.
@@ -275,7 +334,7 @@ FIREBASE_STORAGE_BUCKET=
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
-    <!-- Android 13+ runtime permission for system push notifications (Najva). -->
+    <!-- Android 13+ runtime permission for system push notifications (Pushfa). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -333,7 +392,17 @@ FIREBASE_STORAGE_BUCKET=
             android:launchMode="singleTask"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize"
+            android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection|navigation">
+            <!--
+                screenOrientation="portrait": the game is a portrait layout, and
+                a full-screen ad (Tapsell's ad Activity rotates landscape video
+                creatives) must not leave the container behind in landscape.
+                Without the lock the WebView came back from such an ad with two
+                relayouts in a row (landscape, then portrait again) – a resize
+                storm in the middle of the level-complete animation. With it the
+                container never changes orientation, whatever the ad did.
+            -->
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -343,30 +412,30 @@ FIREBASE_STORAGE_BUCKET=
             <!--
               Deep links: a push notification (or any other app) can open the
               container and hand a route to the WebApp router, e.g.
-                  quickgames://open/game/42   ->   WebApp route "game/42"
+                  labzband://open/game/42     ->   WebApp route "game/42"
+                  quickgames://open/game/42   ->   WebApp route "game/42" (legacy)
                   https://host/#/game/42      ->   WebApp route "game/42"
+              A Pushfa notification whose link is a relative path ("/game/42")
+              re-opens this Activity with the path in Pushfa.EXTRA_TARGET_URL.
             -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="labzband" />
                 <data android:scheme="quickgames" />
             </intent-filter>
         </activity>
 
-        <!-- ======================= Najva push (native) ======================= -->
+        <!-- ======================= Pushfa push (native) ====================== -->
         <!--
-          Najva configuration lives exclusively in the native layer. Both values
-          are injected at build time (local.properties / gradle.properties) and
-          are never exposed to the WebApp or to the JavaScript bridge.
+          Pushfa (https://pushfa.com) is configured exclusively in the native
+          layer: the public key is injected at build time (BuildConfig) and
+          \`App.kt\` initializes the SDK. Its FirebaseMessagingService and the
+          notification-click Activity are merged in from the SDK manifest, so
+          nothing push-related is declared here and the merged manifest keeps
+          exactly one messaging service.
         -->
-        <meta-data
-            android:name="com.najva.sdk.metadata.API_KEY"
-            android:value="\${najvaApiKey}" />
-        <meta-data
-            android:name="com.najva.sdk.metadata.WEBSITE_ID"
-            android:value="\${najvaWebsiteId}" />
-
         <meta-data
             android:name="firebase_messaging_auto_init_enabled"
             android:value="true" />
@@ -375,23 +444,30 @@ FIREBASE_STORAGE_BUCKET=
             android:value="false" />
 
         <!--
-          The FCM <service> entries (including Najva's own listener) are declared
-          by the SDK manifests and merged in automatically. Nothing is declared
-          here on purpose, so the merged manifest keeps exactly one messaging
-          service and no duplicate intent filter.
+          Fallbacks used by FCM itself for the rare "notification" payload that
+          bypasses the Pushfa renderer: same monochrome icon and channel.
         -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/primary" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="labzband_default" />
     </application>
 
 </manifest>
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/App.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/App.kt",
     name: "App.kt",
     category: "kotlin",
     language: "kotlin",
-    description: "Application class: Firebase bootstrap, notification channels and native Najva push initialization.",
-    content: `package com.emochi.quickgames
+    description: "Application class: Firebase bootstrap, notification channels and native Pushfa push initialization.",
+    content: `package com.labzband.balochafzar
 
 import android.app.Application
 import android.util.Log
@@ -403,12 +479,12 @@ import com.google.firebase.FirebaseOptions
  *
  * Responsibilities – all of them native, once per process:
  *
- *  1. **Najva push** initialization (channels + listeners + SDK client).
- *  2. **Firebase** bootstrap so FCM (used by Najva under the hood) can obtain
+ *  1. **Firebase** bootstrap so FCM (the transport used by Pushfa) can obtain
  *     its registration token even when the project is built without a
  *     \`google-services.json\` file – the values come from the same native
- *     configuration store as the Najva keys.
- *  3. Notification channel creation (Android 8+).
+ *     configuration store as the Pushfa key.
+ *  2. Notification channel creation (Android 8+).
+ *  3. **Pushfa push** initialization (SDK client + callbacks).
  *
  * The WebView, the local HTTP server and the Tapsell SDK are intentionally
  * *not* touched here: they are owned by [WebAppServerController] and
@@ -419,17 +495,17 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // 1. Firebase must exist before any FCM-based SDK (Najva) requests a token.
+        // 1. Firebase must exist before any FCM-based SDK (Pushfa) requests a token.
         initializeFirebase()
 
-        // 2. Notification channels first: Najva may deliver a message at any time.
-        NajvaManager.createNotificationChannels(this)
+        // 2. Notification channels first: a message may arrive at any time.
+        PushfaManager.createNotificationChannels(this)
 
-        // 3. Najva push – 100% native, notifications are rendered by the system.
-        NajvaManager.initialize(this)
+        // 3. Pushfa push – 100% native, notifications are rendered by the system.
+        PushfaManager.initialize(this)
 
         if (BuildConfig.DEBUG) {
-            Log.i(TAG, "App ready: push[\${NajvaManager.describe(this)}]")
+            Log.i(TAG, "App ready: push[\${PushfaManager.describe(this)}]")
         }
     }
 
@@ -451,7 +527,7 @@ class App : Application() {
             if (appId.isBlank() || apiKey.isBlank() || projectId.isBlank()) {
                 if (BuildConfig.DEBUG) {
                     Log.i(TAG, "Firebase credentials absent – FCM push registration is disabled " +
-                            "until FIREBASE_* values are provided.")
+                            "until app/google-services.json or FIREBASE_* values are provided.")
                 }
                 return
             }
@@ -484,27 +560,39 @@ class App : Application() {
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/MainActivity.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/MainActivity.kt",
     name: "MainActivity.kt",
     category: "kotlin",
     language: "kotlin",
-    description: "The container: deterministic boot state machine, heavy-WebApp WebView tuning, fullscreen media, back navigation, lifecycle and the native ad plate.",
-    content: `package com.emochi.quickgames
+    description: "The container: deterministic boot state machine, heavy-WebApp WebView tuning, renderer watchdog + crash recovery, pause/resume/memory events, fullscreen media, back navigation and the native ad plate.",
+    content: `package com.labzband.balochafzar
 
 import android.Manifest
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.OvershootInterpolator
+import org.json.JSONObject
 import android.view.WindowManager
 import android.webkit.ConsoleMessage
 import android.webkit.PermissionRequest
@@ -517,15 +605,23 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.Toast
+
 import android.widget.TextView
+
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.webkit.WebViewRenderProcess
+import androidx.webkit.WebViewRenderProcessClient
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -562,8 +658,73 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         /** Time the WebApp has to report readiness after the page finished. */
         private const val APP_READY_TIMEOUT_MS = 45_000L
 
+        /**
+         * Minimum time the loading screen stays on screen.
+         *
+         * The product wants the animated splash to be *seen* (~3 s), so the
+         * overlay is only dismissed once the WebApp is ready **and** this much
+         * time has passed. It is a floor, never an extra delay on top of real
+         * work: a slow boot is not prolonged by it.
+         */
+        private const val MIN_LOADING_VISIBLE_MS = 3_000L
+
+        /** Cross-fade of the loading screen on the way out. */
+        private const val LOADING_FADE_OUT_MS = 320L
+
         /** Delay before asking for the notification permission (after first paint). */
+        /** Official CafeBazaar package: Bazaar intents are delivered to it only. */
+        private const val BAZAAR_PACKAGE = "com.farsitel.bazaar"
+        private const val GMAIL_PACKAGE = "com.google.android.gm"
+
+        /** Grace period before the empty native-ad plate closes itself. */
+        private const val NATIVE_AD_WATCHDOG_MS = 10_000L
+
+        /** Shorter grace period when the request was refused outright. */
+        private const val NATIVE_AD_GIVE_UP_MS = 2_500L
+
         private const val NOTIFICATION_PERMISSION_DELAY_MS = 900L
+
+        /**
+         * How long the WebApp's renderer may stay unresponsive to input before
+         * the container terminates and rebuilds it. Chromium reports the first
+         * stall after ~5 s and repeats every ~5 s; a heavy level load may
+         * legitimately block for a few seconds, a 20 s freeze never recovers.
+         */
+        private const val RENDERER_HANG_LIMIT_MS = 20_000L
+
+        /**
+         * Time the WebApp gets to answer a back-button request. A renderer
+         * blocked by heavy work must never swallow the back button: after this
+         * delay the native exit confirmation takes over.
+         */
+        private const val BACK_REQUEST_TIMEOUT_MS = 900L
+
+        /**
+         * Oldest Chromium the packaged WebApp renders correctly on. Tailwind v4
+         * bundles paint every colour with \`oklch()\` (Chromium 111, March 2023):
+         * below that the page is black text on white, whatever the container
+         * does. Devices that cannot update Android System WebView through Play
+         * are common in this market, so the container says so once, with a
+         * button to the store page, instead of letting the game look broken.
+         */
+        private const val RECOMMENDED_WEBVIEW_MAJOR = 111
+        private const val WEBVIEW_PACKAGE = "com.google.android.webview"
+        private const val PREFS_NAME = "container_prefs"
+        private const val PREF_WEBVIEW_PROMPT_SHOWN_FOR = "webview_prompt_shown_for"
+
+        /** Re-assertion delays after a full-screen ad handed the screen back. */
+        private val AD_SETTLE_DELAYS_MS = longArrayOf(0L, 400L, 1_500L)
+
+        /**
+         * Automatic renderer recoveries tolerated within [RENDERER_CRASH_WINDOW_MS].
+         * A renderer that keeps dying (a game that does not fit into the
+         * renderer's memory budget on this device) must not turn into a screen
+         * that flashes between the loading plate and a half-drawn game: after
+         * this many restarts the error plate explains the situation and the
+         * user decides when to retry.
+         */
+        private const val RENDERER_CRASH_LIMIT = 3
+        private const val RENDERER_CRASH_WINDOW_MS = 3 * 60_000L
     }
 
     // ---------------------------------------------------------------------
@@ -572,7 +733,12 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private lateinit var webViewContainer: FrameLayout
     private lateinit var loadingOverlay: View
     private lateinit var loadingContent: View
-    private lateinit var loadingStage: TextView
+    private lateinit var loadingLogo: View
+    private lateinit var loadingTitle: ShimmerTextView
+    private lateinit var loadingBar: LoadingBarView
+    private lateinit var loadingSubtitle: TextView
+    private lateinit var loadingMessage: TextView
+    private lateinit var loadingCredit: TextView
     private lateinit var errorContent: View
     private lateinit var errorMessage: TextView
     private lateinit var nativeAdPlate: View
@@ -588,11 +754,18 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private var tapsellManager: TapsellManager? = null
     private var bridge: WebAppBridge? = null
     private var backCallback: OnBackPressedCallback? = null
+    private var exitDialog: ExitConfirmationDialog? = null
 
     // ---------------------------------------------------------------------
     // State
     // ---------------------------------------------------------------------
     private val handler = Handler(Looper.getMainLooper())
+
+    /** Animators of the loading screen; cancelled as soon as it is gone. */
+    private val loadingAnimators = mutableListOf<ObjectAnimator>()
+
+    /** When the loading screen became visible – used for its minimum duration. */
+    private var loadingShownAt = 0L
     private val bootExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "container-boot").apply { isDaemon = true }
     }
@@ -613,6 +786,22 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
 
     private var pendingDeepLinkRoute: String? = null
+
+    /** Uptime at which the renderer was first reported unresponsive (0 = fine). */
+    private var rendererUnresponsiveSince = 0L
+
+    /** Number of renderer rebuilds in this Activity (diagnostics). */
+    private var rendererRecoveries = 0
+
+    /** Uptime stamps of the recent automatic renderer recoveries (loop guard). */
+    private val rendererRecoveryTimes = ArrayDeque<Long>()
+
+    /**
+     * The renderer died while another Activity covered the container (a
+     * full-screen ad, the recents screen). The WebApp is rebooted when the
+     * container is visible again instead of competing with the ad for memory.
+     */
+    private var rendererRebootPending = false
 
     // ---------------------------------------------------------------------
     // Activity results
@@ -641,6 +830,9 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             Log.i(TAG, "POST_NOTIFICATIONS permission granted=$granted")
+            // The SDK could not fetch a token before the permission existed:
+            // register this device with Pushfa now.
+            if (granted) PushfaManager.registerForPush(this)
         }
 
     // =====================================================================
@@ -654,15 +846,20 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         bindViews()
         configureSystemBars()
 
-        // 1. Native loading plate first – before any I/O or SDK call.
-        showLoadingStage(getString(R.string.loading_stage_boot))
+        // 1. Native loading screen first – before any I/O or SDK call.
+        playLoadingIntro()
 
         // Advertising + billing are native services: they warm up in parallel
         // with the WebView boot and can never block or crash the WebApp.
         tapsellManager = TapsellManager(this).also { manager ->
+            manager.hostListener = { type, _ -> onAdEventForHost(type) }
             manager.initialize()
         }
-        billingManager = CafeBazaarBillingManager(this)
+        billingManager = CafeBazaarBillingManager(this).also { manager ->
+            // Apply the persisted unlock immediately so a restored purchase
+            // suppresses interstitials even before CafeBazaar answers.
+            tapsellManager?.interstitialsSuppressed = manager.isRemoveAdsOwned()
+        }
 
         // A notification tap (or external intent) may have opened this Activity.
         pendingDeepLinkRoute = DeepLinkBus.routeFromIntent(intent)
@@ -678,26 +875,99 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
     override fun onResume() {
         super.onResume()
+        Log.i(TAG, "onResume \${describeWindow()}")
+        // The host is in front again: no full-screen ad can be showing.
+        tapsellManager?.onHostResumed()
         webView?.onResume()
         webView?.resumeTimers()
+        // Game loops, audio and animations may continue.
+        dispatchWebAppEvent("nativeapp:resume", "{}")
+        // Another component of this process (an ad SDK's Activity finishing
+        // *after* this onResume, for instance) may still call the process-wide
+        // \`pauseTimers()\`. Re-assert a running page shortly after the resume –
+        // both calls are idempotent and free when nothing was paused.
+        handler.removeCallbacks(resumeReassert)
+        handler.postDelayed(resumeReassert, 600L)
     }
 
     override fun onPause() {
+        Log.i(TAG, "onPause \${describeWindow()}")
+        handler.removeCallbacks(resumeReassert)
+        // Tell the WebApp first (pause loops, mute audio, persist state) …
+        dispatchWebAppEvent("nativeapp:pause", "{}")
+        // … then stop the WebView's own rendering / JavaScript work.
         webView?.onPause()
         super.onPause()
     }
 
+    /**
+     * Memory pressure. Chromium reacts on its own (purges caches, collects
+     * garbage, drops GPU tiles); the WebApp is informed as well so a heavy game
+     * can release pooled textures, decoded audio and off-screen canvases before
+     * the system decides to kill the renderer. Android 14+ only delivers the
+     * background levels to apps targeting 34, older versions also the
+     * foreground ones – the WebApp is told in both cases.
+     */
+    @Suppress("DEPRECATION")
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level == ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) return
+        if (level < ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) return
+        val critical = level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+                level >= ComponentCallbacks2.TRIM_MEMORY_MODERATE
+        Log.w(TAG, "Memory pressure level=$level critical=$critical")
+        dispatchWebAppEvent(
+            "nativeapp:memorywarning",
+            "{level:$level,critical:$critical,background:\${level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND}}"
+        )
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        Log.w(TAG, "Low memory")
+        dispatchWebAppEvent("nativeapp:memorywarning", "{level:80,critical:true,background:false}")
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Log.i(TAG, "onStart \${describeWindow()}")
+        if (rendererRebootPending) {
+            rendererRebootPending = false
+            Log.i(TAG, "Container visible again – rebooting the WebApp after the renderer loss")
+            handler.postDelayed({
+                bootStarted.set(false)
+                startBootSequence()
+            }, 250)
+        }
+    }
+
     override fun onStop() {
-        // Keep JS timers running while media plays so background audio and long
-        // WebAssembly tasks are not frozen mid-flight.
-        if (!isAudioPlaying()) {
+        // \`pauseTimers()\` is process-wide: it freezes layout, parsing and
+        // JavaScript timers of *every* WebView in this process – including the
+        // WebView of a full-screen ad that is being shown right now (HTML /
+        // MRAID creatives drive their countdown and close button with timers).
+        // Timers therefore keep running while an ad presents and while media
+        // plays; \`webView.onPause()\` (called from onPause) already stops the
+        // page's rendering work for the plain background case.
+        val adInFront = tapsellManager?.isPresentingAd() == true
+        val audio = isAudioPlaying()
+        Log.i(TAG, "onStop adInFront=$adInFront audio=$audio \${describeWindow()}")
+        if (!audio && !adInFront) {
             webView?.pauseTimers()
         }
         super.onStop()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        Log.i(TAG, "onWindowFocusChanged hasFocus=$hasFocus \${describeWindow()}")
+    }
+
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        stopLoadingAnimations()
+        runCatching { exitDialog?.dismiss() }
+        exitDialog = null
         bootExecutor.shutdownNow()
 
         val view = webView
@@ -719,7 +989,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         tapsellManager?.dispose()
         billingManager?.destroy()
         DeepLinkBus.markWebAppDestroyed()
-        NajvaManager.detachActivity(this)
 
         // The local HTTP server is deliberately NOT stopped here: it is owned by
         // the process ([WebAppServerController]) so the WebView origin – and with
@@ -730,6 +999,12 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        Log.i(
+            TAG,
+            "onConfigurationChanged orientation=\${newConfig.orientation} " +
+                    "screen=\${newConfig.screenWidthDp}x\${newConfig.screenHeightDp}dp " +
+                    "density=\${newConfig.densityDpi} uiMode=\${newConfig.uiMode} \${describeWindow()}"
+        )
         // The manifest declares these changes, so the Activity is not recreated
         // and the WebApp keeps its runtime state. Notify the page so it can
         // re-layout / re-measure its canvas.
@@ -760,7 +1035,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         isBootFailed = false
         isWebAppReady = false
         serverReady = false
-        showLoadingStage(getString(R.string.loading_stage_boot))
 
         // 2. The server must exist before the WebView can navigate.
         bootExecutor.execute {
@@ -821,7 +1095,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
             setupBackNavigation()
         }
 
-        showLoadingStage(getString(R.string.loading_stage_webview))
 
         val entry = WebAppServerController.entryUrl()
         if (entry == null) {
@@ -844,7 +1117,8 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(): WebView {
-        val view = WebView(this)
+        // ContainerWebView: no text selection / copy, no long-press vibration.
+        val view = ContainerWebView(this)
         view.setBackgroundColor(getColor(R.color.webview_background))
         view.isVerticalScrollBarEnabled = true
         view.isHorizontalScrollBarEnabled = false
@@ -852,8 +1126,232 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         view.settings.configureForHeavyWebApps()
         view.webViewClient = containerWebViewClient
         view.webChromeClient = containerChromeClient
+        installRendererWatchdog(view)
         return view
     }
+
+    /**
+     * Renderer watchdog for heavy WebApps.
+     *
+     * Chromium reports the renderer as *unresponsive* when it fails to process
+     * an input event (or a navigation) in a reasonable time – the symptom of a
+     * blocked JavaScript main thread: a giant synchronous asset decode, a
+     * runaway animation loop, a shader compilation storm. The callback repeats
+     * every ~5 s while the freeze lasts and stops with \`onRenderProcessResponsive\`.
+     *
+     * Short stalls are only logged (a level load may block for a few seconds).
+     * Once the renderer has been frozen for [RENDERER_HANG_LIMIT_MS] the
+     * container terminates it: that surfaces as [WebViewClient.onRenderProcessGone]
+     * and runs the normal rebuild path – the loading plate comes back and the
+     * WebApp restarts – instead of leaving the user in front of a dead surface
+     * that ends in the system's "app isn't responding" dialog.
+     */
+    private fun installRendererWatchdog(view: WebView) {
+        rendererUnresponsiveSince = 0L
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_CLIENT_BASIC_USAGE)) {
+            Log.i(TAG, "Renderer watchdog unavailable on this WebView version")
+            return
+        }
+        runCatching {
+            WebViewCompat.setWebViewRenderProcessClient(view, object : WebViewRenderProcessClient() {
+                override fun onRenderProcessUnresponsive(target: WebView, renderer: WebViewRenderProcess?) {
+                    val now = SystemClock.uptimeMillis()
+                    if (rendererUnresponsiveSince == 0L) {
+                        rendererUnresponsiveSince = now
+                        Log.w(TAG, "WebApp renderer unresponsive – tolerating up to \${RENDERER_HANG_LIMIT_MS} ms")
+                        return
+                    }
+                    val stalled = now - rendererUnresponsiveSince
+                    if (stalled < RENDERER_HANG_LIMIT_MS) {
+                        Log.w(TAG, "WebApp renderer still unresponsive after $stalled ms")
+                        return
+                    }
+                    if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                        // Covered by another Activity (an ad, a dialog of the
+                        // system): no input reaches the page anyway. Restart the
+                        // clock and decide once the container is in front again.
+                        rendererUnresponsiveSince = now
+                        Log.w(TAG, "WebApp renderer unresponsive while the container is not in front – waiting")
+                        return
+                    }
+                    rendererUnresponsiveSince = 0L
+                    val terminated = renderer != null &&
+                            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_TERMINATE) &&
+                            runCatching { renderer.terminate() }.getOrDefault(false)
+                    if (terminated) {
+                        // onRenderProcessGone() follows and rebuilds the WebView.
+                        Log.e(TAG, "WebApp renderer hung for $stalled ms – terminated")
+                    } else {
+                        rebuildWebView("WebApp renderer hung for $stalled ms")
+                    }
+                }
+
+                override fun onRenderProcessResponsive(target: WebView, renderer: WebViewRenderProcess?) {
+                    if (rendererUnresponsiveSince != 0L) {
+                        val stalled = SystemClock.uptimeMillis() - rendererUnresponsiveSince
+                        Log.i(TAG, "WebApp renderer responsive again after $stalled ms")
+                    }
+                    rendererUnresponsiveSince = 0L
+                }
+            })
+        }.onFailure { Log.w(TAG, "Renderer watchdog not installed: \${it.message}") }
+    }
+
+    /**
+     * Fires a \`window\` DOM event inside the WebApp (\`nativeapp:pause\`,
+     * \`nativeapp:resume\`, \`nativeapp:memorywarning\`, …). \`detailJson\` must be a
+     * JavaScript object literal. Safe to call at any time on the main thread.
+     */
+    private fun dispatchWebAppEvent(name: String, detailJson: String) {
+        val view = webView ?: return
+        val script = "(function(){try{window.dispatchEvent(new CustomEvent(" +
+                jsStringLiteral(name) + ",{detail:" + detailJson + "}));}catch(e){}})();"
+        runCatching { view.evaluateJavascript(script, null) }
+            .onFailure { Log.d(TAG, "dispatchWebAppEvent($name) skipped: \${it.message}") }
+    }
+
+    /**
+     * Makes the page behave like an app surface: text cannot be selected, the
+     * iOS-style callout is disabled and images cannot be dragged out.
+     *
+     * The stylesheet is injected into the page itself (and re-applied on every
+     * finished load), so it also covers WebApps that ship their own CSS. The
+     * native side refuses the selection action mode as well – see
+     * [ContainerWebView].
+     */
+    private fun applyCopyProtection(view: WebView?) {
+        if (view == null) return
+        val css = """
+            *:not(input):not(textarea) {
+              -webkit-user-select: none;
+              -moz-user-select: none;
+              -ms-user-select: none;
+              user-select: none;
+              -webkit-touch-callout: none;
+              -webkit-tap-highlight-color: transparent;
+            }
+            img, a { -webkit-user-drag: none; user-drag: none; }
+        """.trimIndent()
+        val script = """
+            (function () {
+              try {
+                var id = 'container-copy-protection';
+                var existing = document.getElementById(id);
+                if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+                var style = document.createElement('style');
+                style.id = id;
+                style.type = 'text/css';
+                style.appendChild(document.createTextNode(\${jsStringLiteral(css)}));
+                (document.head || document.documentElement).appendChild(style);
+                document.addEventListener('copy', function (e) { e.preventDefault(); }, true);
+                document.addEventListener('cut', function (e) { e.preventDefault(); }, true);
+                document.addEventListener('contextmenu', function (e) { e.preventDefault(); }, true);
+                return true;
+              } catch (e) { return false; }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script) { result ->
+            if (result?.trim()?.trim('"') == "true") {
+                Log.i(TAG, "Page copy protection active (selection, copy and context menu disabled)")
+            }
+        }
+    }
+
+    /**
+     * Rendering profile for the device this page runs on.
+     *
+     * The page learns its tier (\`<html data-native-tier="low|mid|high">\`) so
+     * its own CSS can adapt. On \`low\` and \`mid\` phones the container also
+     * switches \`backdrop-filter\` off: a full-screen overlay that blurs what is
+     * behind it forces the GPU to re-blur the whole screen on every frame
+     * while anything above it animates (bouncing stars, pulsing badges), which
+     * is the single most expensive effect a DOM game can ask for and the usual
+     * reason a level-complete screen stutters on a mid-range phone. A 4–12 px
+     * blur under a 60 % tinted overlay is visually negligible; the frames are
+     * not. A WebApp that insists on the effect opts out with
+     * \`<meta name="native-perf" content="off">\`.
+     */
+    private fun applyRenderingProfile(view: WebView?) {
+        if (view == null) return
+        val tier = bridge?.deviceTier ?: "mid"
+        val css = """
+            html[data-native-tier="low"] *, html[data-native-tier="low"] *::before, html[data-native-tier="low"] *::after,
+            html[data-native-tier="mid"] *, html[data-native-tier="mid"] *::before, html[data-native-tier="mid"] *::after {
+              -webkit-backdrop-filter: none !important;
+              backdrop-filter: none !important;
+            }
+        """.trimIndent()
+        val script = """
+            (function () {
+              try {
+                var root = document.documentElement;
+                root.setAttribute('data-native-tier', \${jsStringLiteral(tier)});
+                var meta = document.querySelector('meta[name="native-perf"]');
+                var off = !!(meta && /\\b(off|none|false)\\b/i.test(meta.getAttribute('content') || ''));
+                var id = 'container-rendering-profile';
+                var existing = document.getElementById(id);
+                if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+                if (off) return 'opt-out';
+                var style = document.createElement('style');
+                style.id = id;
+                style.type = 'text/css';
+                style.appendChild(document.createTextNode(\${jsStringLiteral(css)}));
+                (document.head || root).appendChild(style);
+                return 'applied';
+              } catch (e) { return 'failed: ' + e; }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script) { result ->
+            Log.i(TAG, "Rendering profile for tier '$tier': \${result?.trim('"')}")
+        }
+    }
+
+    /**
+     * Paints the WebView (and its container) in the page's own background
+     * colour. The View background is what shows through in the frames the
+     * compositor has nothing for yet – the first frame after a resume, the
+     * moment an ad Activity goes away, a rotation – and Android's default is
+     * pure white. A game with a coloured backdrop then "flashes white" on
+     * every such transition; with the page colour underneath, the transition
+     * is invisible. Best effort: an unreadable colour leaves the default.
+     */
+    private fun syncBackgroundWithPage(view: WebView?) {
+        if (view == null) return
+        val script = """
+            (function () {
+              try {
+                var pick = function (el) {
+                  if (!el) return '';
+                  var c = getComputedStyle(el).backgroundColor || '';
+                  return /^rgba?\\(/.test(c) && !/^rgba\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*0\\s*\\)$/.test(c) ? c : '';
+                };
+                return pick(document.body) || pick(document.documentElement) || '';
+              } catch (e) { return ''; }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script) { raw ->
+            val color = parseCssColor(raw?.trim()?.trim('"').orEmpty()) ?: return@evaluateJavascript
+            if (webView !== view) return@evaluateJavascript
+            runCatching {
+                view.setBackgroundColor(color)
+                webViewContainer.setBackgroundColor(color)
+            }
+            Log.i(TAG, "WebView background synced with the page (#\${Integer.toHexString(color)})")
+        }
+    }
+
+    /** Parses \`rgb(r, g, b)\` / \`rgba(r, g, b, a)\` into an opaque Android colour int. */
+    private fun parseCssColor(value: String): Int? {
+        val match = Regex("""rgba?\\(\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})\\s*(?:,\\s*([0-9.]+)\\s*)?\\)""").find(value) ?: return null
+        val (r, g, b) = match.destructured.toList().take(3).map { it.toInt().coerceIn(0, 255) }
+        val alpha = match.groupValues[4].toDoubleOrNull() ?: 1.0
+        if (alpha < 0.5) return null
+        return Color.rgb(r, g, b)
+    }
+
+    /** JSON-encodes a string so it can be embedded safely in injected JS. */
+    private fun jsStringLiteral(value: String): String =
+        JSONObject.quote(value)
 
     /**
      * WebView tuning for demanding WebApps: large JS bundles, Canvas, WebGL,
@@ -898,8 +1396,10 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         // ---- AndroidX WebKit features (feature-guarded: never crash) ----
         runCatching {
             if (WebViewFeature.isFeatureSupported(WebViewFeature.OFF_SCREEN_PRERASTER)) {
-                // Smoother Canvas / WebGL / video scrolling.
-                WebSettingsCompat.setOffscreenPreRaster(this, true)
+                // The WebView fills the screen and is never scrolled off-screen
+                // by a parent, so off-screen pre-rasterisation would only cost
+                // GPU memory – memory a heavy Canvas / WebGL game needs itself.
+                WebSettingsCompat.setOffscreenPreRaster(this, false)
             }
         }
         runCatching {
@@ -964,6 +1464,9 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
             super.onPageFinished(view, url)
             bridge?.onPageUrlChanged(url)
             if (BuildConfig.DEBUG) Log.d(TAG, "onPageFinished: $url")
+            applyCopyProtection(view)
+            applyRenderingProfile(view)
+            syncBackgroundWithPage(view)
             onDocumentLoaded(bootToken)
             bridge?.notifyContainerReady(pendingDeepLinkRoute)
         }
@@ -1010,32 +1513,231 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
             view: WebView?,
             detail: RenderProcessGoneDetail?
         ): Boolean {
-            // The WebApp's renderer died – typically OOM with huge canvases.
+            // The WebApp's renderer died – OOM with huge canvases, a GPU driver
+            // fault, the system reclaiming memory, or the watchdog above.
             // Recover instead of letting the whole process be torn down.
             val didCrash = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 detail?.didCrash() ?: true
             } else {
                 true
             }
-            Log.e(TAG, "Render process gone (crash=$didCrash) – rebuilding WebView")
-
-            runCatching {
-                (view?.parent as? ViewGroup)?.removeView(view)
-                view?.destroy()
+            val priority = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                detail?.rendererPriorityAtExit() ?: -1
+            } else {
+                -1
             }
-            webView = null
-            bridge?.cleanUp()
-            bridge = null
-            isWebAppReady = false
-            backCallback?.isEnabled = false
-            backCallback = null
-
-            handler.postDelayed({
-                bootStarted.set(false)
-                startBootSequence()
-            }, 400)
+            if (view != null && view !== webView) {
+                // A WebView this Activity no longer owns: just dispose of it.
+                runCatching {
+                    (view.parent as? ViewGroup)?.removeView(view)
+                    view.destroy()
+                }
+                return true
+            }
+            rebuildWebView("Render process gone (crash=$didCrash, priority=$priority)")
             return true
         }
+    }
+
+    /**
+     * Tears the current WebView down and boots the WebApp again behind the
+     * native loading plate. Used after a renderer crash or a renderer hang.
+     */
+    private fun rebuildWebView(reason: String) {
+        rendererRecoveries++
+        val now = SystemClock.uptimeMillis()
+        while (rendererRecoveryTimes.isNotEmpty() &&
+            now - rendererRecoveryTimes.first() > RENDERER_CRASH_WINDOW_MS
+        ) {
+            rendererRecoveryTimes.removeFirst()
+        }
+        rendererRecoveryTimes.addLast(now)
+        Log.e(
+            TAG,
+            "$reason – rebuilding WebView (recovery #$rendererRecoveries, " +
+                    "\${rendererRecoveryTimes.size} within \${RENDERER_CRASH_WINDOW_MS / 60_000} min); " +
+                    describeMemory()
+        )
+        handler.removeCallbacksAndMessages(null)
+
+        val view = webView
+        webView = null
+        runCatching {
+            view?.stopLoading()
+            view?.webChromeClient = null
+            (view?.parent as? ViewGroup)?.removeView(view)
+            view?.destroy()
+        }
+        bridge?.cleanUp()
+        bridge = null
+        isWebAppReady = false
+        isBootFailed = false
+        rendererUnresponsiveSince = 0L
+        backCallback?.isEnabled = false
+        backCallback = null
+        DeepLinkBus.markWebAppDestroyed()
+        runCatching { exitDialog?.dismiss() }
+        exitDialog = null
+        if (customView != null) {
+            runCatching { containerChromeClient.onHideCustomView() }
+        }
+        hideNativeAd()
+
+        // The plate covers the restart like a cold start (same copy, same
+        // animation) – the user sees a reload, never a white screen.
+        presentLoadingOverlay()
+
+        if (rendererRecoveryTimes.size > RENDERER_CRASH_LIMIT) {
+            // Booting again would only produce the next crash – and a screen
+            // that flashes between the plate and a dying game. Stop, explain,
+            // and let the user retry (the retry button boots from scratch).
+            rendererRecoveryTimes.clear()
+            Log.e(TAG, "Renderer crash loop: $RENDERER_CRASH_LIMIT recoveries exhausted – showing the error plate")
+            showErrorState(getString(R.string.error_renderer_crash_loop))
+            return
+        }
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            // Another Activity is in front (typically a full-screen ad). Booting
+            // the WebApp underneath it would compete with the ad for memory –
+            // the very thing that killed the renderer – and the user could not
+            // see the loading plate anyway. Boot when the container is back.
+            rendererRebootPending = true
+            Log.i(TAG, "Renderer reboot deferred until the container is visible again")
+            return
+        }
+        handler.postDelayed({
+            bootStarted.set(false)
+            startBootSequence()
+        }, 400)
+    }
+
+    /** One-line window / WebView state for the lifecycle log. */
+    private fun describeWindow(): String = runCatching {
+        val view = webView
+        val rotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display?.rotation ?: -1
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.rotation
+        }
+        if (view == null) {
+            "webView=none rotation=$rotation"
+        } else {
+            "webView=\${view.width}x\${view.height} attached=\${view.isAttachedToWindow} " +
+                    "visible=\${view.visibility == View.VISIBLE} " +
+                    "windowVisible=\${view.windowVisibility == View.VISIBLE} " +
+                    "focus=\${view.hasWindowFocus()} hw=\${view.isHardwareAccelerated} rotation=$rotation"
+        }
+    }.getOrDefault("window: unknown")
+
+    private val resumeReassert = Runnable {
+        val view = webView ?: return@Runnable
+        view.onResume()
+        view.resumeTimers()
+    }
+
+    /**
+     * A full-screen ad handed the screen back (or failed to take it). The host
+     * makes sure the page is running and painting again, whatever the SDK's
+     * Activity did on its way out: timers resumed, WebView resumed, a frame
+     * requested. Repeated at [AD_SETTLE_DELAYS_MS] because the SDK finishes its
+     * Activity asynchronously – its last calls can land after this event.
+     */
+    private fun onAdEventForHost(type: String) {
+        val settles = type == "interstitial_closed" || type == "rewarded_closed" ||
+                type == "interstitial_skipped" || type == "ad_error"
+        if (!settles) return
+        Log.i(TAG, "ad event $type – settling the WebView \${describeWindow()}")
+        for (delay in AD_SETTLE_DELAYS_MS) {
+            handler.postDelayed({
+                val view = webView ?: return@postDelayed
+                view.onResume()
+                view.resumeTimers()
+                view.postInvalidateOnAnimation()
+                if (delay == AD_SETTLE_DELAYS_MS.last()) {
+                    Log.i(TAG, "post-ad state \${describeWindow()}; \${describeMemory()}")
+                }
+            }, delay)
+        }
+    }
+
+    // =====================================================================
+    // WebView version advice
+    // =====================================================================
+
+    /** Chromium major of the WebView provider in use, or null when unknown. */
+    private fun webViewMajorVersion(): Int? = runCatching {
+        val version = WebViewCompat.getCurrentWebViewPackage(this)?.versionName
+            ?: run {
+                val ua = webView?.settings?.userAgentString ?: return@runCatching null
+                Regex("Chrome/(\\\\d+)").find(ua)?.groupValues?.get(1)
+            }
+        version?.substringBefore('.')?.toIntOrNull()
+    }.getOrNull()
+
+    /**
+     * Shown once per installed WebView version when it is older than the
+     * packaged WebApp needs. Never in smoke-test builds (the CI emulator ships
+     * a Chromium 83 WebView on purpose: it exercises the compat layer).
+     */
+    private fun maybeAdviseWebViewUpdate() {
+        if (BuildConfig.SMOKE_TEST_BUILD) return
+        val major = webViewMajorVersion() ?: return
+        Log.i(TAG, "WebView provider Chromium major $major (recommended >= $RECOMMENDED_WEBVIEW_MAJOR)")
+        if (major >= RECOMMENDED_WEBVIEW_MAJOR) return
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        if (prefs.getInt(PREF_WEBVIEW_PROMPT_SHOWN_FOR, -1) == major) return
+        if (isFinishing || isDestroyed) return
+        prefs.edit().putInt(PREF_WEBVIEW_PROMPT_SHOWN_FOR, major).apply()
+        runCatching {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.webview_update_title)
+                .setMessage(getString(R.string.webview_update_message, major))
+                .setPositiveButton(R.string.webview_update_action) { _, _ -> openWebViewStorePage() }
+                .setNegativeButton(R.string.webview_update_later, null)
+                .show()
+        }.onFailure { Log.w(TAG, "WebView advice dialog failed: \${it.message}") }
+    }
+
+    private fun openWebViewStorePage() {
+        val candidates = listOf(
+            "bazaar://details?id=$WEBVIEW_PACKAGE",
+            "market://details?id=$WEBVIEW_PACKAGE",
+            "https://cafebazaar.ir/app/$WEBVIEW_PACKAGE"
+        )
+        for (uri in candidates) {
+            val ok = runCatching {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
+                true
+            }.getOrDefault(false)
+            if (ok) return
+        }
+        Toast.makeText(this, R.string.webview_update_unavailable, Toast.LENGTH_LONG).show()
+    }
+
+    /** One line of memory diagnostics for renderer-loss logs. */
+    private fun describeMemory(): String = runCatching {
+        val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val info = ActivityManager.MemoryInfo().also { manager.getMemoryInfo(it) }
+        val runtime = Runtime.getRuntime()
+        "device avail=\${info.availMem shr 20} MB of \${info.totalMem shr 20} MB (low=\${info.lowMemory}), " +
+                "app heap=\${(runtime.totalMemory() - runtime.freeMemory()) shr 20}/\${runtime.maxMemory() shr 20} MB, " +
+                "memoryClass=\${manager.memoryClass}/\${manager.largeMemoryClass} MB"
+    }.getOrDefault("memory: unknown")
+
+    /** Shows the loading plate again (retry, renderer recovery). */
+    private fun presentLoadingOverlay() {
+        loadingOverlay.animate().cancel()
+        loadingContent.animate().cancel()
+        loadingCredit.animate().cancel()
+        loadingOverlay.visibility = View.VISIBLE
+        loadingOverlay.alpha = 1f
+        loadingContent.alpha = 1f
+        loadingContent.translationY = 0f
+        loadingCredit.alpha = 1f
+        errorContent.visibility = View.GONE
+        loadingContent.visibility = View.VISIBLE
+        playLoadingIntro()
     }
 
     // =====================================================================
@@ -1047,17 +1749,21 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         override fun onProgressChanged(view: WebView?, newProgress: Int) {
             super.onProgressChanged(view, newProgress)
             if (newProgress in 1..99 && !isWebAppReady && !isBootFailed) {
-                showLoadingStage(getString(R.string.loading_stage_webapp))
             }
         }
 
         override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
-            if (BuildConfig.DEBUG && consoleMessage != null) {
-                Log.d(
-                    "WebApp",
-                    "[\${consoleMessage.messageLevel()}] \${consoleMessage.message()} " +
-                            "(\${consoleMessage.sourceId()}:\${consoleMessage.lineNumber()})"
-                )
+            if (consoleMessage == null) return true
+            val level = consoleMessage.messageLevel()
+            val serious = level == ConsoleMessage.MessageLevel.ERROR ||
+                    level == ConsoleMessage.MessageLevel.WARNING
+            // Debug builds mirror the whole console; release builds keep the
+            // page's warnings and errors in logcat (\`adb logcat -s WebApp\`) so a
+            // field report can be diagnosed without a debug APK.
+            if (BuildConfig.DEBUG || serious) {
+                val line = "[$level] \${consoleMessage.message()} " +
+                        "(\${consoleMessage.sourceId()}:\${consoleMessage.lineNumber()})"
+                if (serious) Log.w("WebApp", line) else Log.d("WebApp", line)
             }
             return true
         }
@@ -1152,18 +1858,22 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         isBootFailed = false
         Log.i(TAG, "Web app ready – hiding the native loading plate")
         handler.removeCallbacksAndMessages(null)
-        showLoadingStage(getString(R.string.loading_stage_finishing))
 
-        // Give the plate one frame to paint the final stage, then fade out.
-        // The WebApp is already running behind it – nothing is delayed here.
-        loadingOverlay.animate()
-            .alpha(0f)
-            .setDuration(260)
-            .withEndAction {
-                loadingOverlay.visibility = View.GONE
-                loadingOverlay.alpha = 1f
-            }
-            .start()
+        // The WebApp is already running behind the overlay, so this only waits
+        // for the animated splash to be seen for its minimum duration – a floor,
+        // never a delay added on top of real work.
+        val remaining = remainingLoadingTime()
+        Log.i(
+            TAG,
+            "Loading screen visible for \${SystemClock.uptimeMillis() - loadingShownAt} ms; " +
+                "minimum is \${MIN_LOADING_VISIBLE_MS} ms"
+        )
+        if (remaining > 0) {
+            Log.i(TAG, "Loading screen keeps the stage $remaining ms longer")
+            handler.postDelayed({ dismissLoadingOverlay() }, remaining)
+        } else {
+            dismissLoadingOverlay()
+        }
 
         // Deliver a route that arrived through a push notification tap, now that
         // the WebApp's router exists.
@@ -1180,6 +1890,7 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         handler.postDelayed({
             requestNotificationPermissionIfNeeded()
         }, NOTIFICATION_PERMISSION_DELAY_MS)
+        handler.postDelayed({ maybeAdviseWebViewUpdate() }, NOTIFICATION_PERMISSION_DELAY_MS + 4_000L)
     }
 
     override fun onWebAppError(message: String) {
@@ -1200,12 +1911,97 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         if (visible) showNativeAd(x, y, width, height) else hideNativeAd()
     }
 
+    override fun onBridgeOwnedProductsChanged(owned: Set<String>) {
+        // Permanent unlock bought or restored – stop showing interstitials.
+        tapsellManager?.interstitialsSuppressed = owned.contains(CafeBazaarConfig.SKU_REMOVE_ADS)
+    }
+
+    override fun onBridgeRequestRating(): Boolean = openBazaar(rating = true)
+
+    /**
+     * Opens an e-mail app addressed to [address]: \`ACTION_SENDTO\` with a
+     * \`mailto:\` URI (only mail apps answer it), Gmail first when it is
+     * installed, then the system resolver; as a last resort a generic
+     * \`ACTION_SEND\` chooser. When nothing can send mail the address is copied
+     * to the clipboard and the user is told so.
+     */
+    override fun onBridgeRequestEmail(address: String, subject: String): Boolean {
+        val mailto = Uri.Builder().scheme("mailto").opaquePart(address).build()
+        val sendTo = Intent(Intent.ACTION_SENDTO, mailto).apply {
+            if (subject.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, subject)
+        }
+        val candidates = listOf(
+            Intent(sendTo).setPackage(GMAIL_PACKAGE),
+            sendTo,
+            Intent(Intent.ACTION_SEND).apply {
+                type = "message/rfc822"
+                putExtra(Intent.EXTRA_EMAIL, arrayOf(address))
+                if (subject.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, subject)
+            }.let { Intent.createChooser(it, getString(R.string.email_chooser_title)) }
+        )
+        for (intent in candidates) {
+            val started = runCatching {
+                startActivity(intent)
+                true
+            }.getOrElse { false }
+            if (started) {
+                Log.i(TAG, "Opened e-mail composer for $address")
+                return true
+            }
+        }
+        runCatching {
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("email", address))
+        }
+        Toast.makeText(this, getString(R.string.email_app_missing, address), Toast.LENGTH_LONG).show()
+        Log.w(TAG, "No e-mail app can handle $address")
+        return false
+    }
+
+    override fun onBridgeRequestStorePage(): Boolean = openBazaar(rating = false)
+
+    /**
+     * Opens the CafeBazaar page of this app.
+     *
+     * \`bazaar://details?id=<package>\` is the official Bazaar intent; with
+     * \`ACTION_EDIT\` Bazaar opens the rating dialog directly. When Bazaar is not
+     * installed (emulator, sideloaded build) the intent cannot be resolved and
+     * the user is notified instead of crashing.
+     */
+    private fun openBazaar(rating: Boolean): Boolean {
+        val uri = Uri.parse("bazaar://details?id=$packageName")
+        val intent = Intent(if (rating) Intent.ACTION_EDIT else Intent.ACTION_VIEW, uri).apply {
+            setPackage(BAZAAR_PACKAGE)
+            addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY or Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+        }
+
+        val resolved = runCatching { intent.resolveActivity(packageManager) != null }
+            .getOrDefault(false)
+        if (!resolved) {
+            Log.w(TAG, "CafeBazaar is not installed – cannot open $uri")
+            Toast.makeText(this, getString(R.string.bazaar_not_installed), Toast.LENGTH_SHORT).show()
+            return false
+        }
+
+        return runCatching {
+            startActivity(intent)
+            Log.i(TAG, "Opened CafeBazaar (\${if (rating) "rating" else "details"}) for $packageName")
+            true
+        }.getOrElse {
+            Log.e(TAG, "Failed to open CafeBazaar: \${it.message}")
+            false
+        }
+    }
+
     // =====================================================================
     // Native ad plate (Tapsell)
     // =====================================================================
 
     private fun showNativeAd(x: Int, y: Int, width: Int, height: Int) {
         val manager = tapsellManager ?: return
+        // A plate that never receives an ad must never linger on top of the
+        // WebApp: the watchdog hides it again when the SDK attached nothing.
+        cancelNativeAdWatchdog()
         val density = resources.displayMetrics.density
 
         val margin = (12 * density).toInt()
@@ -1230,32 +2026,182 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         nativeAdPlate.visibility = View.VISIBLE
 
         manager.attachNativeContainer(nativeAdContainer)
-        if (!manager.showNative()) {
+        val accepted = manager.showNative()
+        if (!accepted) {
             nativeAdStatus.text = getString(R.string.native_ad_unavailable)
         }
+        handler.postDelayed(
+            nativeAdWatchdog,
+            if (accepted) NATIVE_AD_WATCHDOG_MS else NATIVE_AD_GIVE_UP_MS
+        )
     }
 
     private fun hideNativeAd() {
+        cancelNativeAdWatchdog()
         tapsellManager?.destroyNative()
         nativeAdContainer.removeAllViews()
         nativeAdPlate.visibility = View.GONE
+    }
+
+    private fun cancelNativeAdWatchdog() {
+        handler.removeCallbacks(nativeAdWatchdog)
+    }
+
+    /**
+     * Safety net for the native ad plate: if the SDK never rendered a view into
+     * the container the plate is closed again, so a failed ad request can never
+     * cover the WebApp.
+     */
+    private val nativeAdWatchdog = Runnable {
+        if (nativeAdPlate.visibility != View.VISIBLE) return@Runnable
+        val rendered = nativeAdContainer.childCount > 0
+        if (!rendered) {
+            Log.w(TAG, "Native ad plate never received a view – hiding it again")
+            hideNativeAd()
+        }
     }
 
     // =====================================================================
     // Loading / error UI
     // =====================================================================
 
-    private fun showLoadingStage(stage: String) {
-        if (isBootFailed) return
-        loadingContent.visibility = View.VISIBLE
-        errorContent.visibility = View.GONE
-        loadingStage.text = stage
+    /**
+     * Choreography of the animated loading screen
+     * -------------------------------------------
+     * The logo pops in with an overshoot while its halo fades up, then the copy
+     * slides in line by line (title → tagline → loading line), the credit rises
+     * from the bottom, and from there the logo floats, the halo breathes and the
+     * ring keeps turning until the screen is dismissed.
+     */
+    private fun playLoadingIntro() {
+        loadingShownAt = SystemClock.uptimeMillis()
+        stopLoadingAnimations()
+
+        val density = resources.displayMetrics.density
+        val rise = 18f * density
+
+        // 1. Copy starts hidden and slightly low; the logo is scaled down.
+        listOf(loadingTitle, loadingSubtitle, loadingMessage, loadingCredit).forEach {
+            it.alpha = 0f
+            it.translationY = rise
+        }
+        loadingLogo.alpha = 0f
+        loadingLogo.scaleX = 0.62f
+        loadingLogo.scaleY = 0.62f
+        loadingBar.alpha = 0f
+        loadingBar.scaleX = 0.6f
+
+        // 2. The logo lands first with a soft overshoot …
+        loadingLogo.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(620)
+            .setInterpolator(OvershootInterpolator(1.05f))
+            .start()
+
+        // 3. … then the copy arrives line by line, the title shimmering.
+        slideIn(loadingTitle, 260)
+        slideIn(loadingSubtitle, 400)
+        slideIn(loadingMessage, 540)
+        slideIn(loadingBar, 640)
+        slideIn(loadingCredit, 820)
+
+        // 4. And it stays alive: the logo breathes and floats, the title sweeps,
+        //    the progress line slides.
+        loadingTitle.start()
+        loadingBar.animate().cancel()
+        loadingBar.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .setStartDelay(640)
+            .setDuration(420)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .start()
+        loadingBar.start()
+
+        val logoFloat = ObjectAnimator.ofPropertyValuesHolder(
+            loadingLogo,
+            PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, 0f, -6f * density)
+        ).apply {
+            duration = 1900L
+            startDelay = 700L
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+        }
+        val logoBreath = ObjectAnimator.ofPropertyValuesHolder(
+            loadingLogo,
+            PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.045f),
+            PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.045f)
+        ).apply {
+            duration = 1900L
+            startDelay = 700L
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+        }
+        loadingAnimators += logoFloat.also { it.start() }
+        loadingAnimators += logoBreath.also { it.start() }
     }
+
+    /** Fade + rise for one line of the loading copy. */
+    private fun slideIn(view: View, delay: Long) {
+        view.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(delay)
+            .setDuration(420)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .start()
+    }
+
+    private fun stopLoadingAnimations() {
+        loadingAnimators.forEach { it.cancel() }
+        loadingAnimators.clear()
+        loadingTitle.stop()
+        loadingBar.stop()
+    }
+
+    /** Milliseconds the loading screen still has to stay, honouring the floor. */
+    private fun remainingLoadingTime(): Long {
+        if (loadingShownAt == 0L) return 0L
+        val visibleFor = SystemClock.uptimeMillis() - loadingShownAt
+        return (MIN_LOADING_VISIBLE_MS - visibleFor).coerceAtLeast(0L)
+    }
+
+    private fun dismissLoadingOverlay() {
+        if (loadingOverlay.visibility != View.VISIBLE) return
+        stopLoadingAnimations()
+        // The content lifts slightly while the whole canvas fades, so the WebApp
+        // is revealed rather than cut to.
+        loadingContent.animate()
+            .alpha(0f)
+            .translationY(-12f * resources.displayMetrics.density)
+            .setDuration(LOADING_FADE_OUT_MS)
+            .start()
+        loadingCredit.animate()
+            .alpha(0f)
+            .setDuration(LOADING_FADE_OUT_MS / 2)
+            .start()
+        loadingOverlay.animate()
+            .alpha(0f)
+            .setDuration(LOADING_FADE_OUT_MS)
+            .withEndAction {
+                loadingOverlay.visibility = View.GONE
+                loadingOverlay.alpha = 1f
+                loadingContent.alpha = 1f
+                loadingContent.translationY = 0f
+            }
+            .start()
+    }
+
 
     private fun showErrorState(message: String) {
         if (isBootFailed) return
         isBootFailed = true
         handler.removeCallbacksAndMessages(null)
+        stopLoadingAnimations()
 
         loadingOverlay.visibility = View.VISIBLE
         loadingOverlay.alpha = 1f
@@ -1271,11 +2217,7 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         isBootFailed = false
         isWebAppReady = false
         bootStarted.set(false)
-        loadingOverlay.visibility = View.VISIBLE
-        loadingOverlay.alpha = 1f
-        errorContent.visibility = View.GONE
-        loadingContent.visibility = View.VISIBLE
-        showLoadingStage(getString(R.string.loading_stage_boot))
+        presentLoadingOverlay()
 
         val view = webView
         val token = ++bootToken
@@ -1303,7 +2245,6 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 
     private fun onDocumentLoaded(token: Int) {
         if (isWebAppReady || isBootFailed) return
-        showLoadingStage(getString(R.string.loading_stage_webapp))
         handler.postDelayed({ onAppReadyTimeout(token) }, APP_READY_TIMEOUT_MS)
     }
 
@@ -1337,33 +2278,146 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
                     hideNativeAd()
                     return
                 }
-                // 3. Let the WebApp intercept back first (SPA history / modals).
-                val view = webView
-                if (view != null && isWebAppReady) {
-                    view.evaluateJavascript(
-                        "(function(){try{return (window.NativeApp && " +
-                                "typeof window.NativeApp.onBackPressed === 'function') " +
-                                "? !!window.NativeApp.onBackPressed() : false;}catch(e){return false;}})();"
-                    ) { result ->
-                        if (result == "true") return@evaluateJavascript
-                        performDefaultBack()
-                    }
+                // 3. A full-screen ad of the SDK owns the back button while shown.
+                if (tapsellManager?.isShowingAd == true) return
+                // 4. The exit dialog is open: back means "stay in the game".
+                if (exitDialog?.isShowing == true) {
+                    exitDialog?.dismiss()
                     return
                 }
-                performDefaultBack()
+                // 5. Ask the page first – even while booting, a loaded document
+                //    may already have its own screen stack.
+                if (webView == null) {
+                    askBeforeLeaving()
+                    return
+                }
+                // 6. Ask the WebApp to navigate one page back; whatever it does
+                //    not handle falls through to the exit confirmation. The app
+                //    is never left without that confirmation.
+                requestWebAppBack { handled ->
+                    if (!handled) askBeforeLeaving()
+                }
             }
         }
         backCallback = callback
         onBackPressedDispatcher.addCallback(this, callback)
     }
 
-    private fun performDefaultBack() {
+    /**
+     * Asks the WebApp to go one page back, in this order:
+     *
+     *  1. \`window.NativeApp.onBackPressed()\` – the hook a WebApp implements
+     *     directly or through \`NativeApp.setBackHandler(fn)\`; returning \`true\`
+     *     means "handled, stay inside the app".
+     *  2. a cancelable \`nativeapp:back\` DOM event – for WebApps that prefer
+     *     \`event.preventDefault()\`;
+     *  3. \`history.back()\` when the page pushed history entries (SPA routes).
+     *
+     * When nothing handled it – including "there is no previous page" – the
+     * callback receives \`handled = false\` and the exit confirmation is shown.
+     */
+    private fun requestWebAppBack(onResult: (Boolean) -> Unit) {
         val view = webView
-        if (view != null && view.canGoBack()) {
-            view.goBack()
+        if (view == null) {
+            Log.i(TAG, "Back: no WebView yet -> exit confirmation")
+            onResult(false)
             return
         }
-        // Nothing left inside the container: leave the app.
+        val script = """
+            (function () {
+              try {
+                var app = window.NativeApp;
+                if (app && typeof app.onBackPressed === 'function' && app.onBackPressed() === true) {
+                  return true;
+                }
+                var event = new Event('nativeapp:back', { cancelable: true, bubbles: true });
+                if (!window.dispatchEvent(event)) {
+                  return true; // a listener called preventDefault()
+                }
+                if (window.__nativeBackHandler && window.__nativeBackHandler() === true) {
+                  return true;
+                }
+                if (window.history && window.history.length > 1) {
+                  window.history.back();
+                  return true;
+                }
+                return false;
+              } catch (e) {
+                return false;
+              }
+            })();
+        """.trimIndent()
+        // A renderer busy with heavy work (or frozen) may never answer. The
+        // back button must still work, so the first of "page answered" and
+        // "deadline passed" decides – the other one is ignored.
+        val answered = AtomicBoolean(false)
+        val deadline = Runnable {
+            if (answered.compareAndSet(false, true)) {
+                Log.w(TAG, "Back: WebApp did not answer within \${BACK_REQUEST_TIMEOUT_MS} ms -> exit confirmation")
+                onResult(false)
+            }
+        }
+        handler.postDelayed(deadline, BACK_REQUEST_TIMEOUT_MS)
+        view.evaluateJavascript(script) { result ->
+            if (!answered.compareAndSet(false, true)) return@evaluateJavascript
+            handler.removeCallbacks(deadline)
+            if (result?.trim()?.trim('"') == "true") {
+                Log.i(TAG, "Back: handled inside the WebApp (previous page)")
+                return@evaluateJavascript
+            }
+            // Last chance: real WebView history (in-page anchors, extra hops).
+            val current = webView
+            if (current != null && current.canGoBack()) {
+                Log.i(TAG, "Back: WebView history step")
+                current.goBack()
+                return@evaluateJavascript
+            }
+            Log.i(TAG, "Back: nothing left to go back to in the WebApp")
+            onResult(false)
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Exit flow
+    // ---------------------------------------------------------------------
+
+    /** Shows the light green "خروج از بازی؟" sheet (rating nudge included). */
+    private fun askBeforeLeaving() {
+        if (isFinishing || isDestroyed) return
+        if (exitDialog?.isShowing == true) return
+        val dialog = ExitConfirmationDialog(this, object : ExitConfirmationDialog.Callbacks {
+            override fun onRateRequested() {
+                Log.i(TAG, "Exit dialog: rating requested")
+                exitDialog = null
+                val opened = openBazaar(rating = true)
+                Toast.makeText(
+                    this@MainActivity,
+                    if (opened) R.string.exit_dialog_rated else R.string.exit_dialog_rate_unavailable,
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            override fun onExitConfirmed() {
+                Log.i(TAG, "Exit dialog: leave confirmed")
+                exitDialog = null
+                leaveApp()
+            }
+
+            override fun onDismissed() {
+                Log.i(TAG, "Exit dialog: cancelled")
+                exitDialog = null
+            }
+        })
+        exitDialog = dialog
+        Log.i(TAG, "Exit confirmation shown")
+        runCatching { dialog.show() }.onFailure {
+            Log.w(TAG, "Could not show the exit dialog: \${it.message}")
+            exitDialog = null
+        }
+    }
+
+    /** Really leaves the app – the only path that finishes the Activity. */
+    private fun leaveApp() {
         backCallback?.isEnabled = false
         onBackPressedDispatcher.onBackPressed()
     }
@@ -1390,10 +2444,11 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
     // Permissions & deep links
     // =====================================================================
 
-    /** Android 13+ runtime permission required before Najva can show notifications. */
+    /** Android 13+ runtime permission required before Pushfa can show notifications. */
     private fun requestNotificationPermissionIfNeeded() {
+        if (!PushfaManager.isConfigured()) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (NajvaManager.hasNotificationPermission(this)) return
+        if (PushfaManager.hasNotificationPermission(this)) return
         runCatching { notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
             .onFailure { Log.w(TAG, "Notification permission request failed: \${it.message}") }
     }
@@ -1419,7 +2474,12 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         webViewContainer = findViewById(R.id.webViewContainer)
         loadingOverlay = findViewById(R.id.loadingOverlay)
         loadingContent = findViewById(R.id.loadingContent)
-        loadingStage = findViewById(R.id.loadingStage)
+        loadingLogo = findViewById(R.id.loadingLogo)
+        loadingBar = findViewById(R.id.loadingBar)
+        loadingTitle = findViewById(R.id.loadingTitle)
+        loadingSubtitle = findViewById(R.id.loadingSubtitle)
+        loadingMessage = findViewById(R.id.loadingMessage)
+        loadingCredit = findViewById(R.id.loadingCredit)
         errorContent = findViewById(R.id.errorContent)
         errorMessage = findViewById(R.id.errorMessage)
         nativeAdPlate = findViewById(R.id.nativeAdPlate)
@@ -1437,11 +2497,12 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
         window.statusBarColor = getColor(R.color.system_bar)
         window.navigationBarColor = getColor(R.color.system_bar)
 
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                Configuration.UI_MODE_NIGHT_YES
+        // The bars are white in **both** themes (see values-night/colors.xml), so
+        // their icons must always be the dark variant: light icons on a white
+        // bar are invisible, which is exactly the bug this replaces.
         val controller = WindowCompat.getInsetsController(window, window.decorView)
-        controller.isAppearanceLightStatusBars = !night
-        controller.isAppearanceLightNavigationBars = !night
+        controller.isAppearanceLightStatusBars = true
+        controller.isAppearanceLightNavigationBars = true
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.attributes.layoutInDisplayCutoutMode =
@@ -1476,22 +2537,24 @@ class MainActivity : AppCompatActivity(), WebAppBridge.HostListener {
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/LocalWebServer.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/LocalWebServer.kt",
     name: "LocalWebServer.kt",
     category: "kotlin",
     language: "kotlin",
     description: "Embedded HTTP/1.1 server on 127.0.0.1: gzip, ETag/304, correct MIME types, SPA history fallback, COOP/COEP headers.",
-    content: `package com.emochi.quickgames
+    content: `package com.labzband.balochafzar
 
 import android.content.Context
 import android.util.Log
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.ByteArrayInputStream
 import java.io.Closeable
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
@@ -1520,7 +2583,7 @@ import java.util.zip.GZIPOutputStream
  *  - \`WebAssembly.instantiateStreaming()\`               (MIME + origin)
  *  - Service workers / Cache API / IndexedDB / cookies  (http(s) origin only)
  *  - \`history.pushState\` + SPA deep links               (real path routing)
- *  - \`SharedArrayBuffer\` for threads                    (isolation headers)
+ *  - \`SharedArrayBuffer\` for threads                    (COOP + COEP credentialless)
  *
  * The socket binds to the loopback interface only (127.0.0.1) on an ephemeral
  * port, so it is never reachable from outside the device. A stable boot URL is
@@ -1536,13 +2599,33 @@ import java.util.zip.GZIPOutputStream
  *  - SPA history fallback: extension-less routes serve the entry document
  *  - Graceful 404 / 405 / 500 responses, never crashes the host app
  */
-class LocalWebServer(private val assets: WebAssetSource) {
+class LocalWebServer(
+    private val assets: WebAssetSource,
+    private val preferredPorts: IntArray = STABLE_PORTS
+) {
 
     /** Convenience constructor used by the app (APK assets). */
     constructor(context: Context) : this(AndroidWebAssetSource(context))
 
     companion object {
         private const val TAG = "LocalWebServer"
+
+        /**
+         * Loopback ports tried in order before falling back to an ephemeral one.
+         *
+         * The port is part of the WebApp's **origin** (\`http://127.0.0.1:<port>\`),
+         * and the origin is the key for \`localStorage\`, IndexedDB and Cache
+         * Storage. A random port per process (the previous \`ServerSocket(0)\`)
+         * therefore handed the game an *empty* store after every process death –
+         * force stop, low-memory kill, reboot, update – and the player restarted
+         * at level 1. Fixed ports keep the origin stable across launches; they
+         * sit below Android's ephemeral range (32768+) so no outgoing connection
+         * of another app can occupy them by chance, and a few alternatives cover
+         * the rare case of another local server holding one (the WebApp's native
+         * state mirror – \`WebAppStateStore\` – carries the progress over in that
+         * case).
+         */
+        val STABLE_PORTS = intArrayOf(27182, 27183, 27184, 27185)
 
         /** Directory inside \`assets/\` that holds the WebApp. */
         private const val WEB_ROOT = "web"
@@ -1555,6 +2638,17 @@ class LocalWebServer(private val assets: WebAssetSource) {
 
         /** Sentinel returned by [parseRange] for an unsatisfiable range. */
         private val INVALID_RANGE = LongRange.EMPTY
+
+        /**
+         * Container-side compatibility script, served at [COMPAT_URL] and
+         * injected into every HTML document of the bundle (see [CompatInjector]).
+         * It lives outside the WebApp root so a bundle can never shadow it.
+         */
+        private const val COMPAT_ASSET = "native/compat.js"
+        const val COMPAT_URL = "/__native/compat.js"
+
+        /** HTML documents above this size are streamed untouched. */
+        private const val MAX_INJECT_BYTES = 4L * 1024L * 1024L
     }
 
     /** Base URL of the running server, e.g. \`http://127.0.0.1:41235/\`. */
@@ -1599,8 +2693,7 @@ class LocalWebServer(private val assets: WebAssetSource) {
         }
         return try {
             // Loopback only – the WebApp is never exposed to the network.
-            val socket = ServerSocket(0, 64, InetAddress.getByName("127.0.0.1"))
-            socket.reuseAddress = true
+            val socket = bindLoopback()
             serverSocket = socket
             port = socket.localPort
             baseUrl = "http://127.0.0.1:$port/"
@@ -1624,6 +2717,31 @@ class LocalWebServer(private val assets: WebAssetSource) {
             false
         }
     }
+
+    /**
+     * Binds the first free port of [preferredPorts] on 127.0.0.1 (see
+     * [STABLE_PORTS]); an ephemeral port is the last resort so the app keeps
+     * working even when every preferred port is taken.
+     */
+    private fun bindLoopback(): ServerSocket {
+        val loopback = InetAddress.getByName("127.0.0.1")
+        for (candidate in preferredPorts) {
+            val socket = ServerSocket()
+            try {
+                socket.reuseAddress = true
+                socket.bind(InetSocketAddress(loopback, candidate), 64)
+                return socket
+            } catch (e: IOException) {
+                runCatching { socket.close() }
+                Log.w(TAG, "Loopback port $candidate unavailable (\${e.message}) – trying the next one")
+            }
+        }
+        Log.w(TAG, "All stable loopback ports are busy – using an ephemeral port (WebApp origin changes)")
+        return ServerSocket(0, 64, loopback).apply { reuseAddress = true }
+    }
+
+    /** True when the server runs on one of the [STABLE_PORTS]. */
+    fun isOnStablePort(): Boolean = port > 0 && preferredPorts.contains(port)
 
     /** Entry URL the WebView should navigate to: \`<base>index.html\`. */
     fun entryUrl(): String? = baseUrl?.let { it + "index.html" }
@@ -1788,6 +2906,25 @@ class LocalWebServer(private val assets: WebAssetSource) {
             return
         }
 
+        // Compatibility layer for old WebViews (polyfills + rendering policy).
+        if (request.path == COMPAT_URL) {
+            val script = assets.open(COMPAT_ASSET)?.use { String(it.readBytes(), Charsets.UTF_8) }
+            if (script == null) {
+                writeError(out, 404, "Not Found")
+                return
+            }
+            val etag = "\\"compat-" + Integer.toHexString(script.hashCode()) + "\\""
+            if (request.headers["if-none-match"]?.contains(etag) == true) {
+                writeNotModified(out, etag, "application/javascript; charset=utf-8")
+                return
+            }
+            writeText(
+                out, 200, script, "application/javascript; charset=utf-8", headOnly, etag,
+                "no-cache, must-revalidate"
+            )
+            return
+        }
+
         val decodedPath = decodePath(request.path)
         val resolved = resolveAsset(decodedPath)
         if (resolved == null) {
@@ -1802,15 +2939,43 @@ class LocalWebServer(private val assets: WebAssetSource) {
             writeError(out, 404, "Not Found")
             return
         }
-        val stream = opened.first
-        val length = opened.second
+        var stream = opened.first
+        var length = opened.second
 
         val mime = MimeTypes.forPath(assetPath)
 
+        // HTML documents get the compatibility script injected. The document is
+        // small (a Vite/webpack entry is a few kB), so it is rewritten in
+        // memory; anything unexpectedly large is streamed untouched.
+        var contentHash: Int? = null
+        if (mime.startsWith("text/html") && length in 1..MAX_INJECT_BYTES) {
+            val rewritten = runCatching {
+                val raw = stream.use { it.readBytes() }
+                CompatInjector.inject(String(raw, Charsets.UTF_8), COMPAT_URL).toByteArray(Charsets.UTF_8)
+            }.getOrNull()
+            if (rewritten == null) {
+                // The stream was consumed: reopen and serve the original.
+                val reopened = openAsset(assetPath)
+                if (reopened == null) {
+                    writeError(out, 404, "Not Found")
+                    return
+                }
+                stream = reopened.first
+                length = reopened.second
+            } else {
+                stream = ByteArrayInputStream(rewritten)
+                length = rewritten.size.toLong()
+                contentHash = rewritten.contentHashCode()
+            }
+        }
+
         // Never cache the SPA fallback with the entry document's ETag: the URL
         // and the payload differ, and a stale route would break navigation.
-        val etag = if (isSpaFallback) null
-        else "\\"" + Integer.toHexString((assetPath + length).hashCode()) + "-" + length + "\\""
+        val etag = when {
+            isSpaFallback -> null
+            contentHash != null -> "\\"" + Integer.toHexString(contentHash) + "-" + length + "\\""
+            else -> "\\"" + Integer.toHexString((assetPath + length).hashCode()) + "-" + length + "\\""
+        }
 
         val ifNoneMatch = request.headers["if-none-match"]
         if (etag != null && ifNoneMatch != null && ifNoneMatch.contains(etag)) {
@@ -1852,8 +3017,15 @@ class LocalWebServer(private val assets: WebAssetSource) {
         header.append("Cache-Control: ").append(cacheControlFor(assetPath)).append("\\r\\n")
         header.append("Accept-Ranges: bytes\\r\\n")
         header.append("X-Content-Type-Options: nosniff\\r\\n")
+        // Cross-origin isolation (SharedArrayBuffer / WebAssembly threads used
+        // by Godot, Unity and ffmpeg builds) without breaking the third-party
+        // resources a bundled WebApp typically loads (CDN scripts, web fonts,
+        // remote images, backend APIs): \`credentialless\` only strips cookies
+        // from no-CORS cross-origin loads, whereas \`require-corp\` would block
+        // them outright. WebViews older than Chromium 96 ignore the value and
+        // simply run without isolation.
         header.append("Cross-Origin-Opener-Policy: same-origin\\r\\n")
-        header.append("Cross-Origin-Embedder-Policy: require-corp\\r\\n")
+        header.append("Cross-Origin-Embedder-Policy: credentialless\\r\\n")
         header.append("Cross-Origin-Resource-Policy: same-origin\\r\\n")
         if (compress) {
             // Compressed size is unknown up-front: close-delimited response.
@@ -2122,12 +3294,12 @@ class LocalWebServer(private val assets: WebAssetSource) {
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/MimeTypes.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/MimeTypes.kt",
     name: "MimeTypes.kt",
     category: "kotlin",
     language: "kotlin",
     description: "MIME table for modern formats (wasm, mjs, webmanifest, fonts, media) with compression heuristics.",
-    content: `package com.emochi.quickgames
+    content: `package com.labzband.balochafzar
 
 import android.webkit.MimeTypeMap
 import java.util.Locale
@@ -2291,12 +3463,12 @@ object MimeTypes {
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/WebAppServerController.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/WebAppServerController.kt",
     name: "WebAppServerController.kt",
     category: "kotlin",
     language: "kotlin",
     description: "Process-wide server owner so the WebView origin \u2013 and therefore localStorage / IndexedDB \u2013 survives Activity recreation.",
-    content: `package com.emochi.quickgames
+    content: `package com.labzband.balochafzar
 
 import android.content.Context
 import android.util.Log
@@ -2396,19 +3568,22 @@ object WebAppServerController {
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/WebAppBridge.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/WebAppBridge.kt",
     name: "WebAppBridge.kt",
     category: "kotlin",
     language: "kotlin",
-    description: "window.AndroidBridge: NativeApp.appReady(), NativeAds.showInterstitial()/showRewarded()/showNative(), billing, plus trusted-origin hardening.",
-    content: `package com.emochi.quickgames
+    description: "window.AndroidBridge: NativeApp.appReady(), getDeviceProfile(), NativeAds.showInterstitial()/showRewarded()/showNative(), billing, plus trusted-origin hardening.",
+    content: `package com.labzband.balochafzar
 
+import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import android.view.Display
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
+import androidx.webkit.WebViewCompat
 import org.json.JSONObject
 import java.lang.ref.WeakReference
 
@@ -2433,7 +3608,7 @@ import java.lang.ref.WeakReference
  *  - \`NativeApp.getStartupRoute()\`   → deep-link route that opened the app
  *
  * No advertising or push identifier is ever exposed here; those stay in the
- * native layer (\`TapsellConfig\` / \`NajvaConfig\`).
+ * native layer (\`TapsellConfig\` / \`PushfaSettings\`).
  */
 class WebAppBridge(
     activity: ComponentActivity,
@@ -2443,6 +3618,8 @@ class WebAppBridge(
 ) : CafeBazaarBillingManager.BillingEventListener, TapsellManager.AdEventListener {
 
     companion object {
+        /** Loose but safe \`local@domain.tld\` check for the contact address. */
+        private val EMAIL_ADDRESS = Regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\\\.[A-Za-z]{2,}$")
         private const val TAG = "WebAppBridge"
 
         /** \`window.AndroidBridge\` */
@@ -2455,10 +3632,32 @@ class WebAppBridge(
         fun onWebAppError(message: String)
         fun onBridgeRequestBack()
         fun onBridgeRequestNativeAd(visible: Boolean, x: Int, y: Int, width: Int, height: Int)
+
+        /** Opens the CafeBazaar page of this app so the user can rate it. */
+        fun onBridgeRequestRating(): Boolean
+
+        /** Opens the CafeBazaar page of this app (updates / comments). */
+        fun onBridgeRequestStorePage(): Boolean
+
+        /**
+         * Opens the user's e-mail app with a message to [address]
+         * (\`ACTION_SENDTO\` + \`mailto:\`). Runs on the main thread.
+         */
+        fun onBridgeRequestEmail(address: String, subject: String): Boolean
+
+        /**
+         * Permanent unlocks changed (\`remove_ads\` bought / restored). The
+         * container uses this to keep its own ad policy in sync; the WebApp is
+         * informed separately through \`CafeBazaarBridge\`.
+         */
+        fun onBridgeOwnedProductsChanged(owned: Set<String>)
     }
 
     private val activityRef = WeakReference(activity)
     private val webViewRef = WeakReference(webView)
+
+    /** Native mirror of the WebApp's saved state – see [WebAppStateStore]. */
+    private val stateStore = WebAppStateStore.get(activity.applicationContext)
 
     /**
      * URL of the document currently displayed by the WebView.
@@ -2478,6 +3677,17 @@ class WebAppBridge(
     /** Route that opened the app, delivered after \`appReady()\` when unconsumed. */
     @Volatile
     var pendingRouteForWebApp: String? = null
+
+    /**
+     * Static device capabilities, captured once on the main thread (the bridge
+     * is created there) and exposed through \`getInfo().device\` so a heavy
+     * WebApp can pick its quality tier before it allocates canvases, textures
+     * or audio buffers.
+     */
+    private val deviceProfile: JSONObject = buildDeviceProfile(activity)
+
+    /** Coarse device tier (\`low\` / \`mid\` / \`high\`) the container tunes rendering for. */
+    val deviceTier: String get() = deviceProfile.optString("tier", "mid")
 
     init {
         billingManager.setEventListener(this)
@@ -2510,11 +3720,88 @@ class WebAppBridge(
             put("versionCode", BuildConfig.VERSION_CODE)
             put("debug", BuildConfig.DEBUG)
             put("serverPort", WebAppServerController.current()?.port ?: -1)
-            put("pushEnabled", context != null && NajvaManager.hasNotificationPermission(context))
-            put("pushToken", NajvaManager.subscribedToken() != null)
+            put("stableOrigin", WebAppServerController.current()?.isOnStablePort() == true)
+            put("stateMirror", true)
+            put("pushEnabled", context != null && PushfaManager.hasNotificationPermission(context))
+            put("pushToken", PushfaManager.isPushRegistered())
             put("adsReady", tapsellManager.isInitialized)
+            put("removeAdsOwned", billingManager.isRemoveAdsOwned())
+            put("ownedProducts", JSONObject.wrap(billingManager.ownedNonConsumables()))
+            put("device", deviceProfile)
+            put("deviceTier", deviceProfile.optString("tier", "mid"))
         }.toString()
     }
+
+    /** JSON blob describing the device class (also available as \`getInfo().device\`). */
+    @JavascriptInterface
+    fun getDeviceProfile(): String = safe("{}") { deviceProfile.toString() }
+
+    /**
+     * Collects the numbers a game needs to choose a quality preset. Every value
+     * is best-effort; a failure leaves the key out instead of failing the call.
+     */
+    private fun buildDeviceProfile(activity: ComponentActivity): JSONObject {
+        val profile = JSONObject()
+        var totalRamMb = -1L
+        var memoryClassMb = -1
+        var lowRam = false
+        runCatching {
+            val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            if (am != null) {
+                lowRam = am.isLowRamDevice
+                memoryClassMb = am.memoryClass
+                val info = ActivityManager.MemoryInfo()
+                am.getMemoryInfo(info)
+                totalRamMb = info.totalMem / (1024L * 1024L)
+                profile.put("lowRam", lowRam)
+                profile.put("memoryClassMb", memoryClassMb)
+                profile.put("largeMemoryClassMb", am.largeMemoryClass)
+                profile.put("totalRamMb", totalRamMb)
+            }
+        }
+        val cores = runCatching { Runtime.getRuntime().availableProcessors() }.getOrDefault(1)
+        profile.put("cpuCores", cores)
+        runCatching {
+            profile.put("refreshRate", (currentDisplay(activity)?.refreshRate ?: 60f).toDouble())
+        }
+        runCatching {
+            val metrics = activity.resources.displayMetrics
+            profile.put("densityDpi", metrics.densityDpi)
+            profile.put("density", metrics.density.toDouble())
+            profile.put("screenWidthPx", metrics.widthPixels)
+            profile.put("screenHeightPx", metrics.heightPixels)
+        }
+        runCatching {
+            val pkg = WebViewCompat.getCurrentWebViewPackage(activity)
+            profile.put("webViewPackage", pkg?.packageName ?: "")
+            profile.put("webViewVersion", pkg?.versionName ?: "")
+        }
+        profile.put("sdkInt", Build.VERSION.SDK_INT)
+        profile.put("manufacturer", Build.MANUFACTURER.orEmpty())
+        profile.put("model", Build.MODEL.orEmpty())
+
+        // Coarse tier: what a heavy Canvas / WebGL game should assume by default.
+        val tier = when {
+            lowRam || (memoryClassMb in 1..128) || (totalRamMb in 1L..2559L) -> "low"
+            (totalRamMb >= 5632L && cores >= 8) -> "high"
+            else -> "mid"
+        }
+        profile.put("tier", tier)
+        // Rendering at full device pixel ratio is the usual reason a heavy
+        // game stutters on a low/mid phone; this is the ratio it should use.
+        val suggestedDpr = when (tier) {
+            "low" -> 1.0
+            "mid" -> 1.5
+            else -> 2.0
+        }
+        profile.put("suggestedPixelRatio", suggestedDpr)
+        return profile
+    }
+
+    @Suppress("DEPRECATION")
+    private fun currentDisplay(activity: ComponentActivity): Display? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) activity.display
+        else activity.windowManager.defaultDisplay
 
     // =====================================================================
     // Readiness handshake
@@ -2569,6 +3856,92 @@ class WebAppBridge(
     @JavascriptInterface
     fun consumeStartupRoute() {
         pendingRouteForWebApp = null
+    }
+
+    // =====================================================================
+    // Store interactions (rating / app page – CafeBazaar intent)
+    // =====================================================================
+
+    /**
+     * Opens the CafeBazaar *rating* dialog for this app (Bazaar intent
+     * \`ACTION_EDIT\` + \`bazaar://details?id=<package>\`).
+     *
+     * @return true when an activity able to handle the intent was found.
+     */
+    @JavascriptInterface
+    fun openRatingPage(): Boolean = requestStore(true)
+
+    /** Opens the CafeBazaar app page (updates, comments, install). */
+    @JavascriptInterface
+    fun openStorePage(): Boolean = requestStore(false)
+
+    /** Legacy alias used by older WebApp builds. */
+    @JavascriptInterface
+    fun rateApp(): Boolean = openRatingPage()
+
+    /**
+     * Opens the user's e-mail app addressed to [address] (the game's
+     * "رابطہ کنگ" / contact button). The message is composed natively –
+     * \`ACTION_SENDTO\` with a \`mailto:\` URI, Gmail preferred, then any mail
+     * app – because a \`mailto:\` navigation inside the WebView would only work
+     * when the system resolves it and would leave the page otherwise.
+     *
+     * @return true when the request was accepted (an e-mail app is opened
+     *         asynchronously on the main thread); false for an invalid address
+     *         or when no host is attached.
+     */
+    @JavascriptInterface
+    fun openEmail(address: String?): Boolean = composeEmail(address, "")
+
+    // ---------------------------------------------------------------------
+    // Saved-state mirror (progress must survive force stop / process death)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Mirrors the WebApp's saved-state blob [value] under [key] natively.
+     * [savedAt] is the WebApp's millisecond stamp as a string. Cheap and
+     * synchronous for the caller: the value is queued and written on a
+     * background thread (see [WebAppStateStore]).
+     */
+    @JavascriptInterface
+    fun saveState(key: String?, value: String?, savedAt: String?): Boolean =
+        safe(false) { stateStore.save(key, value, savedAt) }
+
+    /** \`{"key","value","savedAt"}\` JSON of the mirrored blob, or null. */
+    @JavascriptInterface
+    fun loadState(key: String?): String? = safe<String?>(null) { stateStore.load(key) }
+
+    /** Drops the mirrored blob for [key]. */
+    @JavascriptInterface
+    fun clearState(key: String?): Boolean = safe(false) { stateStore.clear(key) }
+
+    /** Same as [openEmail] with a pre-filled subject. */
+    @JavascriptInterface
+    fun composeEmail(address: String?, subject: String?): Boolean = safe(false) {
+        val to = address?.trim().orEmpty()
+        if (!EMAIL_ADDRESS.matches(to)) return@safe false
+        val listener = hostListener ?: return@safe false
+        val target: Any? = activityRef.get() ?: webViewRef.get() ?: return@safe false
+        val line = subject?.trim().orEmpty().take(200)
+        val open = { listener.onBridgeRequestEmail(to, line) }
+        when (target) {
+            is ComponentActivity -> target.runOnUiThread { runCatching { open() } }
+            is WebView -> target.post { runCatching { open() } }
+            else -> return@safe false
+        }
+        true
+    }
+
+    private fun requestStore(rating: Boolean): Boolean {
+        val listener = hostListener ?: return false
+        val target: Any? = activityRef.get() ?: webViewRef.get() ?: return false
+        val open = { if (rating) listener.onBridgeRequestRating() else listener.onBridgeRequestStorePage() }
+        when (target) {
+            is ComponentActivity -> target.runOnUiThread { runCatching { open() } }
+            is WebView -> target.post { runCatching { open() } }
+            else -> return false
+        }
+        return true
     }
 
     // =====================================================================
@@ -2644,6 +4017,14 @@ class WebAppBridge(
     @JavascriptInterface
     fun isAvailable(): Boolean = safe(false) { billingManager.isBillingAvailable() }
 
+    /**
+     * True when the permanent \`remove_ads\` unlock is owned. Interstitials are
+     * suppressed natively in that case, so the WebApp only needs this to hide
+     * the "remove ads" offer.
+     */
+    @JavascriptInterface
+    fun isRemoveAdsOwned(): Boolean = safe(false) { billingManager.isRemoveAdsOwned() }
+
     @JavascriptInterface
     fun isBillingAvailable(): Boolean = isAvailable()
 
@@ -2683,6 +4064,17 @@ class WebAppBridge(
 
     override fun onConnectionStatusChanged(result: ConnectionResult) {
         dispatch("CafeBazaarBridge", "onConnectionResult", result.toJson().toString())
+    }
+
+    override fun onOwnedProductsChanged(owned: Set<String>) {
+        // Keep the native ad policy in sync with what the user actually owns.
+        tapsellManager.interstitialsSuppressed = owned.contains(CafeBazaarConfig.SKU_REMOVE_ADS)
+        post { hostListener?.onBridgeOwnedProductsChanged(owned) }
+        val payload = JSONObject().apply {
+            put("removeAdsOwned", owned.contains(CafeBazaarConfig.SKU_REMOVE_ADS))
+            put("owned", JSONObject.wrap(owned))
+        }.toString()
+        dispatch("CafeBazaarBridge", "onOwnedProductsChanged", payload, "nativeapp:ownedproducts")
     }
 
     override fun onPurchaseResult(result: PurchaseResult) {
@@ -2826,12 +4218,12 @@ class WebAppBridge(
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/TapsellConfig.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/TapsellConfig.kt",
     name: "TapsellConfig.kt",
     category: "kotlin",
     language: "kotlin",
     description: "Tapsell app key and ad zones resolved from BuildConfig \u2013 never hard-coded, never exposed to JavaScript.",
-    content: `package com.emochi.quickgames
+    content: `package com.labzband.balochafzar
 
 /**
  * Native-only Tapsell configuration.
@@ -2891,14 +4283,17 @@ object TapsellConfig {
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/TapsellManager.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/TapsellManager.kt",
     name: "TapsellManager.kt",
     category: "kotlin",
     language: "kotlin",
     description: "Tapsell interstitial / rewarded / native lifecycle with request queueing and total error containment.",
-    content: `package com.emochi.quickgames
+    content: `package com.labzband.balochafzar
 
 import android.app.Activity
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.ViewGroup
 import androidx.annotation.MainThread
@@ -2941,8 +4336,19 @@ class TapsellManager(private val activity: Activity) {
     companion object {
         private const val TAG = "TapsellManager"
 
-        /** Hard timeout for a JS-originated request waiting on an ad. */
-        private const val REQUEST_TIMEOUT_MS = 18_000L
+        /** How long after a show request a full-screen ad is assumed to be in front. */
+        private const val AD_PRESENTATION_GRACE_MS = 15_000L
+
+        /**
+         * How long a \`show…()\` request may wait for an ad that is still
+         * loading. An interstitial sits between two levels: the player is
+         * looking at a "please wait" screen, so a slow network gives up
+         * quickly and the game moves on (the ad stays preloaded for the next
+         * break). A rewarded video was asked for by the player, who is
+         * willing to wait a little longer for the reward.
+         */
+        private const val INTERSTITIAL_WAIT_MS = 6_000L
+        private const val REWARDED_WAIT_MS = 18_000L
     }
 
     /** Callbacks consumed by [WebAppBridge] and forwarded to JavaScript. */
@@ -2952,6 +4358,14 @@ class TapsellManager(private val activity: Activity) {
 
     private val activityRef = WeakReference(activity)
     private var listener: AdEventListener? = null
+
+    /**
+     * Second observer of the same event stream, for the host Activity: it
+     * settles the WebView after a full-screen ad (\`*_closed\`, show errors)
+     * independently of whether the WebApp listens. Always called on the main
+     * thread.
+     */
+    var hostListener: ((type: String, data: JSONObject) -> Unit)? = null
 
     private val initializing = AtomicBoolean(false)
 
@@ -2984,6 +4398,37 @@ class TapsellManager(private val activity: Activity) {
     var isShowingAd: Boolean = false
         private set
 
+    /** Uptime at which a full-screen ad was last handed to the SDK for display. */
+    @Volatile
+    private var showRequestedAt = 0L
+
+    /**
+     * True while a full-screen ad is (very likely) in front of the host: the
+     * SDK reported it open, or it was asked to show one within the last
+     * [AD_PRESENTATION_GRACE_MS] and has not closed it yet. Unlike [isShowingAd]
+     * this also covers the moment between \`showInterstitialAd()\` and the SDK's
+     * \`onOpened\`, when the host Activity is already being stopped.
+     */
+    fun isPresentingAd(): Boolean =
+        isShowingAd || (showRequestedAt != 0L &&
+                SystemClock.uptimeMillis() - showRequestedAt < AD_PRESENTATION_GRACE_MS)
+
+    /**
+     * Called from the host Activity's \`onResume()\`. A resumed host means no
+     * full-screen ad Activity is in front of it any more – e.g. a notification
+     * tap or deep link brought the app back over a running interstitial – so a
+     * flag the SDK never cleared (its \`onClosed\` only fires when the ad Activity
+     * finishes normally) must not keep swallowing the back button.
+     */
+    @MainThread
+    fun onHostResumed() {
+        if (isShowingAd) {
+            Log.w(TAG, "Host resumed while an ad was marked as showing – clearing the stale flag")
+            isShowingAd = false
+        }
+        showRequestedAt = 0L
+    }
+
     /** Serializes "ready immediate" events injected into the WebApp. */
     @Volatile
     private var interstitialShownCount: Int = 0
@@ -2993,6 +4438,15 @@ class TapsellManager(private val activity: Activity) {
 
     /** Views registered as native ad slots, keyed by slot name. */
     private val nativeSlots = HashMap<String, ViewGroup>()
+
+    /**
+     * Set by the host when the user owns the permanent \`remove_ads\` unlock.
+     * Interstitial requests are acknowledged but silently skipped, so the
+     * WebApp never has to know *why* no ad appeared (and can never re-enable
+     * them by accident). Rewarded videos stay available – they are opt-in.
+     */
+    @Volatile
+    var interstitialsSuppressed: Boolean = false
 
     // ------------------------------------------------------------------
     // Setup
@@ -3082,11 +4536,11 @@ class TapsellManager(private val activity: Activity) {
         activityInstance.runOnUiThread {
             when (adType) {
                 "interstitial" -> if (pendingInterstitial) {
-                    pendingInterstitial = false
+                    settlePending("interstitial")
                     showInterstitial()
                 }
                 "rewarded" -> if (pendingRewarded) {
-                    pendingRewarded = false
+                    settlePending("rewarded")
                     showRewarded()
                 }
                 "native" -> if (pendingNative) {
@@ -3121,6 +4575,10 @@ class TapsellManager(private val activity: Activity) {
                     override fun error(message: String) {
                         interstitialLoading.set(false)
                         interstitialResponseId = null
+                        // The ad_error settles the WebApp's promise; a request
+                        // that stayed queued would pop the *next* successfully
+                        // loaded interstitial into the middle of a level.
+                        settlePending("interstitial")
                         dispatch(
                             "ad_error",
                             payload(error = "INTERSTITIAL_REQUEST_FAILED", adType = "interstitial", message = message)
@@ -3129,6 +4587,7 @@ class TapsellManager(private val activity: Activity) {
                 })
         }.onFailure {
             interstitialLoading.set(false)
+            settlePending("interstitial")
             dispatch("ad_error", payload(error = "INTERSTITIAL_REQUEST_EXCEPTION", adType = "interstitial", message = it.message))
         }
     }
@@ -3141,6 +4600,13 @@ class TapsellManager(private val activity: Activity) {
      */
     @MainThread
     fun showInterstitial(): Boolean {
+        if (interstitialsSuppressed) {
+            dispatch(
+                "interstitial_skipped",
+                payload(adType = "interstitial").apply { put("reason", "REMOVE_ADS_OWNED") }
+            )
+            return true
+        }
         val activityInstance = activityRef.get() ?: return false
         val zone = TapsellConfig.ZONE_INTERSTITIAL
         if (zone.isBlank()) {
@@ -3148,7 +4614,7 @@ class TapsellManager(private val activity: Activity) {
             return false
         }
         if (!isInitialized) {
-            pendingInterstitial = true
+            queuePending("interstitial")
             initialize()
             dispatch("ad_request_queued", payload(adType = "interstitial"))
             return true
@@ -3156,13 +4622,14 @@ class TapsellManager(private val activity: Activity) {
 
         val responseId = interstitialResponseId
         if (responseId == null) {
-            pendingInterstitial = true
+            queuePending("interstitial")
             preloadInterstitial()
             dispatch("ad_request_queued", payload(adType = "interstitial", message = "loading"))
             return true
         }
 
         interstitialResponseId = null
+        showRequestedAt = SystemClock.uptimeMillis()
         return runCatching {
             TapsellPlus.showInterstitialAd(activityInstance, responseId,
                 object : AdShowListener() {
@@ -3173,6 +4640,7 @@ class TapsellManager(private val activity: Activity) {
 
                     override fun onClosed(adModel: TapsellPlusAdModel?) {
                         isShowingAd = false
+                        showRequestedAt = 0L
                         interstitialShownCount++
                         dispatch(
                             "interstitial_closed",
@@ -3185,6 +4653,7 @@ class TapsellManager(private val activity: Activity) {
 
                     override fun onError(error: TapsellPlusErrorModel?) {
                         isShowingAd = false
+                        showRequestedAt = 0L
                         dispatch(
                             "ad_error",
                             payload(
@@ -3198,6 +4667,7 @@ class TapsellManager(private val activity: Activity) {
                 })
             true
         }.getOrElse {
+            showRequestedAt = 0L
             Log.e(TAG, "showInterstitialAd threw", it)
             dispatch("ad_error", payload(error = "INTERSTITIAL_SHOW_EXCEPTION", adType = "interstitial", message = it.message))
             preloadInterstitial()
@@ -3229,6 +4699,7 @@ class TapsellManager(private val activity: Activity) {
                     override fun error(message: String) {
                         rewardedLoading.set(false)
                         rewardedResponseId = null
+                        settlePending("rewarded")
                         dispatch(
                             "ad_error",
                             payload(error = "REWARDED_REQUEST_FAILED", adType = "rewarded", message = message)
@@ -3237,6 +4708,7 @@ class TapsellManager(private val activity: Activity) {
                 })
         }.onFailure {
             rewardedLoading.set(false)
+            settlePending("rewarded")
             dispatch("ad_error", payload(error = "REWARDED_REQUEST_EXCEPTION", adType = "rewarded", message = it.message))
         }
     }
@@ -3250,7 +4722,7 @@ class TapsellManager(private val activity: Activity) {
             return false
         }
         if (!isInitialized) {
-            pendingRewarded = true
+            queuePending("rewarded")
             initialize()
             dispatch("ad_request_queued", payload(adType = "rewarded"))
             return true
@@ -3258,13 +4730,14 @@ class TapsellManager(private val activity: Activity) {
 
         val responseId = rewardedResponseId
         if (responseId == null) {
-            pendingRewarded = true
+            queuePending("rewarded")
             preloadRewarded()
             dispatch("ad_request_queued", payload(adType = "rewarded", message = "loading"))
             return true
         }
 
         rewardedResponseId = null
+        showRequestedAt = SystemClock.uptimeMillis()
         return runCatching {
             TapsellPlus.showRewardedVideoAd(activityInstance, responseId,
                 object : AdShowListener() {
@@ -3289,6 +4762,7 @@ class TapsellManager(private val activity: Activity) {
 
                     override fun onClosed(adModel: TapsellPlusAdModel?) {
                         isShowingAd = false
+                        showRequestedAt = 0L
                         dispatch(
                             "rewarded_closed",
                             payload(adType = "rewarded").apply {
@@ -3301,6 +4775,7 @@ class TapsellManager(private val activity: Activity) {
 
                     override fun onError(error: TapsellPlusErrorModel?) {
                         isShowingAd = false
+                        showRequestedAt = 0L
                         dispatch(
                             "ad_error",
                             payload(error = "REWARDED_SHOW_FAILED", adType = "rewarded", message = error?.toString())
@@ -3310,6 +4785,7 @@ class TapsellManager(private val activity: Activity) {
                 })
             true
         }.getOrElse {
+            showRequestedAt = 0L
             Log.e(TAG, "showRewardedVideoAd threw", it)
             dispatch("ad_error", payload(error = "REWARDED_SHOW_EXCEPTION", adType = "rewarded", message = it.message))
             preloadRewarded()
@@ -3462,10 +4938,70 @@ class TapsellManager(private val activity: Activity) {
     @Volatile
     private var pendingNative: Boolean = false
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val interstitialDeadline = Runnable {
+        if (!pendingInterstitial) return@Runnable
+        pendingInterstitial = false
+        Log.w(TAG, "No interstitial ready within \${INTERSTITIAL_WAIT_MS} ms – the game continues without it")
+        dispatch(
+            "ad_error",
+            payload(error = "INTERSTITIAL_TIMEOUT", adType = "interstitial", message = "no ad was ready in time")
+        )
+    }
+
+    private val rewardedDeadline = Runnable {
+        if (!pendingRewarded) return@Runnable
+        pendingRewarded = false
+        Log.w(TAG, "No rewarded video ready within \${REWARDED_WAIT_MS} ms")
+        dispatch(
+            "ad_error",
+            payload(error = "REWARDED_TIMEOUT", adType = "rewarded", message = "no ad was ready in time")
+        )
+    }
+
+    /**
+     * Remembers a show request the SDK cannot satisfy yet and starts the
+     * clock: a queued request is either fulfilled by [onAdReady], settled by
+     * the preload's \`ad_error\`, or times out with an \`ad_error\` of its own.
+     * Whatever happens, the WebApp's promise settles and the player is never
+     * left on a "please wait" screen – nor surprised by an ad that pops up
+     * minutes later in the middle of a level.
+     */
+    @MainThread
+    private fun queuePending(adType: String) {
+        when (adType) {
+            "interstitial" -> {
+                pendingInterstitial = true
+                mainHandler.removeCallbacks(interstitialDeadline)
+                mainHandler.postDelayed(interstitialDeadline, INTERSTITIAL_WAIT_MS)
+            }
+            "rewarded" -> {
+                pendingRewarded = true
+                mainHandler.removeCallbacks(rewardedDeadline)
+                mainHandler.postDelayed(rewardedDeadline, REWARDED_WAIT_MS)
+            }
+        }
+    }
+
+    /** Clears a queued request and its deadline (fulfilled or failed). */
+    private fun settlePending(adType: String) {
+        when (adType) {
+            "interstitial" -> {
+                pendingInterstitial = false
+                mainHandler.removeCallbacks(interstitialDeadline)
+            }
+            "rewarded" -> {
+                pendingRewarded = false
+                mainHandler.removeCallbacks(rewardedDeadline)
+            }
+        }
+    }
+
     /** Cancels every queued request (used when the Activity is destroyed). */
     fun cancelPending() {
-        pendingInterstitial = false
-        pendingRewarded = false
+        settlePending("interstitial")
+        settlePending("rewarded")
         pendingNative = false
     }
 
@@ -3473,6 +5009,7 @@ class TapsellManager(private val activity: Activity) {
         cancelPending()
         runCatching { destroyNative() }
         listener = null
+        hostListener = null
     }
 
     // ------------------------------------------------------------------
@@ -3488,61 +5025,81 @@ class TapsellManager(private val activity: Activity) {
         }
 
     private fun dispatch(type: String, data: JSONObject) {
+        // Every ad event is logged at INFO: \`adb logcat -s TapsellManager\` is
+        // the timeline used to diagnose "the game broke after the ad" reports.
+        Log.i(TAG, "ad event: $type $data")
         runCatching { listener?.onAdEvent(type, data) }
             .onFailure { Log.w(TAG, "Listener failed for $type: \${it.message}") }
+        val host = hostListener ?: return
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            runCatching { host(type, data) }
+                .onFailure { Log.w(TAG, "Host listener failed for $type: \${it.message}") }
+        } else {
+            mainHandler.post {
+                runCatching { host(type, data) }
+                    .onFailure { Log.w(TAG, "Host listener failed for $type: \${it.message}") }
+            }
+        }
     }
 }
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/NajvaConfig.kt",
-    name: "NajvaConfig.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/PushfaSettings.kt",
+    name: "PushfaSettings.kt",
     category: "kotlin",
     language: "kotlin",
-    description: "Native Najva metadata keys and notification channel ids.",
-    content: `package com.emochi.quickgames
+    description: "Native Pushfa public key and notification channel ids resolved from BuildConfig.",
+    content: `package com.labzband.balochafzar
 
 /**
- * Native-only Najva push configuration.
+ * Native-only Pushfa push configuration.
  *
- * Values are injected at build time (\`BuildConfig\`/manifest placeholders) and
- * are **never** exposed to the WebApp or the JavaScript bridge:
+ * The **public** API key is injected at build time (\`BuildConfig\`) and is never
+ * exposed to the WebApp or the JavaScript bridge. The Pushfa *private* key and
+ * the Firebase service account belong to the sending server only and must
+ * never be embedded in the APK.
  *
  * \`\`\`
- * NAJVA_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
- * NAJVA_WEBSITE_ID=12345
+ * PUSHFA_API_PUBLIC_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
  * \`\`\`
  */
-object NajvaConfig {
+object PushfaSettings {
 
-    /** Najva \`apiKey\`, read from the SDK's manifest meta-data (single source of truth). */
-    const val META_API_KEY = "com.najva.sdk.metadata.API_KEY"
+    /** \`api_public_key\` of the Android service created in the Pushfa panel. */
+    val API_PUBLIC_KEY: String = BuildConfig.PUSHFA_API_PUBLIC_KEY
 
-    /** Najva \`websiteId\`, read from the SDK's manifest meta-data. */
-    const val META_WEBSITE_ID = "com.najva.sdk.metadata.WEBSITE_ID"
+    /** True when a public key was provided at build time. */
+    val isConfigured: Boolean
+        get() = API_PUBLIC_KEY.isNotBlank() && !API_PUBLIC_KEY.startsWith("YOUR_")
 
     /**
-     * Notification channel IDs. High priority notifications use the "important"
-     * channel (heads-up), everything else the default one.
+     * Notification channel used by every Pushfa notification.
+     *
+     * The id is also referenced by the manifest
+     * (\`com.google.firebase.messaging.default_notification_channel_id\`) so the
+     * rare FCM "notification" payload that bypasses the SDK renderer lands in
+     * the same channel.
      */
-    const val CHANNEL_DEFAULT_ID = "quickgames_default"
-    const val CHANNEL_IMPORTANT_ID = "quickgames_important"
+    const val CHANNEL_ID = "labzband_default"
+
+    /** Secondary channel offered to the user for heads-up / urgent messages. */
+    const val CHANNEL_IMPORTANT_ID = "labzband_important"
 
     /** Permission request code used by the notification runtime permission flow. */
-    const val PERMISSION_REQUEST_CODE = 0x4E41 // "NA"
+    const val PERMISSION_REQUEST_CODE = 0x5046 // "PF"
 }
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/NajvaManager.kt",
-    name: "NajvaManager.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/PushfaManager.kt",
+    name: "PushfaManager.kt",
     category: "kotlin",
     language: "kotlin",
-    description: "Najva push: 100% native. Channels, listeners, foreground/background handling, Android 13+ permission.",
-    content: `package com.emochi.quickgames
+    description: "Pushfa push: 100% native. SDK init, registration, channels, Android 13+ permission, notification tap -> deep link.",
+    content: `package com.labzband.balochafzar
 
 import android.Manifest
-import android.app.Activity
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -3553,51 +5110,60 @@ import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
-import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import com.najva.sdk.NajvaClient
-import com.najva.sdk.NajvaConfiguration
-import java.lang.ref.WeakReference
+import com.pushfa.sdk.Pushfa
+import com.pushfa.sdk.PushfaConfig
+import com.pushfa.sdk.PushfaResult
+import com.pushfa.sdk.PushfaState
 
 /**
- * NajvaManager
- * ============
+ * PushfaManager
+ * =============
  *
- * 100% native Najva push-notification integration.
+ * 100% native Pushfa (https://pushfa.com) push-notification integration.
  *
- *  - Najva is initialized **only** in the native layer (see [App]).
- *  - Notifications are rendered by the Najva SDK as **normal Android system
- *    notifications**. Nothing about notifications lives in \`index.html\`, the
- *    WebApp, or the WebView.
- *  - Foreground / background delivery, notification taps and "open in app"
- *    actions are handled natively; taps are converted into WebApp routes and
- *    buffered by [DeepLinkBus] until the WebApp reports readiness.
+ *  - The SDK is initialized **only** in the native layer (see [App]) with the
+ *    public key from [PushfaSettings]; the WebApp never sees any identifier.
+ *  - Notifications are rendered by the Pushfa SDK as **normal Android system
+ *    notifications** (channel, icon and accent colour are handed over here).
+ *    Nothing about notifications lives in \`index.html\`, the WebApp or the
+ *    WebView.
+ *  - A tap re-opens [MainActivity] through the SDK's own click Activity. A
+ *    relative link (\`/game/42\`) arrives as \`Pushfa.EXTRA_TARGET_URL\`, is turned
+ *    into a WebApp route by [DeepLinkBus] and buffered until the WebApp reports
+ *    readiness.
+ *  - Android 13+: the FCM token is registered with Pushfa only after the
+ *    \`POST_NOTIFICATIONS\` permission has been granted ([registerForPush]).
  *
- * The SDK is registered as an [Application.ActivityLifecycleCallbacks] so it
- * can track foreground state and keep subscriptions accurate. Doing this once
- * at process start prevents duplicate registration (which would double-deliver
- * every notification).
+ * Firebase Cloud Messaging is the transport. Without a Firebase configuration
+ * (\`google-services.json\` or \`FIREBASE_*\` build values) the subscriber is still
+ * created on the Pushfa side, but no push token can be obtained; the SDK reports
+ * that as a failed result which is logged here – the container never crashes
+ * because of push.
  */
-object NajvaManager {
+object PushfaManager {
 
-    private const val TAG = "NajvaManager"
-
-    @Volatile
-    private var registered = false
+    private const val TAG = "PushfaManager"
 
     @Volatile
     private var initialized = false
 
     @Volatile
+    private var sdkStarted = false
+
+    @Volatile
     var lastError: String? = null
         private set
 
+    /** Pushfa subscriber id once the backend acknowledged this install. */
     @Volatile
-    private var currentActivity: WeakReference<Activity> = WeakReference(null)
+    var subscriberId: String? = null
+        private set
 
-    /** True when an activity is between onResume and onPause. */
+    /** True once a push token was registered with Pushfa in this process. */
     @Volatile
-    var isForeground: Boolean = false
+    var hasPushToken: Boolean = false
         private set
 
     // ------------------------------------------------------------------
@@ -3605,7 +5171,7 @@ object NajvaManager {
     // ------------------------------------------------------------------
 
     /**
-     * Initializes Najva exactly once per process.
+     * Initializes Pushfa exactly once per process.
      *
      * Called from [App.onCreate]; safe to call again (idempotent).
      */
@@ -3618,137 +5184,114 @@ object NajvaManager {
             // Channels are cheap and safe to create even without credentials.
             createNotificationChannels(app)
 
-            // Without real credentials the SDK cannot register with the Najva
-            // backend; initializing it anyway only produces stack traces, so the
-            // container degrades gracefully and logs a single actionable line.
-            if (!isConfigured(app)) {
+            // Without a public key the SDK cannot talk to the Pushfa backend;
+            // starting it anyway only produces stack traces, so the container
+            // degrades gracefully and logs a single actionable line.
+            if (!PushfaSettings.isConfigured) {
                 Log.i(
                     TAG,
-                    "Najva credentials are missing (NAJVA_API_KEY / NAJVA_WEBSITE_ID) – " +
-                            "push notifications stay disabled until they are provided."
+                    "Pushfa public key is missing (PUSHFA_API_PUBLIC_KEY) – " +
+                            "push notifications stay disabled until it is provided."
                 )
                 return
             }
 
-            configureListeners()
-            registerClient(app)
+            runCatching {
+                val config = PushfaConfig(
+                    apiPublicKey = PushfaSettings.API_PUBLIC_KEY,
+                    // Token registration is attempted right away on devices that
+                    // already allow notifications (Android < 13 or permission
+                    // granted earlier); MainActivity triggers it after the
+                    // runtime permission dialog otherwise.
+                    autoRegister = true,
+                    autoDisplayNotifications = true,
+                    trackVisits = true,
+                    notificationChannelId = PushfaSettings.CHANNEL_ID,
+                    notificationChannelName = app.getString(R.string.notification_channel_default_name),
+                    notificationChannelImportance = NotificationManager.IMPORTANCE_HIGH,
+                    smallIconResId = R.drawable.ic_notification,
+                    accentColor = ContextCompat.getColor(app, R.color.primary)
+                )
+
+                if (BuildConfig.DEBUG) {
+                    // Observe deliveries in logcat; \`false\` keeps the SDK renderer
+                    // in charge of the system notification.
+                    Pushfa.setNotificationListener { message ->
+                        Log.d(TAG, "Notification received: id=\${message.id} title=\${message.title}")
+                        false
+                    }
+                }
+
+                Pushfa.initialize(app, config) { result -> onStateResult("initialize", result) }
+                sdkStarted = true
+                Log.i(TAG, "Pushfa SDK \${Pushfa.VERSION} started")
+            }.onFailure {
+                lastError = it.message
+                Log.e(TAG, "Pushfa initialization failed", it)
+            }
         }
     }
 
-    /** True when the API key (UUID) and website id are present in the manifest. */
-    fun isConfigured(context: Context): Boolean = runCatching {
-        val info = context.packageManager.getApplicationInfo(
-            context.packageName,
-            PackageManager.GET_META_DATA
-        )
-        val meta = info.metaData
-        val apiKey = meta?.getString(NajvaConfig.META_API_KEY).orEmpty()
-        val websiteId = meta?.getString(NajvaConfig.META_WEBSITE_ID).orEmpty()
-        apiKey.isNotBlank() && websiteId.isNotBlank()
-    }.getOrDefault(false)
+    /** True when a public key is configured (the SDK may or may not be reachable). */
+    fun isConfigured(): Boolean = PushfaSettings.isConfigured
 
-    private fun configureListeners() {
+    /**
+     * Registers (or refreshes) the FCM token with Pushfa.
+     *
+     * Call after the Android 13+ notification permission was granted; a no-op
+     * when push is not configured or notifications are disabled by the user.
+     */
+    fun registerForPush(context: Context) {
+        if (!sdkStarted) return
+        if (!hasNotificationPermission(context)) {
+            Log.d(TAG, "registerForPush skipped: notifications are not allowed")
+            return
+        }
         runCatching {
-            val configuration = NajvaConfiguration()
-
-            // Notification shown by the Najva SDK while the app is in the
-            // foreground: hand the small icon + channels over so the system
-            // notification looks exactly like the background one.
-            configuration.setNotificationSmallIcon(R.drawable.ic_notification)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                configuration.setLowPriorityChannel(NajvaConfig.CHANNEL_DEFAULT_ID)
-                configuration.setHighPriorityChannel(NajvaConfig.CHANNEL_IMPORTANT_ID)
-            }
-
-            // A notification was received (foreground or background).
-            configuration.setReceiveNotificationListener { notificationId ->
-                Log.d(TAG, "Notification received: $notificationId")
-            }
-
-            // Subscription token available (e.g. to sync with a backend).
-            configuration.setUserSubscriptionListener { token ->
-                Log.d(TAG, "Subscribed with token: \${token.take(8)}…")
-            }
-
-            NajvaClient.configuration = configuration
+            Pushfa.registerForPush { result -> onStateResult("registerForPush", result) }
         }.onFailure {
             lastError = it.message
-            Log.e(TAG, "Failed to configure Najva listeners", it)
+            Log.w(TAG, "Pushfa.registerForPush failed: \${it.message}")
         }
     }
 
-    private fun registerClient(app: Application) {
-        runCatching {
-            // The SDK returns the lifecycle callbacks it needs; registering them
-            // lets Najva track foreground/background state accurately (and is
-            // what the official sample does).
-            val callbacks = NajvaClient.getInstance(app, NajvaClient.configuration)
-            if (callbacks != null) {
-                app.registerActivityLifecycleCallbacks(callbacks)
-            }
-            NajvaClient.getInstance().setLogEnabled(BuildConfig.DEBUG)
-        }.onFailure {
-            lastError = it.message
-            Log.e(TAG, "NajvaClient.getInstance failed", it)
-        }
-
-        runCatching {
-            if (!registered) {
-                registered = true
-                app.registerActivityLifecycleCallbacks(object :
-                    Application.ActivityLifecycleCallbacks {
-
-                    override fun onActivityCreated(activity: Activity, savedInstanceState: android.os.Bundle?) {
-                        currentActivity = WeakReference(activity)
-                    }
-
-                    override fun onActivityStarted(activity: Activity) {
-                        currentActivity = WeakReference(activity)
-                    }
-
-                    override fun onActivityResumed(activity: Activity) {
-                        currentActivity = WeakReference(activity)
-                        isForeground = true
-                    }
-
-                    override fun onActivityPaused(activity: Activity) {
-                        isForeground = false
-                    }
-
-                    override fun onActivityStopped(activity: Activity) = Unit
-
-                    override fun onActivitySaveInstanceState(activity: Activity, outState: android.os.Bundle) = Unit
-
-                    override fun onActivityDestroyed(activity: Activity) {
-                        if (currentActivity.get() === activity) {
-                            currentActivity = WeakReference(null)
-                        }
-                    }
-                })
-            }
-        }.onFailure {
-            Log.w(TAG, "Najva lifecycle registration failed: \${it.message}")
+    private fun onStateResult(operation: String, result: PushfaResult<PushfaState>) {
+        if (result.isSuccess) {
+            val state = result.value
+            subscriberId = state?.subscriberId
+            hasPushToken = !state?.pushToken.isNullOrBlank() || state?.hasPush == true
+            lastError = null
+            Log.i(
+                TAG,
+                "Pushfa $operation ok: subscriber=\${state?.subscriberId?.take(8)}… " +
+                        "push=\${hasPushToken} topics=\${state?.topics?.size ?: 0}"
+            )
+        } else {
+            val error = result.error
+            lastError = error?.message
+            // A missing Firebase project shows up here as a failed token fetch;
+            // it is a configuration issue, not a runtime fault.
+            Log.w(TAG, "Pushfa $operation failed (http=\${error?.httpStatus}): \${error?.message}")
         }
     }
 
-    /** Detaches the current foreground activity (called from Activity.onDestroy). */
-    fun detachActivity(activity: Activity) {
-        if (currentActivity.get() === activity) {
-            currentActivity = WeakReference(null)
-        }
-    }
+    /** Push token known to the SDK (diagnostics only – never for the WebApp). */
+    fun pushToken(): String? = runCatching { Pushfa.getPushToken() }.getOrNull()
 
-    /** Exposes the subscribed push token for diagnostics (never for the WebApp). */
-    fun subscribedToken(): String? = runCatching {
-        NajvaClient.getInstance().subscribedToken
-    }.getOrNull()
+    /** True when the device is registered for push with Pushfa. */
+    fun isPushRegistered(): Boolean = hasPushToken || !pushToken().isNullOrBlank()
 
     // ------------------------------------------------------------------
     // Notification channels
     // ------------------------------------------------------------------
 
-    /** Creates the app's notification channels on Android 8+. */
+    /**
+     * Creates the app's notification channels on Android 8+.
+     *
+     * The default channel id is the one handed to the Pushfa SDK, so the SDK
+     * finds it already configured (description, lights, vibration, badge) and
+     * never creates its bare fallback version.
+     */
     fun createNotificationChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         runCatching {
@@ -3756,14 +5299,14 @@ object NajvaManager {
                     as? NotificationManager ?: return
             createChannel(
                 manager,
-                NajvaConfig.CHANNEL_DEFAULT_ID,
+                PushfaSettings.CHANNEL_ID,
                 context.getString(R.string.notification_channel_default_name),
                 context.getString(R.string.notification_channel_default_description),
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_HIGH
             )
             createChannel(
                 manager,
-                NajvaConfig.CHANNEL_IMPORTANT_ID,
+                PushfaSettings.CHANNEL_IMPORTANT_ID,
                 context.getString(R.string.notification_channel_important_name),
                 context.getString(R.string.notification_channel_important_description),
                 NotificationManager.IMPORTANCE_HIGH
@@ -3781,6 +5324,7 @@ object NajvaManager {
         description: String,
         importance: Int
     ) {
+        if (manager.getNotificationChannel(id) != null) return
         val channel = NotificationChannel(id, name, importance).apply {
             this.description = description
             enableLights(true)
@@ -3801,43 +5345,45 @@ object NajvaManager {
     // Runtime permission (Android 13+)
     // ------------------------------------------------------------------
 
-    /** True when the app may post notifications. */
+    /** True when the app may post notifications (permission + user setting). */
     fun hasNotificationPermission(context: Context): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
-        return ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.POST_NOTIFICATIONS
-        ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    /** Human-readable diagnostics used by the native loading screen logs. */
-    fun describe(context: Context? = null): String = buildString {
-        if (context != null) {
-            append("configured=").append(isConfigured(context))
-            append(", ")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) return false
         }
-        append("initialized=").append(initialized)
-        append(", foreground=").append(isForeground)
-        append(", token=").append(if (subscribedToken().isNullOrEmpty()) "none" else "ok")
+        return runCatching { NotificationManagerCompat.from(context).areNotificationsEnabled() }
+            .getOrDefault(true)
     }
 
-    /** Notification priority helper used by diagnostics. */
-    @Suppress("unused")
-    fun defaultPriority(): Int = NotificationCompat.PRIORITY_DEFAULT
+    /** Human-readable diagnostics used by the native logs. */
+    fun describe(context: Context? = null): String = buildString {
+        append("configured=").append(PushfaSettings.isConfigured)
+        append(", started=").append(sdkStarted)
+        if (context != null) {
+            append(", allowed=").append(hasNotificationPermission(context))
+        }
+        append(", subscriber=").append(if (subscriberId.isNullOrEmpty()) "none" else "ok")
+        append(", token=").append(if (isPushRegistered()) "ok" else "none")
+        lastError?.let { append(", lastError=").append(it) }
+    }
 }
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/DeepLinkBus.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/DeepLinkBus.kt",
     name: "DeepLinkBus.kt",
     category: "kotlin",
     language: "kotlin",
     description: "Buffers push/deep-link routes until the WebApp reports readiness, then hands them to the router.",
-    content: `package com.emochi.quickgames
+    content: `package com.labzband.balochafzar
 
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import com.pushfa.sdk.Pushfa
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -3847,9 +5393,10 @@ import java.util.concurrent.CopyOnWriteArrayList
  * Process-wide hand-off channel between the *native* push/openers and the
  * WebView.
  *
- * Push notifications are handled entirely in the native layer: Najva posts an
+ * Push notifications are handled entirely in the native layer: Pushfa posts an
  * Android system notification, and a tap on it re-opens (or brings to front)
- * [MainActivity] with a deep-link route (\`Intent.EXTRA_TEXT\` / \`data\` URI).
+ * [MainActivity] with a deep-link route (\`Pushfa.EXTRA_TARGET_URL\`, plain
+ * extras or the \`data\` URI).
  *
  * A tap can happen **before** the WebApp is ready (cold start), so routes are
  * buffered here until the page reports readiness through
@@ -3932,14 +5479,17 @@ object DeepLinkBus {
     /**
      * Extracts a WebApp route from an [Intent]. Supports:
      *
-     *  - \`https://<anything>/#/route\` and \`.../route\`  (Najva "open in app")
-     *  - custom scheme \`quickgames://open/game/123\`
+     *  - \`Pushfa.EXTRA_TARGET_URL\` – relative link of a Pushfa notification
+     *    (\`/game/42\`), or its absolute URL when no browser could open it
+     *  - \`https://<anything>/#/route\` and \`.../route\`
+     *  - custom scheme \`labzband://open/game/123\` (and legacy \`quickgames://\`)
      *  - plain extras: \`EXTRA_TEXT\`, \`deeplink\`, \`route\`, \`url\`
      */
     fun routeFromIntent(intent: Intent?): String? {
         intent ?: return null
 
-        val candidates = ArrayList<String?>(6)
+        val candidates = ArrayList<String?>(7)
+        candidates.add(runCatching { intent.getStringExtra(Pushfa.EXTRA_TARGET_URL) }.getOrNull())
         candidates.add(intent.getStringExtra(Intent.EXTRA_TEXT))
         candidates.add(intent.getStringExtra("deeplink"))
         candidates.add(intent.getStringExtra("deep_link"))
@@ -3990,14 +5540,15 @@ object DeepLinkBus {
 `
   },
   {
-    path: "app/src/main/java/com/emochi/quickgames/CafeBazaarBillingManager.kt",
+    path: "app/src/main/java/com/labzband/balochafzar/CafeBazaarBillingManager.kt",
     name: "CafeBazaarBillingManager.kt",
     category: "kotlin",
     language: "kotlin",
     description: "CafeBazaar in-app billing through the official Poolakey SDK.",
-    content: `package com.emochi.quickgames
+    content: `package com.labzband.balochafzar
 
 import android.app.Activity
+import android.content.Context
 import android.util.Log
 import androidx.activity.ComponentActivity
 import ir.cafebazaar.poolakey.Connection
@@ -4010,15 +5561,32 @@ import java.lang.ref.WeakReference
 
 /**
  * Manages CafeBazaar In-App Billing using Poolakey SDK.
- * Package: com.emochi.quickgames
+ * Package: com.labzband.balochafzar
  * Automatic token consumption is enabled for all coin packs.
  */
 class CafeBazaarBillingManager(activity: ComponentActivity) {
     companion object {
         const val TAG = "CafeBazaarBilling"
+
+        /** SharedPreferences file that mirrors the permanent unlocks. */
+        private const val PREFS_NAME = "cafebazaar_billing"
+
+        /** Key holding the owned non-consumable product IDs. */
+        private const val KEY_OWNED_PRODUCTS = "owned_non_consumables"
     }
 
     private val activityRef = WeakReference(activity)
+    private val appContext: Context = activity.applicationContext
+
+    /**
+     * Non-consumable products the user owns (\`remove_ads\`).
+     *
+     * Kept in memory **and** mirrored into \`SharedPreferences\` so the purchase
+     * survives restarts and can gate interstitials even when CafeBazaar is
+     * temporarily unreachable.
+     */
+    private val ownedProducts: MutableSet<String> = loadOwnedProducts()
+
     private var payment: Payment? = null
     private var paymentConnection: Connection? = null
     private var isConnected: Boolean = false
@@ -4028,6 +5596,9 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         fun onPurchaseResult(result: PurchaseResult)
         fun onConsumeResult(result: ConsumeResult)
         fun onPurchasesQueryResult(result: QueryPurchasesResult)
+
+        /** Fired when the set of permanent (non-consumable) unlocks changes. */
+        fun onOwnedProductsChanged(owned: Set<String>)
     }
 
     private var eventListener: BillingEventListener? = null
@@ -4045,6 +5616,10 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
             val securityCheck = if (CafeBazaarConfig.isSecurityCheckEnabled()) {
                 SecurityCheck.Enable(rsaPublicKey = CafeBazaarConfig.CAFEBAZAAR_PUBLIC_KEY)
             } else {
+                // Without the console's RSA key no receipt can be verified, and
+                // a WebApp that (rightly) credits only verified purchases will
+                // refuse every one of them – the player pays, gets nothing.
+                Log.w(TAG, "CafeBazaar RSA key not configured: purchases will be reported with verified=false")
                 SecurityCheck.Disable
             }
             val paymentConfig = PaymentConfiguration(localSecurityCheck = securityCheck)
@@ -4088,6 +5663,57 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     }
 
     fun isBillingAvailable(): Boolean = isConnected
+
+    /** True when the user bought the permanent "remove ads" unlock. */
+    fun isRemoveAdsOwned(): Boolean =
+        safe(false) { ownedProducts.contains(CafeBazaarConfig.SKU_REMOVE_ADS) }
+
+    /** Snapshot of every owned non-consumable product. */
+    fun ownedNonConsumables(): Set<String> = safe(emptySet<String>()) { HashSet(ownedProducts) }
+
+    private fun markOwned(productId: String) {
+        if (!CafeBazaarConfig.isNonConsumable(productId)) return
+        if (ownedProducts.add(productId)) persistOwnedProducts()
+    }
+
+    private fun syncOwnedProducts(purchased: List<String>) {
+        val permanent = CafeBazaarConfig.permanentUnlocks(purchased)
+        if (permanent != ownedProducts) {
+            ownedProducts.clear()
+            ownedProducts.addAll(permanent)
+            persistOwnedProducts() // persists *and* notifies once
+        }
+    }
+
+    private fun persistOwnedProducts() {
+        runCatching {
+            prefs().edit()
+                .putStringSet(KEY_OWNED_PRODUCTS, HashSet(ownedProducts))
+                .apply()
+        }.onFailure { Log.w(TAG, "Could not persist owned products: \${it.message}") }
+        notifyOwnedProductsChanged()
+    }
+
+    private fun loadOwnedProducts(): MutableSet<String> {
+        val stored = runCatching {
+            prefs().getStringSet(KEY_OWNED_PRODUCTS, emptySet()) ?: emptySet()
+        }.getOrDefault(emptySet())
+        return HashSet(stored)
+    }
+
+    private fun prefs() = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun notifyOwnedProductsChanged() {
+        eventListener?.onOwnedProductsChanged(ownedNonConsumables())
+    }
+
+    private inline fun <T> safe(fallback: T, block: () -> T): T =
+        try {
+            block()
+        } catch (e: Exception) {
+            Log.w(TAG, "billing call failed: \${e.message}")
+            fallback
+        }
 
     fun purchase(productId: String, payload: String? = null) {
         val activity = activityRef.get() ?: run {
@@ -4149,6 +5775,9 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
                     )
                 }
                 purchaseSucceed { purchaseInfo ->
+                    // Permanent unlocks are remembered locally so interstitials
+                    // stay off even before the next store query.
+                    markOwned(purchaseInfo.productId)
                     // Purchase succeeded: Notify web layer
                     notifyPurchaseResult(
                         PurchaseResult(
@@ -4158,11 +5787,14 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
                             orderId = purchaseInfo.orderId,
                             purchaseTime = purchaseInfo.purchaseTime,
                             payload = purchaseInfo.payload,
-                            message = "Purchase completed successfully"
+                            message = "Purchase completed successfully",
+                            verified = CafeBazaarConfig.isSecurityCheckEnabled()
                         )
                     )
-                    // Auto-consume consumable coin packs so user doesn't have to manually manage tokens!
-                    if (purchaseInfo.productId.startsWith("coin_pack_")) {
+                    // Auto-consume consumable coin packs so the user does not
+                    // have to manage tokens; permanent unlocks (remove_ads) are
+                    // deliberately left in the purchase list.
+                    if (CafeBazaarConfig.isConsumable(purchaseInfo.productId)) {
                         consumePurchase(purchaseInfo.purchaseToken)
                     }
                 }
@@ -4247,6 +5879,7 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         try {
             paymentInstance.getPurchasedProducts {
                 querySucceed { purchases: List<PurchaseInfo> ->
+                    syncOwnedProducts(purchases.map { it.productId })
                     val resultList = purchases.map { p ->
                         PurchaseResult(
                             success = true,
@@ -4255,7 +5888,8 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
                             orderId = p.orderId,
                             purchaseTime = p.purchaseTime,
                             payload = p.payload,
-                            message = "Active purchase"
+                            message = "Active purchase",
+                            verified = CafeBazaarConfig.isSecurityCheckEnabled()
                         )
                     }
                     notifyPurchasesQueryResult(
@@ -4283,8 +5917,9 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     private fun queryAndAutoConsumePurchases() {
         payment?.getPurchasedProducts {
             querySucceed { purchases ->
+                syncOwnedProducts(purchases.map { it.productId })
                 for (p in purchases) {
-                    if (p.productId.startsWith("coin_pack_")) {
+                    if (CafeBazaarConfig.isConsumable(p.productId)) {
                         consumePurchase(p.purchaseToken)
                     }
                 }
@@ -4413,7 +6048,7 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         android:id="@+id/loadingOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@drawable/bg_loading_gradient"
+        android:background="@color/white"
         android:clickable="true"
         android:focusable="true"
         android:visibility="visible">
@@ -4424,68 +6059,74 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:gravity="center_horizontal"
+            android:layoutDirection="rtl"
             android:orientation="vertical"
             android:paddingStart="32dp"
             android:paddingEnd="32dp">
 
-            <!-- Green plate with app emblem + progress ring on top of it -->
-            <FrameLayout
-                android:layout_width="148dp"
-                android:layout_height="148dp">
+            <!-- ================= Animated loading artwork =================
+                 White canvas, green artwork: the logo lands with a soft
+                 overshoot, the title shimmers, and a slim progress line slides
+                 under the copy. No circles, no spinning ring. -->
+            <ImageView
+                android:id="@+id/loadingLogo"
+                android:layout_width="112dp"
+                android:layout_height="112dp"
+                android:contentDescription="@string/app_name"
+                android:elevation="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/logo_labzband" />
 
-                <FrameLayout
-                    android:layout_width="132dp"
-                    android:layout_height="132dp"
-                    android:layout_gravity="center"
-                    android:background="@drawable/bg_plate">
-
-                    <ImageView
-                        android:layout_width="72dp"
-                        android:layout_height="72dp"
-                        android:layout_gravity="center"
-                        android:contentDescription="@string/app_name"
-                        android:src="@drawable/ic_loading_emblem" />
-                </FrameLayout>
-
-                <ProgressBar
-                    android:id="@+id/loadingSpinner"
-                    style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="148dp"
-                    android:layout_height="148dp"
-                    android:layout_gravity="center"
-                    android:indeterminate="true"
-                    android:indeterminateTint="@color/loading_spinner"
-                    android:progressTint="@color/loading_spinner"
-                    android:progressBackgroundTint="@color/loading_spinner_track" />
-            </FrameLayout>
-
-            <TextView
+            <com.labzband.balochafzar.ShimmerTextView
                 android:id="@+id/loadingTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="26dp"
-                android:fontFamily="@font/vazirmatn_semibold"
+                android:fontFamily="@font/vazirmatn_bold"
                 android:text="@string/loading_title"
                 android:textAppearance="@style/TextAppearance.LoadingTitle" />
+
+            <!-- Tagline – always visible, it is not a boot status. -->
+            <TextView
+                android:id="@+id/loadingSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:fontFamily="@font/vazirmatn_medium"
+                android:gravity="center"
+                android:text="@string/loading_subtitle"
+                android:textAppearance="@style/TextAppearance.LoadingSubtitle" />
 
             <TextView
                 android:id="@+id/loadingMessage"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:fontFamily="@font/vazirmatn_medium"
+                android:layout_marginTop="24dp"
+                android:fontFamily="@font/vazirmatn_regular"
+                android:gravity="center"
                 android:text="@string/loading_message"
                 android:textAppearance="@style/TextAppearance.LoadingMessage" />
 
-            <TextView
-                android:id="@+id/loadingStage"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:fontFamily="@font/vazirmatn_regular"
-                android:text="@string/loading_stage_boot"
-                android:textAppearance="@style/TextAppearance.LoadingStage" />
+            <com.labzband.balochafzar.LoadingBarView
+                android:id="@+id/loadingBar"
+                android:layout_width="148dp"
+                android:layout_height="4dp"
+                android:layout_marginTop="20dp" />
+
         </LinearLayout>
+
+        <!-- Credit, pinned to the bottom of the loading canvas -->
+        <TextView
+            android:id="@+id/loadingCredit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="34dp"
+            android:fontFamily="@font/vazirmatn_medium"
+            android:gravity="center"
+            android:letterSpacing="0.06"
+            android:text="@string/loading_credit"
+            android:textAppearance="@style/TextAppearance.LoadingCredit" />
 
         <!-- Error / retry state replaces the plate content when booting fails -->
         <LinearLayout
@@ -4578,19 +6219,36 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     <color name="black">#FF000000</color>
 
     <!-- Loading screen surfaces -->
-    <color name="loading_background_top">#F1FBF4</color>
-    <color name="loading_background_bottom">#D6EFE0</color>
+    <color name="loading_background_top">#FFFFFFFF</color>
+    <color name="loading_background_bottom">#FFFFFFFF</color>
     <color name="plate_surface">#FFFFFFFF</color>
-    <color name="plate_surface_end">#E8F8EE</color>
+    <color name="plate_surface_end">#FFFFFFFF</color>
     <color name="plate_ring">#34D399</color>
-    <color name="plate_inner_ring">#B8E7CC</color>
+    <color name="plate_inner_ring">#DCF3E4</color>
     <color name="plate_shadow">#1A047857</color>
 
-    <color name="loading_title">#065F46</color>
+    <color name="loading_title">#0B7A57</color>
     <color name="loading_message">#0F766E</color>
-    <color name="loading_stage">#3F8F73</color>
+    <color name="loading_stage">#4B7F6C</color>
     <color name="loading_spinner">#10B981</color>
     <color name="loading_spinner_track">#B8E7CC</color>
+
+    <!-- Exit confirmation dialog (light green) -->
+    <color name="exit_scrim">#5C064E3B</color>
+    <color name="exit_surface">#F3FCF6</color>
+    <color name="exit_surface_end">#E1F6E9</color>
+    <color name="exit_border">#B8E7CC</color>
+    <color name="exit_title">#0B7A57</color>
+    <color name="exit_message">#3F6F5D</color>
+    <color name="exit_rate_bg">#10B981</color>
+    <color name="exit_rate_bg_pressed">#059669</color>
+    <color name="exit_rate_text">#FFFFFF</color>
+    <color name="exit_neutral_bg">#FFFFFF</color>
+    <color name="exit_neutral_border">#CBEBD8</color>
+    <color name="exit_cancel_text">#0F766E</color>
+    <color name="exit_quit_bg">#FEE2E2</color>
+    <color name="exit_quit_bg_pressed">#FECACA</color>
+    <color name="exit_quit_text">#B91C1C</color>
 
     <!-- Error / retry state -->
     <color name="error_ring">#F59E0B</color>
@@ -4602,7 +6260,7 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     <color name="retry_button_text">#FFFFFF</color>
 
     <!-- System chrome -->
-    <color name="system_bar">#F1FBF4</color>
+    <color name="system_bar">#FFFFFFFF</color>
     <color name="webview_background">#FFFFFFFF</color>
 
     <!-- Native ad plate -->
@@ -4626,22 +6284,27 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     description: "Persian (RTL) strings: \u00ab\u062f\u0631 \u062d\u0627\u0644 \u0628\u0627\u0631\u06af\u0630\u0627\u0631\u06cc\u2026\u00bb, boot stages, error/retry copy.",
     content: `<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">QuickGames</string>
+    <string name="app_name">لبزبند</string>
 
     <!-- ==================== Native loading screen ==================== -->
-    <string name="loading_title">QuickGames</string>
-    <string name="loading_message">در حال بارگذاری...</string>
-    <string name="loading_stage_boot">راه‌اندازی سرور داخلی…</string>
-    <string name="loading_stage_webview">آماده‌سازی نمایشگر وب…</string>
-    <string name="loading_stage_webapp">در انتظار آماده‌شدن برنامه…</string>
-    <string name="loading_stage_finishing">آماده‌سازی نهایی…</string>
+    <string name="loading_title">لبزبند</string>
+    <string name="loading_message">لیب لوڈ بوھگ ءَ ایں۔</string>
+    <string name="loading_subtitle">بلوچی مئے وتی شہد ایں زبان ایں</string>
 
     <!-- ==================== Error / retry state ==================== -->
     <string name="error_title">بارگذاری ناموفق بود</string>
     <string name="error_message_default">ارتباط با سرور داخلی برنامه برقرار نشد. لطفاً دوباره تلاش کنید.</string>
     <string name="error_message_webview">نمایشگر وب نتوانست برنامه را بارگذاری کند. لطفاً دوباره تلاش کنید.</string>
     <string name="error_message_crashed">نمایشگر وب به‌طور غیرمنتظره بسته شد. برنامه دوباره بارگذاری می‌شود.</string>
+    <string name="error_renderer_crash_loop">برنامه چند بار پشت‌سرهم متوقف شد؛ احتمالاً حافظهٔ دستگاه کافی نیست. برنامه‌های دیگر را ببندید و دوباره تلاش کنید.</string>
     <string name="error_retry">تلاش مجدد</string>
+
+    <!-- ==================== WebView version advice ==================== -->
+    <string name="webview_update_title">به‌روزرسانی Android System WebView</string>
+    <string name="webview_update_message">نسخهٔ WebView این دستگاه (نسخهٔ %1$d) قدیمی است و ممکن است رنگ‌ها و صفحه‌های بازی درست نمایش داده نشوند. لطفاً «Android System WebView» را از بازار به‌روز کنید و بازی را دوباره باز کنید.</string>
+    <string name="webview_update_action">به‌روزرسانی</string>
+    <string name="webview_update_later">بعداً</string>
+    <string name="webview_update_unavailable">صفحهٔ WebView در فروشگاه پیدا نشد؛ آن را از بازار یا گوگل‌پلی به‌روز کنید.</string>
 
     <!-- ==================== Notification permission ==================== -->
     <string name="notification_channel_default_name">اعلان‌ها</string>
@@ -4657,6 +6320,19 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     <string name="native_ad_loading">در حال دریافت تبلیغ…</string>
     <string name="native_ad_unavailable">تبلیغی برای نمایش موجود نیست</string>
     <string name="native_ad_close">بستن تبلیغ</string>
+    <string name="email_chooser_title">ارسال ایمیل با…</string>
+    <string name="email_app_missing">برنامه‌ای برای ارسال ایمیل پیدا نشد. نشانی %1$s در حافظه کپی شد.</string>
+    <string name="bazaar_not_installed">برای ثبت امتیاز، برنامه کافه‌بازار باید روی دستگاه نصب باشد.</string>
+    <string name="loading_credit">A Game By BalochAfzar</string>
+
+    <!-- Exit confirmation dialog -->
+    <string name="exit_dialog_title">می‌خواهید از بازی خارج شوید؟</string>
+    <string name="exit_dialog_message">امتیاز دادن به لبزبند کمک زیادی به ما می‌کند.</string>
+    <string name="exit_dialog_rate">امتیاز بده</string>
+    <string name="exit_dialog_cancel">انصراف</string>
+    <string name="exit_dialog_exit">خروج</string>
+    <string name="exit_dialog_rated">سپاس! پنجرهٔ امتیازدهی بازار باز شد.</string>
+    <string name="exit_dialog_rate_unavailable">برای امتیاز دادن باید برنامهٔ بازار نصب باشد.</string>
 </resources>
 `
   },
@@ -4698,6 +6374,11 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         <item name="android:textStyle">bold</item>
     </style>
 
+    <style name="TextAppearance.LoadingSubtitle" parent="TextAppearance.MaterialComponents.Body1">
+        <item name="android:textColor">@color/loading_stage</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
     <style name="TextAppearance.LoadingMessage" parent="TextAppearance.MaterialComponents.Subtitle1">
         <item name="android:textColor">@color/loading_message</item>
         <item name="android:textSize">17sp</item>
@@ -4707,6 +6388,12 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     <style name="TextAppearance.LoadingStage" parent="TextAppearance.MaterialComponents.Caption">
         <item name="android:textColor">@color/loading_stage</item>
         <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="TextAppearance.LoadingCredit" parent="TextAppearance.MaterialComponents.Caption">
+        <item name="android:textColor">@color/loading_stage</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textAllCaps">false</item>
     </style>
 
     <style name="TextAppearance.ErrorTitle" parent="TextAppearance.MaterialComponents.Headline6">
@@ -4732,6 +6419,19 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         <item name="elevation">4dp</item>
         <item name="android:paddingStart">32dp</item>
         <item name="android:paddingEnd">32dp</item>
+    </style>
+    <!-- Light green, animated exit confirmation dialog -->
+    <style name="Theme.Labzband.ExitDialog" parent="Theme.MaterialComponents.Dialog">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowAnimationStyle">@style/Animation.Labzband.ExitDialog</item>
+    </style>
+
+    <style name="Animation.Labzband.ExitDialog" parent="@android:style/Animation.Dialog">
+        <item name="android:windowEnterAnimation">@anim/dialog_enter</item>
+        <item name="android:windowExitAnimation">@anim/dialog_exit</item>
     </style>
 </resources>
 `
@@ -4770,70 +6470,26 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     language: "html",
     description: "WebApp entry document served over HTTP by the container.",
     content: `<!doctype html>
-<html lang="fa" dir="rtl">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5.0" />
-  <title>هسته اجرای برنامه — Native Container</title>
-  <meta name="theme-color" content="#10B981" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="format-detection" content="telephone=no" />
-
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%2310B981'/%3E%3Cpath d='M18 17l-5 7 5 7M30 17l5 7-5 7' stroke='%23fff' stroke-width='3.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-
-  <!-- Local (offline) Vazirmatn — no CDN request, instant RTL typography -->
-  <link rel="stylesheet" href="./fonts/vazirmatn-local.css" />
-  <link rel="stylesheet" href="./css/style.css" />
-</head>
-<body>
-  <!-- Boot splash inside the WebApp: hidden the moment the app is interactive.
-       It is separate from the *native* loading plate and is only there to keep
-       first paint clean while the modules below initialize. -->
-  <div id="web-boot" class="web-boot" aria-hidden="true">
-    <div class="web-boot__spinner"></div>
-  </div>
-
-  <header class="app-bar">
-    <div class="app-bar__brand">
-      <svg viewBox="0 0 48 48" width="30" height="30" aria-hidden="true">
-        <rect width="48" height="48" rx="12" fill="var(--brand)"/>
-        <path d="M18 17l-5 7 5 7M30 17l5 7-5 7" stroke="#fff" stroke-width="3.4"
-              fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <div>
-        <strong>هسته اجرای برنامه</strong>
-        <small>Android Container • Local HTTP Server + WebView</small>
-      </div>
-    </div>
-    <div id="runtime-badge" class="badge badge--muted">در حال بررسی…</div>
-  </header>
-
-  <nav class="tabs" role="tablist">
-    <a class="tab" href="#/ads" role="tab">تبلیغات</a>
-    <a class="tab" href="#/capabilities" role="tab">قابلیت‌ها</a>
-    <a class="tab" href="#/container" role="tab">محتوا</a>
-    <a class="tab" href="#/about" role="tab">درباره</a>
-  </nav>
-
-  <main id="view" class="view" role="main">
-    <!-- Views are rendered by js/app.js -->
-  </main>
-
-  <footer class="status-bar">
-    <span id="status-text" class="status-bar__text">در حال بارگذاری...</span>
-    <span id="status-dot" class="status-bar__dot"></span>
-  </footer>
-
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
-
-  <!-- Native bridge facade (exposes NativeApp / NativeAds / CafeBazaar) -->
-  <script src="./js/native-bridge.js"></script>
-  <!-- Application code -->
-  <script src="./js/app.js"></script>
-</body>
+<html lang="bal" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>لبزبند - Balochi Word Connect</title>
+    <meta name="description" content="لبزبند - وش آتکیت پہ بلوچی لوز پیوست ءِ گوازی ءَ! A vibrant Balochi Word Connect puzzle game." />
+    <meta property="og:title" content="لبزبند - Balochi Word Connect" />
+    <meta property="og:description" content="لبزبند - گوازی بلوچی لوز پیوست و پٹگ پہ شہید ایں بلوچی زبان و کافه‌بازار" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script type="module" crossorigin src="/assets/index-FEH5KQLT.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/react-DfSJUp79.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-A8Pz3AFe.css">
+  </head>
+  <body class="bg-[#FAF7F2] text-stone-900 select-none overflow-x-hidden antialiased">
+    <div id="root"></div>
+    <script src="/native-bridge.js"></script>
+  </body>
 </html>
+
 `
   },
   {
@@ -4849,19 +6505,25 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
  * Thin, dependency-free JavaScript facade over the native container.
  *
  * The WebApp only ever talks to logical APIs – it never sees a Tapsell app key,
- * an ad-zone id, a Najva website id or a push token. Everything is native:
+ * an ad-zone id, a Pushfa key or a push token. Everything is native:
  *
  *   Android App -> Local HTTP Server -> WebView -> assets/web/index.html
  *
  * Public API
  * ----------
  *   NativeApp.appReady()                  tell the container the WebApp is ready
+ *   NativeApp.setBackHandler(fn)          handle the phone's back button
  *   NativeApp.isNative()                  true inside the container
  *   NativeApp.getInfo()                   container metadata (JsonObject)
+ *   NativeApp.getDeviceProfile()          device tier / RAM / cores / refresh rate
  *   NativeApp.getStartupRoute()           deep-link route that opened the app
  *   NativeApp.onBackPressed               optional hook for hardware back
  *   NativeApp.onEvent(event)              override to receive container events
- *   NativeApp.on(eventName, handler)      subscribe to container events
+ *   NativeApp.on(eventName, handler)      subscribe to container events:
+ *       'pause' / 'resume'                app went to background / foreground
+ *       'memorywarning'                   { level, critical } – free caches now
+ *       'resize'                          { width, height, orientation, dpr }
+ *       'deeplink'                        route string from a notification tap
  *
  *   NativeAds.showInterstitial()          -> Promise<AdResult>
  *   NativeAds.showRewarded()              -> Promise<AdResult>
@@ -4994,6 +6656,7 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
   // NativeApp
   // ---------------------------------------------------------------------
   var appReadySent = false;
+  var backHandler = null;
 
   var NativeApp = {
     /** True when running inside the Android container. */
@@ -5014,8 +6677,44 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
       return !!acknowledged;
     },
 
-    /** Container metadata: { platform, appVersion, serverPort, pushEnabled, ... } */
+    /** Container metadata: { platform, appVersion, serverPort, pushEnabled, device, ... } */
     getInfo: function () { return parse(call('getInfo', '{}'), {}); },
+
+    /**
+     * Device class for quality presets, measured natively:
+     *   { tier: 'low'|'mid'|'high', suggestedPixelRatio, lowRam, totalRamMb,
+     *     memoryClassMb, cpuCores, refreshRate, screenWidthPx, screenHeightPx,
+     *     webViewVersion, ... }
+     * Outside the container a conservative guess from navigator.* is returned.
+     */
+    getDeviceProfile: function () {
+      var profile = parse(call('getDeviceProfile', ''), null);
+      if (profile && profile.tier) return profile;
+      var cores = (navigator.hardwareConcurrency | 0) || 2;
+      var mem = navigator.deviceMemory || 0;
+      var tier = (mem && mem <= 2) || cores <= 2 ? 'low' : (mem >= 6 && cores >= 8 ? 'high' : 'mid');
+      return {
+        tier: tier,
+        suggestedPixelRatio: tier === 'low' ? 1 : (tier === 'mid' ? 1.5 : 2),
+        lowRam: tier === 'low',
+        totalRamMb: mem ? mem * 1024 : -1,
+        cpuCores: cores,
+        refreshRate: 60,
+        screenWidthPx: Math.round((window.screen && window.screen.width || 0) * (window.devicePixelRatio || 1)),
+        screenHeightPx: Math.round((window.screen && window.screen.height || 0) * (window.devicePixelRatio || 1)),
+        estimated: true
+      };
+    },
+
+    /**
+     * Pixel ratio a heavy Canvas / WebGL game should render at on this device
+     * (never above the real devicePixelRatio).
+     */
+    getRenderPixelRatio: function () {
+      var dpr = window.devicePixelRatio || 1;
+      var suggested = Number(NativeApp.getDeviceProfile().suggestedPixelRatio) || dpr;
+      return Math.max(1, Math.min(dpr, suggested));
+    },
 
     /** Deep-link route that opened the app (e.g. "game/42"), or ''. */
     getStartupRoute: function () {
@@ -5033,6 +6732,47 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
 
     /** Asks the container to navigate back. */
     navigateBack: function () { return !!call('navigateBack', false); },
+
+    /**
+     * Registers the handler the container calls when the phone's back button is
+     * pressed. Return \`true\` when the WebApp navigated one page back (or closed
+     * a modal) – the container then stays in the app. Return \`false\` (or do not
+     * register a handler at all) and the container shows its exit dialog.
+     *
+     * @param {function(): boolean} handler
+     * @returns {boolean} true when the handler was accepted.
+     *
+     * @example
+     *   NativeApp.setBackHandler(function () {
+     *     if (closeAnyOpenModal()) return true;   // modal closed
+     *     if (state.screen === 'level') { state.goto('chapters'); return true; }
+     *     return false;                           // nothing left -> exit dialog
+     *   });
+     */
+    setBackHandler: function (handler) {
+      backHandler = typeof handler === 'function' ? handler : null;
+      return backHandler !== null;
+    },
+
+    /**
+     * Entry point used by the container. Calls the registered back handler; a
+     * WebApp may also override this function directly.
+     *
+     * The container dispatches a cancelable \`nativeapp:back\` DOM event when this
+     * returns false, so \`document.addEventListener('nativeapp:back', e => {
+     * e.preventDefault(); … })\` works as well.
+     *
+     * @returns {boolean} true when the back press was handled inside the page.
+     */
+    onBackPressed: function () {
+      if (!backHandler) return false;
+      try {
+        return backHandler() === true;
+      } catch (e) {
+        if (window.console && console.warn) console.warn('[NativeApp] back handler failed', e);
+        return false;
+      }
+    },
 
     /** Show/hide the native ad plate. */
     showNativeAd: function () { return !!call('showNative', false); },
@@ -5237,7 +6977,21 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
       call('consumePurchase', undefined, String(purchaseToken));
       return true;
     },
-    getPurchases: function () { return !!call('getPurchases', false); }
+    getPurchases: function () { return !!call('getPurchases', false); },
+    /**
+     * True when the permanent \`remove_ads\` unlock is owned. Interstitials are
+     * already suppressed natively in that case, so this is only needed to hide
+     * the offer.
+     */
+    isRemoveAdsOwned: function () { return !!call('isRemoveAdsOwned', false); },
+
+    // ---- CafeBazaar store intents (rating / app page) ----
+    /** Opens the CafeBazaar rating dialog for this app. */
+    openRatingPage: function () { return !!call('openRatingPage', false); },
+    /** Opens the CafeBazaar app page (updates, comments). */
+    openStorePage: function () { return !!call('openStorePage', false); },
+    /** Legacy alias. */
+    rateApp: function () { return !!call('openRatingPage', false); }
   };
 
   // ---------------------------------------------------------------------
@@ -5267,6 +7021,12 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
 
     onPurchasesQueryResult: function (result) {
       window.dispatchEvent(new CustomEvent('cafebazaar:purchases', { detail: parse(result, {}) }));
+    },
+
+    /** Fired when the set of permanent unlocks changes (bought / restored). */
+    onOwnedProductsChanged: function (result) {
+      var data = parse(result, {});
+      window.dispatchEvent(new CustomEvent('cafebazaar:ownedproducts', { detail: data }));
     }
   };
 
@@ -5287,6 +7047,23 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
   });
   window.addEventListener('nativeapp:ready', function (e) {
     if (e && e.detail) appEmitter.emit('container:ready', e.detail);
+  });
+  window.addEventListener('nativeapp:ownedproducts', function (e) {
+    if (e && e.detail) appEmitter.emit('ownedproducts', e.detail);
+  });
+  // Lifecycle + resource signals from the container (heavy games pause their
+  // loops, mute audio and drop caches on these).
+  window.addEventListener('nativeapp:pause', function (e) {
+    appEmitter.emit('pause', (e && e.detail) || {});
+  });
+  window.addEventListener('nativeapp:resume', function (e) {
+    appEmitter.emit('resume', (e && e.detail) || {});
+  });
+  window.addEventListener('nativeapp:memorywarning', function (e) {
+    appEmitter.emit('memorywarning', (e && e.detail) || { level: 0, critical: false });
+  });
+  window.addEventListener('nativeapp:resize', function (e) {
+    appEmitter.emit('resize', (e && e.detail) || {});
   });
 
   if (document.readyState === 'loading') {
@@ -5514,7 +7291,7 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         '<dl class="kv">' +
           '<div><dt>سرور داخلی</dt><dd>127.0.0.1</dd></div>' +
           '<div><dt>پروتکل</dt><dd>HTTP/1.1 + gzip</dd></div>' +
-          '<div><dt>پوش</dt><dd>Najva (native)</dd></div>' +
+          '<div><dt>پوش</dt><dd>Pushfa (native)</dd></div>' +
           '<div><dt>تبلیغات</dt><dd>Tapsell (native)</dd></div>' +
           '<div><dt>پرداخت</dt><dd>CafeBazaar / Poolakey</dd></div>' +
         '</dl>' +
@@ -5778,6 +7555,14 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
         runAutotest();
         return true;
       }
+      if (target === 'rating') {
+        // Exercises the CafeBazaar rating intent path (native bridge).
+        var opened = CafeBazaar.openRatingPage();
+        log('CafeBazaar.openRatingPage() -> ' + opened);
+        console.log('RATING test ' + JSON.stringify({ opened: opened }));
+        toast(opened ? 'صفحه امتیازدهی باز شد' : 'کافه‌بازار در دسترس نیست');
+        return true;
+      }
       if (routes[target]) {
         location.hash = '#/' + target;
       } else {
@@ -5844,6 +7629,20 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     });
   }
 
+  // ---- hardware back button -------------------------------------------------
+  // The container calls this when the phone's back button is pressed. Returning
+  // true means "handled inside the WebApp"; returning false falls through to the
+  // container's exit dialog. A real game would walk its own screen stack here
+  // (level -> chapter list -> main menu -> false).
+  NativeApp.setBackHandler(function () {
+    var name = currentRoute();
+    if (name !== 'ads') {
+      location.hash = '#/ads';   // back to the first page instead of leaving
+      return true;
+    }
+    return false;                // nothing left to go back to -> exit dialog
+  });
+
   // Re-paint the container view whenever it is shown.
   var originalRender = render;
   render = function () {
@@ -5875,7 +7674,19 @@ class CafeBazaarBillingManager(activity: ComponentActivity) {
     category: "web",
     language: "css",
     description: "Green-plate RTL styling for the reference WebApp.",
-    content: `/* =====================================================================
+    content: `/* Game surface: nothing on screen is selectable or draggable. The native
+   container enforces this too (see ContainerWebView), this is the CSS half. */
+*:not(input):not(textarea) {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+img, a { -webkit-user-drag: none; }
+
+/* =====================================================================
    Container WebApp skeleton — light-green "plate" theme, RTL, Vazirmatn.
    Replace this file (and js/app.js) with your own bundle; the container
    only requires assets/web/index.html and the appReady() handshake.
@@ -6294,7 +8105,7 @@ The bridge is plain ES5-compatible JavaScript with no dependencies.
 * SPA history fallback: extension-less routes return \`index.html\`.
 * Cross-origin isolation headers (\`COOP\`/\`COEP\`) for \`SharedArrayBuffer\`.
 * Hardware acceleration, Canvas/WebGL, fullscreen video, file uploads.
-* Native Tapsell ads and Najva push — all identifiers stay native.
+* Native Tapsell ads and Pushfa push — all identifiers stay native.
 
 ## Sample app
 
@@ -6308,7 +8119,7 @@ local server, native ads, deep links). Delete them when you drop in your build.
     name: "proguard-rules.pro",
     category: "gradle",
     language: "proguard",
-    description: "R8 rules keeping the JS bridge, Poolakey, Tapsell and Najva SDK entry points.",
+    description: "R8 rules keeping the JS bridge, Poolakey, Tapsell and Pushfa SDK entry points.",
     content: `# =============================================================================
 # ProGuard / R8 rules for the native WebApp container
 # =============================================================================
@@ -6328,16 +8139,17 @@ local server, native ads, deep links). Delete them when you drop in your build.
     @android.webkit.JavascriptInterface <methods>;
 }
 
--keep class com.emochi.quickgames.WebAppBridge { *; }
--keep class com.emochi.quickgames.App { *; }
--keep class com.emochi.quickgames.MainActivity { *; }
+-keep class com.labzband.balochafzar.WebAppBridge { *; }
+-keep class com.labzband.balochafzar.App { *; }
+-keep class com.labzband.balochafzar.MainActivity { *; }
+-keep class com.labzband.balochafzar.PushfaManager { *; }
 
 # Bridge payloads are serialised/deserialised by reflection-free JSON code, but
 # their public shape is part of the JS contract – keep them verbatim.
--keep class com.emochi.quickgames.PurchaseResult { *; }
--keep class com.emochi.quickgames.ConsumeResult { *; }
--keep class com.emochi.quickgames.ConnectionResult { *; }
--keep class com.emochi.quickgames.QueryPurchasesResult { *; }
+-keep class com.labzband.balochafzar.PurchaseResult { *; }
+-keep class com.labzband.balochafzar.ConsumeResult { *; }
+-keep class com.labzband.balochafzar.ConnectionResult { *; }
+-keep class com.labzband.balochafzar.QueryPurchasesResult { *; }
 
 # -----------------------------------------------------------------------------
 # CafeBazaar Poolakey (in-app billing over AIDL)
@@ -6370,11 +8182,20 @@ local server, native ads, deep links). Delete them when you drop in your build.
 }
 
 # -----------------------------------------------------------------------------
-# Najva push notification SDK + Firebase Messaging
+# Pushfa push notification SDK + Firebase Messaging
+# (the SDK ships consumer rules for its service / click activity / worker;
+#  the public API surface is kept as well so reflection-free callbacks and
+#  the persisted PushfaConfig never lose members)
 # -----------------------------------------------------------------------------
--keep class com.najva.sdk.** { *; }
--keep interface com.najva.sdk.** { *; }
--dontwarn com.najva.sdk.**
+-keep class com.pushfa.sdk.** { *; }
+-keep interface com.pushfa.sdk.** { *; }
+-dontwarn com.pushfa.sdk.**
+
+# WorkManager (used by the Pushfa SDK for delivery / click reports).
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-dontwarn androidx.work.**
 
 -keep class com.google.firebase.** { *; }
 -keep interface com.google.firebase.** { *; }
@@ -6446,7 +8267,7 @@ local server, native ads, deep links). Delete them when you drop in your build.
     name: "build-apk.yml",
     category: "doc",
     language: "yaml",
-    description: "CI: builds debug + release APKs and injects Tapsell/Najva secrets as native configuration.",
+    description: "CI: builds debug + release APKs, injects Tapsell/Pushfa/Firebase secrets as native configuration and verifies the packaged SDKs.",
     content: `name: Build Android APK
 
 on:
@@ -6514,33 +8335,44 @@ jobs:
           touch "$DIST_DIR/fallback/fallback.ok"
           ./gradlew --version --no-daemon
 
-      # Native-only configuration (Tapsell / Najva / Firebase). Values are taken
-      # from repository secrets when present; otherwise the container builds with
-      # advertising and push disabled instead of failing.
+      # Native-only configuration (Tapsell / Pushfa / Firebase). The production
+      # identifiers are committed defaults in gradle.properties; repository
+      # secrets override them when present (local.properties wins over
+      # gradle.properties). app/google-services.json (Firebase project that Pushfa
+      # delivers through) is committed; the GOOGLE_SERVICES_JSON secret, when set,
+      # overrides it with the full file content.
       - name: Inject native configuration
         env:
           TAPSELL_APP_KEY: \${{ secrets.TAPSELL_APP_KEY }}
           TAPSELL_ZONE_INTERSTITIAL: \${{ secrets.TAPSELL_ZONE_INTERSTITIAL }}
           TAPSELL_ZONE_REWARDED: \${{ secrets.TAPSELL_ZONE_REWARDED }}
           TAPSELL_ZONE_NATIVE: \${{ secrets.TAPSELL_ZONE_NATIVE }}
-          NAJVA_API_KEY: \${{ secrets.NAJVA_API_KEY }}
-          NAJVA_WEBSITE_ID: \${{ secrets.NAJVA_WEBSITE_ID }}
+          PUSHFA_API_PUBLIC_KEY: \${{ secrets.PUSHFA_API_PUBLIC_KEY }}
           FIREBASE_APP_ID: \${{ secrets.FIREBASE_APP_ID }}
           FIREBASE_API_KEY: \${{ secrets.FIREBASE_API_KEY }}
           FIREBASE_PROJECT_ID: \${{ secrets.FIREBASE_PROJECT_ID }}
           FIREBASE_SENDER_ID: \${{ secrets.FIREBASE_SENDER_ID }}
+          GOOGLE_SERVICES_JSON: \${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           add() { [ -n "$2" ] && echo "$1=$2" >> local.properties || true; }
           add TAPSELL_APP_KEY "$TAPSELL_APP_KEY"
           add TAPSELL_ZONE_INTERSTITIAL "$TAPSELL_ZONE_INTERSTITIAL"
           add TAPSELL_ZONE_REWARDED "$TAPSELL_ZONE_REWARDED"
           add TAPSELL_ZONE_NATIVE "$TAPSELL_ZONE_NATIVE"
-          add NAJVA_API_KEY "$NAJVA_API_KEY"
-          add NAJVA_WEBSITE_ID "$NAJVA_WEBSITE_ID"
+          add PUSHFA_API_PUBLIC_KEY "$PUSHFA_API_PUBLIC_KEY"
           add FIREBASE_APP_ID "$FIREBASE_APP_ID"
           add FIREBASE_API_KEY "$FIREBASE_API_KEY"
           add FIREBASE_PROJECT_ID "$FIREBASE_PROJECT_ID"
           add FIREBASE_SENDER_ID "$FIREBASE_SENDER_ID"
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            python3 -c "import json,sys; json.load(open('app/google-services.json'))" \\
+              && echo "google-services.json installed (Firebase project enabled)"
+          elif [ -f app/google-services.json ]; then
+            echo "using the committed app/google-services.json"
+          else
+            echo "no google-services.json: building without Firebase (push disabled)"
+          fi
 
       # Pre-flight: the repository-level invariants (no removed advertising SDK,
       # every resource reference resolves, bridge contract present).
@@ -6551,7 +8383,26 @@ jobs:
       # assets/web bundle and assert routing, MIME types, gzip, ETag and SPA
       # fallback, so a broken WebApp bundle cannot reach an APK.
       - name: Unit tests (embedded HTTP server + MIME table)
-        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace --no-daemon 2>&1 | tee build.log
+
+      # WebApp contract: bundles the packaged game with esbuild, boots it in
+      # jsdom against a scripted AndroidBridge (the exact TapsellManager /
+      # Poolakey event protocol) and plays it: menu, spin wheel, coin packs,
+      # two levels -> interstitial -> third level, ad time-outs, back button.
+      - name: WebApp bridge contract (jsdom)
+        run: |
+          set -o pipefail
+          npm install --no-save --no-audit --no-fund jsdom@30 esbuild@0.25 2>&1 | tail -2
+          node tools/game-tests/run.mjs 2>&1 | tee -a build.log
+
+      # Compiler/test diagnostics are re-printed as GitHub annotations. They are
+      # readable through the checks API even when the raw job log cannot be
+      # downloaded, which is what makes a red build self-explanatory.
+      - name: Surface test failures as annotations
+        if: failure()
+        run: python3 tools/ci_annotate.py build.log
 
       - name: Publish unit test report
         if: always()
@@ -6564,10 +8415,18 @@ jobs:
           if-no-files-found: warn
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee -a build.log
 
       - name: Build release APK (R8 / resource shrinking enabled)
-        run: ./gradlew assembleRelease --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee -a build.log
+
+      - name: Surface build failures as annotations
+        if: failure()
+        run: python3 tools/ci_annotate.py build.log
 
       # Real verification of the produced artifact: the WebApp bundle must be
       # packaged, every font/resource must resolve and the removed advertising
@@ -6592,8 +8451,13 @@ jobs:
             exit 1
           fi
           echo "clean: no trace of the removed advertising SDK"
-          echo "--- Tapsell / Najva / Poolakey presence ---"
-          for needle in ir/tapsell com/najva ir/cafebazaar; do
+          echo "--- removed push SDK scan ---"
+          if grep -rql 'com/najva' /tmp/apk-inspect/classes*.dex; then
+            echo "::error::Removed push SDK (Najva) is still packaged"
+            exit 1
+          fi
+          echo "--- Tapsell / Pushfa / Poolakey / app package presence ---"
+          for needle in ir/tapsell com/pushfa/sdk ir/cafebazaar com/labzband/balochafzar; do
             if grep -rql "$needle" /tmp/apk-inspect/classes*.dex; then
               echo "present: $needle"
             else
@@ -6604,6 +8468,14 @@ jobs:
           echo "--- bridge + readiness contract ---"
           grep -rq 'appReady' /tmp/apk-inspect/classes*.dex && echo "appReady exported"
           grep -rq 'AndroidBridge' /tmp/apk-inspect/classes*.dex && echo "AndroidBridge exported"
+
+      # What the advertising SDK does to *our* process is not documented:
+      # the merged manifest shows its Activities (orientation, theme, config
+      # handling) and a constant-pool scan of its classes shows whether it
+      # touches process-wide WebView state (pauseTimers), the orientation or
+      # the window – the things that can break the game after an ad closes.
+      - name: Inspect the ad SDK (manifest + WebView / orientation usage)
+        run: python3 tools/inspect_ad_sdk.py
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -6663,8 +8535,21 @@ jobs:
           done
           exit 1
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon
+      # The contract test runs against a key-less build: with the production
+      # Tapsell / Pushfa identifiers the emulator would fire real ad requests
+      # from a US data-centre IP and a served interstitial takes the screen
+      # (and the back button) away from the WebApp – exactly what the test
+      # must not depend on. The SDKs themselves are still packaged and their
+      # presence is verified by the \`build\` job above.
+      - name: Build debug APK (ads / push identifiers blanked)
+        run: ./gradlew assembleDebug --no-daemon -PSMOKE_TEST_BUILD=true
+
+      # The play-through (tools/game-tests/emulator_play.mjs) talks to the
+      # WebView over the DevTools protocol; \`ws\` is only needed on Node < 22.
+      - name: Node helpers for the DevTools play-through
+        run: |
+          node --version
+          npm install --no-save --no-audit --no-fund ws@8 2>&1 | tail -2
 
       - name: Enable KVM
         run: |
@@ -6697,6 +8582,92 @@ jobs:
           name: emulator-screenshots
           path: ci-artifacts/**
           if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Ad lab: the game through a REAL Tapsell (test) interstitial. The SDK runs
+  # with its official test app key / zones, on a newer system image whose
+  # WebView renders the Tailwind v4 bundle faithfully (oklch colours need
+  # Chromium 111+). Records the container's lifecycle, the page's events and
+  # the frames right after the ad closes; fails only when the round trip
+  # happened and the game came back broken.
+  # ---------------------------------------------------------------------------
+  adlab:
+    name: Emulator ad lab (real Tapsell test interstitial)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write # posts the report/screenshots as commit comments
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-disabled: true
+
+      - name: Ensure Gradle wrapper
+        run: |
+          chmod +x gradlew || true
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+      - name: Provision Gradle distribution
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew --version --no-daemon; then exit 0; fi
+            rm -rf "$HOME/.gradle/wrapper/dists"/*/gradle-8.5-bin.zip.lck || true
+            sleep 15
+          done
+          exit 1
+
+      - name: Build debug APK (Tapsell test keys, push blanked)
+        run: ./gradlew assembleDebug --no-daemon -PSMOKE_TEST_BUILD=true -PSMOKE_TEST_ADS=true
+
+      - name: Node helpers for the DevTools session
+        run: |
+          node --version
+          npm install --no-save --no-audit --no-fund ws@8 2>&1 | tail -2
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Ad lab on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: bash tools/emulator_ad_lab.sh
+
+      - name: Publish ad lab results
+        if: always()
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          OUT_DIR: ci-artifacts-adlab
+          PICTURES: "30-adlab-* 32-adlab-* 33-adlab-01 34-adlab-* 35-adlab-* 39-adlab-*"
+        run: bash tools/publish_smoke_report.sh
+
+      - name: Upload ad lab artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-ad-lab
+          path: ci-artifacts-adlab/**
+          if-no-files-found: warn
 `
   },
   {
@@ -6705,7 +8676,9 @@ jobs:
     category: "doc",
     language: "markdown",
     description: "Project documentation.",
-    content: `# QuickGames — Android WebApp Container
+    content: `# لبزبند (Labzband) — Android WebApp Container
+
+\`com.labzband.balochafzar\` · app name **لبزبند**
 
 A production-ready **Android container for heavy local WebApps**.
 
@@ -6724,7 +8697,7 @@ without \`file://\` limitations and without intercepting \`shouldInterceptReques
 
 | Layer | File | Responsibility |
 | --- | --- | --- |
-| Entry point | \`App.kt\` | Firebase bootstrap, notification channels, Najva init (native only) |
+| Entry point | \`App.kt\` | Firebase bootstrap, notification channels, Pushfa init (native only) |
 | UI + boot pipeline | \`MainActivity.kt\` | Loading plate → HTTP server → WebView → \`NativeApp.appReady()\` |
 | HTTP server | \`LocalWebServer.kt\` | HTTP/1.1, gzip, byte ranges, ETag/304, MIME table, SPA fallback |
 | Server lifetime | \`WebAppServerController.kt\` | One server per process, stable origin across Activity recreation |
@@ -6732,20 +8705,69 @@ without \`file://\` limitations and without intercepting \`shouldInterceptReques
 | MIME types | \`MimeTypes.kt\` | wasm / mjs / webmanifest / fonts / media / 3D + gzip policy |
 | JS bridge | \`WebAppBridge.kt\` | \`window.AndroidBridge\` — ads, billing, navigation, readiness |
 | Advertising | \`TapsellManager.kt\` + \`TapsellConfig.kt\` | Tapsell Plus: interstitial, rewarded, native (IDs stay native) |
-| Push | \`NajvaManager.kt\` + \`NajvaConfig.kt\` | Najva system notifications, channels, deep links (100% native) |
+| Push | \`PushfaManager.kt\` + \`PushfaSettings.kt\` | Pushfa system notifications, channels, deep links (100% native) |
 | Deep links | \`DeepLinkBus.kt\` | Buffers tap routes until the WebApp reports readiness |
 | Billing | \`CafeBazaarBillingManager.kt\` | Poolakey (CafeBazaar) — unchanged, fully preserved |
 
 ### Heavy-WebApp performance
 
 * Real origin → Service Workers, Cache API, IndexedDB, cookies and \`SharedArrayBuffer\`
-  isolation headers (COOP/COEP) all work.
+  (COOP \`same-origin\` + COEP \`credentialless\`: WebAssembly threads work **and** CDN scripts,
+  web fonts, remote images and third-party APIs keep loading).
 * \`localStorage\`/IndexedDB survive rotation and process restore because the origin
   (\`http://127.0.0.1:<port>\` via the stable \`/redirect\` bootstrap) never changes.
 * Gzip on compressible assets, \`immutable\` caching for content-hashed bundles,
   \`ETag\`/\`304\` revalidation, \`Range\`/\`206\` support for media seeking.
-* Hardware acceleration, \`largeHeap\`, DOM storage, media playback without a gesture,
-  mixed content blocked, fullscreen video, file chooser, safe-area insets.
+* Hardware acceleration, \`largeHeap\`, renderer priority \`IMPORTANT\`, DOM storage, media
+  playback without a gesture, mixed content blocked, fullscreen video, file chooser,
+  safe-area insets.
+
+### Heavy animations never hang the app
+
+* **Renderer watchdog** – Chromium reports a renderer that stops answering input (blocked JS
+  main thread). Short stalls are logged; after 20 s the container terminates the renderer and
+  reboots the WebApp behind the loading plate instead of ending in an ANR dialog.
+* **Renderer crash recovery** – \`onRenderProcessGone\` (OOM, GPU fault, system kill) rebuilds
+  the WebView and reloads the WebApp; the process is never torn down. A crash while another
+  Activity covers the game (a full-screen ad) is rebooted once the container is visible again,
+  and after 3 crashes within 3 minutes the error plate takes over instead of a reload loop –
+  each recovery logs a memory summary under the \`MainActivity\` tag.
+* **Ad-aware lifecycle** – a full-screen ad is another Activity on top of the game. The
+  container keeps the page alive underneath it (no reload), never calls the process-wide
+  \`pauseTimers()\` while an ad presents (it would freeze the ad's own WebView), and the watchdog
+  does not judge a covered page. \`docs/WEBAPP_INTEGRATION.md\` §3b lists what the game itself
+  must do (pause/resume once, resize without rebuilding the renderer, handle WebGL context loss).
+* **Bounded ad requests** – \`showInterstitial()\` / \`showRewarded()\` are settled within 6 s /
+  18 s at the latest (\`ad_error\` \`INTERSTITIAL_TIMEOUT\` / \`REWARDED_TIMEOUT\`) and a queued
+  request whose ad fails to load is dropped, so the game never sits behind a "please wait"
+  overlay and no stale interstitial pops up in the middle of the next level.
+* **Rendering profile** – every page load gets \`<html data-native-tier="low|mid|high">\`; on
+  low/mid phones \`backdrop-filter\` blur is switched off (opt-out
+  \`<meta name="native-perf" content="off">\`) and the WebView is painted in the page's own
+  background colour, so resume / rotation / return-from-ad never flash white.
+* **Portrait lock + post-ad settling** – the Activity is locked to portrait, so an ad
+  Activity that rotates for a landscape creative can never hand a landscape → portrait
+  relayout back to the game; every \`*_closed\` / \`ad_error\` event (and every \`onResume\`)
+  re-asserts \`onResume()\` + \`resumeTimers()\` on the WebView and requests a frame, whatever the
+  SDK's Activity did on its way out.
+* **Compat layer for old WebViews** – \`LocalWebServer\` injects \`assets/native/compat.js\` at the
+  end of \`<head>\` of every HTML document: guarded ES5 polyfills (\`Object.hasOwn\`,
+  \`Array.prototype.at\`, \`String.prototype.replaceAll\`, \`structuredClone\`, \`Promise.any\`, …)
+  that a Vite bundle uses unguarded and that Chromium < 93 lacks, a rendering policy (Worker
+  \`OffscreenCanvas\` transfer is off unless \`<meta name="native-offscreen-canvas" content="on">\`
+  – such layers are not repaired after the GPU context loss a full-screen ad causes), and
+  uncaught-error mirroring to logcat. \`<html data-native-compat="…">\` lists what was applied.
+* **WebView version advice** – the Tailwind v4 bundle paints every colour with \`oklch()\`
+  (Chromium 111+). On an older Android System WebView the container shows a one-time dialog
+  with a button to the store page instead of letting the game look broken.
+* **Back button always works** – if the page does not answer the back request within 900 ms,
+  the native exit dialog takes over.
+* **Lifecycle & memory signals** – \`nativeapp:pause\` / \`nativeapp:resume\` /
+  \`nativeapp:memorywarning\` DOM events (also \`NativeApp.on('pause' | 'resume' |
+  'memorywarning')\`) let the game stop its loop, mute audio and drop caches.
+* **Device profile** – \`NativeApp.getDeviceProfile()\` / \`NativeApp.getRenderPixelRatio()\` give
+  the game a tier (\`low | mid | high\`), RAM, cores, refresh rate and a suggested pixel ratio so
+  it can size its canvas for the phone it runs on (see \`docs/WEBAPP_INTEGRATION.md\`).
 
 ---
 
@@ -6762,11 +8784,13 @@ Available namespaces (thin facade in \`assets/web/js/native-bridge.js\`):
 
 \`\`\`js
 NativeApp.appReady()                 // readiness handshake
-NativeApp.getInfo()                  // { platform, sdkInt, appVersion, serverPort, ... }
+NativeApp.getInfo()                  // { platform, sdkInt, appVersion, serverPort, device, ... }
+NativeApp.getDeviceProfile()         // { tier, suggestedPixelRatio, totalRamMb, cpuCores, refreshRate, ... }
+NativeApp.getRenderPixelRatio()      // DPR a heavy Canvas/WebGL game should render at
 NativeApp.getStartupRoute()          // deep-link route that opened the app
 NativeApp.reportError(message)       // show the native error/retry plate
 NativeApp.navigateBack()             // native back navigation
-NativeApp.on('deeplink' | 'back' | 'resume' | 'pause', handler)
+NativeApp.on('deeplink' | 'pause' | 'resume' | 'memorywarning' | 'resize', handler)
 NativeApp.onBackPressed = () => true // let the WebApp consume the hardware back first
 
 NativeAds.showInterstitial()         // Promise, always settles: { ok, reason, type }
@@ -6780,24 +8804,32 @@ CafeBazaar.buyProduct(id) / consumePurchase(token) / getPurchases() / isAvailabl
 \`\`\`
 
 **No advertising or push identifier is ever exposed to the WebApp**: Tapsell app key/zone ids and
-the Najva API key/website id live only in the native layer.
+the Pushfa public key live only in the native layer.
 
 ---
 
 ## 3. Native configuration
 
-Identifiers are resolved (in order) from Gradle CLI properties, \`gradle.properties\`,
-\`local.properties\`, then environment variables — and are never committed:
+Identifiers are resolved (in order) from Gradle CLI properties (\`-P\`), \`local.properties\`,
+environment variables, then \`gradle.properties\`. The production identifiers of لبزبند are the
+committed defaults in \`gradle.properties\`:
 
 \`\`\`properties
-# local.properties
+# gradle.properties (committed defaults – public-side identifiers only)
+TAPSELL_APP_KEY=tkonjgrn…jjtddh          # Tapsell Plus app key
+TAPSELL_ZONE_INTERSTITIAL=6ab339cee237e15c69fbab2b   # «بنر آنی» (interstitial)
+TAPSELL_ZONE_REWARDED=6ab339c3da860d2c9f00cfa9       # rewarded video
+TAPSELL_ZONE_NATIVE=6ab339d96da4b558f3901bc1         # «بنر همسان» (native banner)
+PUSHFA_API_PUBLIC_KEY=0820…b328aa        # Pushfa api_public_key (never the private key)
+\`\`\`
+
+Override any of them per machine or per CI run without touching the repository:
+
+\`\`\`properties
+# local.properties (never committed; CI writes repository secrets here)
 sdk.dir=/path/to/Android/sdk
-TAPSELL_APP_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-TAPSELL_ZONE_INTERSTITIAL=xxxxxxxxxxxxxxxxxxxx
-TAPSELL_ZONE_REWARDED=xxxxxxxxxxxxxxxxxxxx
-TAPSELL_ZONE_NATIVE=xxxxxxxxxxxxxxxxxxxx
-NAJVA_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-NAJVA_WEBSITE_ID=12345
+TAPSELL_APP_KEY=...
+PUSHFA_API_PUBLIC_KEY=...
 FIREBASE_APP_ID=1:1234567890:android:abcdef
 FIREBASE_API_KEY=AIza...
 FIREBASE_PROJECT_ID=your-project
@@ -6807,14 +8839,55 @@ FIREBASE_SENDER_ID=1234567890
 Missing keys are **not** fatal: ads report \`NOT_AVAILABLE\`, push logs one actionable line and the
 container keeps working (\`./gradlew assembleDebug\` succeeds with an empty configuration).
 
+### CafeBazaar billing – release checklist
+
+* \`CafeBazaarConfig.kt\` → \`CAFEBAZAAR_PUBLIC_KEY\` must hold the RSA public key of **this**
+  app from the CafeBazaar developer console. Purchases are reported to the game with
+  \`verified: true\` only when Poolakey validated the signature with that key; the game credits
+  coins **only for verified purchases**, so with a wrong/empty key every paid pack would be
+  charged but never credited.
+* Create the SKUs the game sells as *consumable* in-app products in the console, at the
+  prices the game displays (1 coin = 50 tomans, no bonus coins, no discounts):
+  \`pack_starter\` 200 coins = 10,000, \`pack_popular\` 1,000 = 50,000, \`pack_super\` 2,500 = 125,000,
+  \`pack_royal\` 5,000 = 250,000, \`pack_vault\` 10,000 = 500,000 tomans (the game consumes them
+  itself after crediting); **\`remove_ads\` as a non-consumable at 20,000 tomans** – the store row
+  and the level-complete "حذف تبلیغات" button sell it (\`docs/GAME_PATCHES.md\`).
+* Test with a Bazaar test account before release – the emulator has no Bazaar client, the
+  jsdom harness covers the game side of the flow (\`tools/game-tests/scenarios.json\`).
+
+### Push (Pushfa) – Firebase project
+
+Pushfa delivers through Firebase Cloud Messaging, so the app needs the Firebase project whose
+**Service Account** is pasted into the Pushfa panel (Android service → Firebase).
+
+* \`app/google-services.json\` is committed: Firebase project **\`ninemanhills\`**
+  (\`930784178753\`), Android app \`com.labzband.balochafzar\`. The Google Services plugin is applied
+  automatically because the file exists; \`python3 tools/static_checks.py\` verifies that the file
+  still contains a client for this package.
+* To move to another Firebase project, replace the file (Firebase console → project settings →
+  Android app \`com.labzband.balochafzar\` → download) **and** upload that project's Service Account
+  in the Pushfa panel – both sides must be the same project or tokens cannot be delivered.
+* Without the file \`App.kt\` falls back to the \`FIREBASE_*\` values, and without those the app runs
+  with push disabled (\`GOOGLE_SERVICES_JSON\` CI secret, when set, overrides the committed file).
+* The Pushfa public key is wired through \`PUSHFA_API_PUBLIC_KEY\`. Notifications are rendered by
+  the Pushfa SDK on the \`labzband_default\` channel with the app's monochrome icon; a notification
+  link such as \`/game/42\` re-opens the app and reaches the WebApp as deep-link route \`game/42\`.
+* Never commit the Pushfa private key or the Firebase Service Account JSON – they belong to the
+  Pushfa panel / a server only (the static checks refuse a service-account file under \`app/\`).
+
 ## 4. Build, test, verify
 
 \`\`\`bash
-./gradlew testDebugUnitTest    # 25 JVM tests: HTTP server, MIME table, ranges, SPA routing
+./gradlew testDebugUnitTest    # JVM tests: HTTP server, compat injection, MIME table, ranges, SPA routing
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew assembleRelease      # R8 + resource shrinking
 python3 tools/static_checks.py # repository invariants (no removed SDK, resources resolve, ...)
 \`\`\`
+
+Product changes made to the **packaged game bundle** (coin prices, remove-ads product, contact
+e-mail button, shuffled quiz answers, wording, logo, native progress mirror) are applied by \`tools/game-patches/apply_patches.py\` and
+the branding by \`tools/branding/apply_logo.py\` – re-run both after copying a new game build
+into \`assets/web/\` (see \`docs/GAME_PATCHES.md\`).
 
 CI (\`.github/workflows/build-apk.yml\`) runs on every push:
 
@@ -6823,10 +8896,42 @@ CI (\`.github/workflows/build-apk.yml\`) runs on every push:
 2. \`assembleDebug\` + \`assembleRelease\`, then \`Verify APK contents\` asserts that
    \`assets/web/**\` and the Vazirmatn fonts are packaged and that the removed advertising SDK is
    absent from every dex.
-3. \`Emulator smoke test\` — installs the APK on an API 30 emulator, boots it and verifies the
-   runtime contract (server up → WebView on \`127.0.0.1\` → readiness handshake → deep link
-   routing → ad bridge degrading gracefully without keys → no crash, no bridge thread
-   violation), capturing a screenshot timeline that is published as commit comments.
+3. \`WebApp bridge contract (jsdom)\` — \`tools/game-tests/run.mjs\` bundles the packaged game
+   with esbuild, boots it in jsdom against a scripted \`AndroidBridge\` that speaks the exact
+   TapsellManager / Poolakey event protocol and plays \`tools/game-tests/scenarios.json\`: menu,
+   spin wheel (reward granted / denied / ad error), coin packs (verified, unverified,
+   cancelled, restored), remove-ads (store row, level-complete button, cancelled, unverified,
+   restored at boot → no interstitial), About → contact e-mail, two levels → interstitial →
+   third level, ad time-outs, duplicate event delivery, back button.
+4. \`Emulator smoke test\` — installs the APK on an API 30 emulator (Chromium 83 WebView – the
+   compat layer is exercised for real), boots it and verifies the runtime contract (server up
+   → WebView on \`127.0.0.1\` → readiness handshake → no crash, no bridge thread violation, exit
+   dialog, copy protection, night mode, rotation, activity switch, **progress survives a
+   force stop** – stable loopback origin + native state mirror), then
+   \`tools/game-tests/emulator_play.mjs\` drives the real game over the DevTools protocol:
+   levels 1–2, interstitial request, a foreign Activity covering the app like an ad,
+   \`interstitial_closed\`, level 3 — no reload, no renderer loss, no JS exception. Screenshots
+   are published as commit comments.
+5. \`Emulator ad lab\` — a second APK built with \`-PSMOKE_TEST_BUILD=true -PSMOKE_TEST_ADS=true\`
+   (Tapsell's **official test** app key / zones, push blanked) on an API 34 emulator.
+   \`tools/game-tests/ad_lab.mjs\` plays the game into a **real** Tapsell test interstitial –
+   the SDK's own ad Activity, its callbacks, our pause/resume – closes it, and records the
+   container's lifecycle log, the page's events (\`visibilitychange\`, \`resize\`,
+   \`nativeads:*\`), DOM churn, rAF rate and raw frame statistics (white ratio / churn) for
+   the seconds after the ad. It fails only when the round trip happened and the game came
+   back broken; no fill from the CI network is reported as *inconclusive*. The \`build\` job
+   additionally prints \`tools/inspect_ad_sdk.py\`: the ad SDK's Activities in the merged
+   manifest and a scan of its classes for \`pauseTimers\` / orientation / window calls.
+
+Field diagnosis on a real phone (no debug build needed):
+
+\`\`\`bash
+adb logcat -s MainActivity ContainerWebView TapsellManager WebAppBridge WebApp
+\`\`\`
+
+prints the lifecycle (\`onPause\` … \`onResume\` with WebView size / focus / rotation), every
+surface resize, every ad event (\`ad event: interstitial_shown …\`), the post-ad state with a
+memory summary, and the page's own warnings, errors and unhandled rejections.
 
 ## 5. Local (Vite) showcase
 
