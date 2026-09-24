@@ -50,7 +50,11 @@
   }
   function show(kind, method, args) {
     if (adPending) return Promise.resolve(fail('BUSY'));
-    var entry = request(180000);
+    // Keep the WebApp-side timeout aligned with the native contract. Native
+    // requests are bounded to six seconds for interstitial/native and eighteen
+    // seconds for rewarded; the JS facade must not leave a game waiting for
+    // three minutes when a bridge callback is lost.
+    var entry = request(kind === 'rewarded' ? 18000 : 6000);
     entry.kind = kind; entry.reward = false; adPending = entry;
     var accepted = call.apply(null, [method, false].concat(args || []));
     if (accepted !== true) { adPending = null; entry.finish(fail('NOT_AVAILABLE')); }
